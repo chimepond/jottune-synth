@@ -26,6 +26,30 @@ parser.add_argument("--harness", type=Path)
 ARGS, REMAINING = parser.parse_known_args()
 
 
+class WorkspaceTargets(unittest.TestCase):
+    def test_expanded_targets_are_checked_before_lock_or_read(self):
+        with tempfile.TemporaryDirectory(prefix="interchange-workspace-") as temporary:
+            parent = Path(temporary)
+            workspace = parent / "workspace"
+            workspace.mkdir()
+            outside = parent / "outside.zip"
+            # No HOME mutation and no real-home I/O: expansion selects only a
+            # disposable sibling, and spies fail if a lock/open is attempted.
+            with mock.patch.object(fm, "WORKSPACE_ROOT", workspace), \
+                 mock.patch.object(Path, "expanduser", return_value=outside), \
+                 mock.patch.object(fm, "session_module", side_effect=AssertionError("must not create a lock")) as publication, \
+                 mock.patch.object(interchange, "bundle_members", side_effect=AssertionError("must not read the bundle")) as reading:
+                with self.assertRaisesRegex(fm.ToolError, "workspace"):
+                    interchange.publish("~/outside.zip", {}, {"profile": "wav"}, container="zip")
+                with self.assertRaisesRegex(fm.ToolError, "workspace"):
+                    interchange.verify_bundle("~/outside.zip")
+                publication.assert_not_called()
+                reading.assert_not_called()
+            self.assertFalse(outside.exists())
+            self.assertEqual(list(parent.iterdir()), [workspace])
+            self.assertEqual(list(workspace.iterdir()), [])
+
+
 class Bundles(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

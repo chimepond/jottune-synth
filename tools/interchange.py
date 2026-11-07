@@ -137,7 +137,7 @@ def publish(out, files, report, *, container="directory"):
     fm.require(isinstance(out, (str, Path)) and str(out).strip(), "out must be a new destination", 2)
     selected = Path(out).expanduser()
     fm.require(not selected.is_symlink(), "output must not be a symlink", 2)
-    destination = selected.resolve()
+    destination = fm.workspace_path(selected)
     fm.require(all(member_name(name) for name in files), "invalid bundle member", 5)
     manifest = dict(version=1, profile=report["profile"], report=report,
                     artifacts={name: dict(bytes=len(data), sha256=fm.sha(data))
@@ -239,6 +239,7 @@ def bundle_members(path):
 def verify_bundle(directory, *, expected_manifest_sha256=None):
     """Verify a directory or ZIP without rendering or extracting member paths."""
     path = Path(directory).expanduser()
+    fm.workspace_path(path)  # Check the actual expanded target before any open.
     with bundle_members(path) as (opened, names, sizes):
         with opened("manifest.json") as stream:
             data = stream.read(fm.TEXT_PARENT_LIMIT + 1)
