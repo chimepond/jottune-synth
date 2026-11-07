@@ -1,0 +1,360 @@
+Copyright (c) 2026 Nenad Micic
+SPDX-License-Identifier: Apache-2.0
+
+JOTTUNE SYNTH — BROWSER AGENT CARD
+
+Write one complete JotTune Timeline (.tl) as readable text. example.tl is a
+minimal sine diagnostic, not a composition to publish. Start a song with
+authoring.txt and starter.score.json instead. The song must replay without source parts or
+metadata files. instrument.txt is the instrument reference; its Python
+composition, recipe search and CLI/MCP examples run outside this page.
+The page has no Python runtime, external LLM API or telemetry. Its ordinary
+composing and listening tools require no external AI/API key.
+
+Choose a song starts expanded: browse the Source collection or open your own TL.
+Loading prepares silently and leaves Play ready for your tap. Auto move, at the
+bottom of Sections, starts enabled: Load moves to Player, successful Play moves
+to Live views, and natural completion returns to Songs. Manual section navigation,
+including scrolling into another section,
+turns it off; select Auto move again to restore the cycle. Pause, Stop and looping
+do not return to Songs. It never starts audio or changes the chosen display mode.
+Loading never collapses the chooser. You can collapse or reopen it yourself
+without stopping playback, or return using Sections → Songs. Live shows
+the piano roll, scope, spectrum, peaks, spatial scene and voices. Off stops
+the live display work while audio continues; hidden/offscreen views also pause.
+On wide windows, the Sections rail keeps the selected song, Load song and
+Play/Pause/Resume visible. Load prepares the selected version silently; the
+ready message tells you to press Play. The separate loaded/playing identity is
+the target of Play, even while browsing another song. Section links scroll within
+the rail so playback controls remain reachable; very short windows allow the
+whole rail to scroll. Narrow windows use the bottom controls instead.
+On phones and compact browser windows, the bottom bar keeps the loaded identity
+and Play/Pause/Resume visible.
+While browsing a selected song, its left action becomes blue Load song; outside
+Songs it returns to Choose song. Orange Song library, yellow Player and green
+Live Viz shortcuts move within the page without starting playback. Their text
+labels and current-section mark remain available independently of colour.
+
+The source library has two views: Favorites is a curated listening selection;
+Browse all includes source songs with an Original longer than 20 seconds;
+its saved versions must also exceed 20 seconds. Shorter records remain in the
+repository and can still be opened locally or through their existing links.
+Browse all and its collection, genre and model categories sort by song title
+across all pages, ignoring case and normalizing Unicode. Matching titles use
+collection, then song identity to break ties. Favorites keeps its editorial order.
+Eight results appear per batch as compact inline radio choices. All eight fit in the normal phone portrait
+list; scrolling remains available for short windows or larger text. The list
+stays visible instead of opening a platform picker. Each thumbwheel arrow on either
+side moves a full results page. Scrolling a thumbwheel also pages; use the song
+list itself to select individual songs with a click, tap or keyboard arrows.
+Previous/Next results, a selected-song card and Clear filters remain available.
+The browser reads catalog/index.json and 24-entry static pages, never songs.json.
+Each explicit browse step reads at most four pages; only four pages are cached.
+A filtered search reports songs examined and does not claim a global match
+count until its source selection is exhausted. Next continues sparse searches.
+Collection, genre, tempo and attributed-model filters stay visible beside search
+and combine on exact versions. Load and Play have matching controls on both sides.
+Entering a search or choosing a filter switches to Browse all, so the global
+choices can find songs outside Favorites. The active tab and breadcrumb show
+the scope. Choosing Favorites explicitly narrows the current criteria to that
+selection; an empty result suggests Browse all without discarding the filters.
+Clearing a criterion or Clear filters keeps the current view.
+Search matches normalized Unicode titles, collections and revisions.
+
+Saved versions are named separately from computed listening profiles. Favorites
+defaults remain editorial; Browse all prefers the existing saved
+Keys default. Same-song explicit choices remain when they match the filters.
+Genre and tempo cite retained scores or creator declarations. Missing fields
+remain Unknown, including model attribution. A BPM range is not a timed tempo
+map. Metadata stays outside TL and binds only to its exact canonical version.
+Collection summaries use this website selection, one Original per composition,
+and show known/unknown denominators. They are not exchange or benchmark counts,
+and construction/declarations do not measure musical quality or model progress.
+
+Inspect notes reads only the selected TL using the installed native reader and
+native events in a separate worker. It reuses the player's piano-roll geometry,
+includes a text summary, and neither renders audio nor verifies a saved audio hash.
+Selection changes abort its fetch/worker. Browsing and inspection cannot replace
+or pause the loaded song; only Load song prepares a new audition. No inspection
+runs merely because a filter changes or the page scrolls. After inspection the
+button becomes Hide notes, which closes the preview without changing playback.
+
+Song structure describes the complete native note commands. The Player's compact
+panel describes the loaded song; Inspect notes shows a separate profile for the
+selected song without changing playback. Duration, note attacks per second,
+active/allocated voices, commanded frequency range, mean/maximum open gates and
+time with no open gates come from native events, without another audio render.
+Pitch changes do not count as new attacks; allocated voices may never play.
+These are command facts, not musical-quality scores, audible pitch or measured
+silence: releases and effects can continue after gates close. Use Analyze audio
+for loudness, peaks and other waveform measurements. Incomplete or oversized
+native listings explicitly report unavailable instead of partial statistics.
+
+The Player names the loaded title and saved or computed version. On compact
+screens the same identity, Play/Pause, time and Choose song stay visible while
+scrolling. Successful preparation says Ready. Press Play to listen; technical hash and block
+independence results remain in record details. Save song (.tl) keeps the complete
+reopenable record; Save audio (.wav) keeps rendered audio. Downloads use safe,
+titled filenames. Save and exact-version share actions precede the live views.
+
+Given only a URL, start at agent-start.txt. Node agents can download agent.mjs
+and use the same kept engine without a checkout or npm dependencies.
+IntFM.recipes() lists native presets. IntFM.recipe(name,patch,tweaks) expands
+named carrier-level tweaks; IntFM.recipeGain(name,patch,gainDb) adjusts all
+carriers together and returns complete native declarations. See authoring.txt. await IntFM.compose(score,{release})
+compiles existing score v1 into draftText with exact rendererRelease, sourceMap
+and advisories. It does not render, change the editor, play or publish.
+authoring.txt explains musical time and full native instrument declarations.
+The complete preset catalog is reference/recipes.txt, including synthesis
+declarations and spectral guidance beyond the short recipe descriptions.
+
+Optional score-v1 part audition: await IntFM.compose(score,{soloStreams:['lead']})
+or {muteStreams:['bass']}; use one option only, with distinct existing stream
+names. The complete original is compiled and natively inspected first. The
+helper keeps all declarations, voices, length, spatial/effect/control events,
+then removes only note/on/off gates excluded by the stream selection. It
+refuses generators and any voice with gates in both retained and removed
+streams, rather than changing ambiguous shared ownership. Render its draftText
+normally. The returned selection describes the affected gates and scope.
+Browser selection also natively inspects the derived draft before returning it;
+this is validation, not audio verification. Its source-map pointers and advisory
+indices still refer to the original score. Listen or Verify remains a separate call.
+This measures a new performance through the effects, not independent additive
+stems of the original: shared returns, dynamics and preceding audio can change.
+The CLI equivalent is compose --solo-streams '["lead"]' or --mute-streams '["bass"]'.
+
+Save draft text keeps the exact editable text, even before it is valid.
+Verify saved render explicitly replays the current accepted canonical output
+under its selected release. Editing retains the selected release but invalidates
+old PCM and record identity; it never repairs a hash.
+
+await IntFM.analyze(result=IntFM.result(),options={}) measures cached PCM in a
+separate worker, without changing the result or starting playback. Options:
+windowSeconds, sections:[{name,startSeconds,endSeconds}], dryVoices:true or
+[0,1], dryMaxBytes, dryTimeoutMs, timeoutMs (default 120000, max 300000).
+IntFM.cancelAnalysis() cancels it. Edits/new renders also cancel old analysis.
+The result contains pcm, events and optional dry measurements plus the exact
+recordSha256, pcmHash and rendererRelease. Optional dry failure is labelled;
+a timeout cannot invalidate prepared audio. See analysis.txt for scopes/limits.
+Details → Audio measurements provides Analyze audio and Save analysis JSON.
+Analysis options selects window length, one named section and optional dry
+source levels; the API supports up to 32 sections and explicit larger budgets.
+
+Call window.IntFM.describe() for capabilities, limits and reference URLs.
+await IntFM.render(recordText, {mode:'verify', release:'RELEASE-ID'}) uses the
+trusted installed registry. Both options are optional: verify is the default;
+bare TL uses the default installed renderer and still must match its saved hash.
+IntFM.verify(text, options) and IntFM.listen(text, options) select their modes.
+IntFM.cancel() cancels pending rendering. IntFM.result() returns the visible
+result. IntFM.clear() stops rendering/playback and clears the text and result.
+The buttons and agent calls use the same implementation.
+
+Optional render profile: {profile:{halfWidth:60,mirror:false}} computes Keys
+on this device. Available half-widths are 30,45,60,75,90 degrees per side;
+60 means a total 120-degree spread. It verifies the original source, uses the
+native reader/renderer to replace spatial layout with pitch-based ordinary
+stereo, levels the result and verifies the derived canonical record. It never
+silently falls back to another engine when an archived build lacks conversion.
+sourceRecordSha256 identifies the original canonical source; recordSha256 and
+pcmHash identify the derived song. A source without a saved hash is not proof
+of saved-hash agreement. Read result.profile for the conversion details.
+This changes placement and carrier levels, not the authored note schedule; it
+is not binaural HRTF rendering. The input file is never rewritten. The UI's
+Prepare profile starts from its retained loaded source, never the last projection;
+Keep loaded version restores it. Edits or loading another song reset that source.
+Profiles default to strict levelling. Explicit levelPolicy:'carrier-bound'
+permits a non-silent, unclipped result below target only when the shared carrier
+gain limit is reached; profile.targetMet=false labels that exception. The UI
+exposes it as an unchecked recovery option in the profile explanation.
+
+Verify performs two renders. Listen performs one and reports
+block_indep=unchecked. Listen API calls render PCM without starting audio;
+the human Listen button prepares Web Audio during its click, then renders and
+plays. Play auditions existing PCM. A separate user gesture is needed for audio.
+The human song/file/drop/example/link controls render once when loading finishes,
+without creating an audio context. Play becomes enabled after an audible result;
+it starts playback on its own click. Loading progress and Cancel sit beside Play.
+Pasting or editing text invalidates the prepared audio; Listen renders and plays
+those changes. Programmatic IntFM.loadLink remains load-only.
+await IntFM.prepareLink(url) loads and silently prepares playback as one
+cancellable operation, preserving the link's release and expected identity.
+It returns a listener result; inspect verdict as with render. Network errors
+and cancellation reject. It never starts audio or acquires an audio device.
+
+A result includes verdict, code, mode, verified, verification, native stdout and
+stderr, canonical Uint8Array bytes, recordSha256, pcmHash, engineIdentity,
+engineId, rendererRelease, development, play/metrics objects, PCM Int16Array,
+sampleRate, channels and native events. Integer result fields remain decimal
+strings, preserving values above 2^53. Rendering happens in a dedicated Worker.
+A completed result also dispatches window's intfm-result event with result in
+detail, for a host page integrating the workbench.
+An intfm-invalidate event announces edits, clearing or a new render; its detail
+is null and the prior result must no longer be used as current audio or analysis.
+
+Verdict valid means the native render succeeded. verified=true requires full
+verify, match=yes and block_indep=yes. A listener can match its checksum while
+block independence remains unchecked. A draft without an expected hash can
+render valid with match=-, but is not labelled verified. Its canonical download
+contains the computed hash; replay that single file to verify the saved record.
+Computing a hash during Listen does not perform that independent replay. Thus
+a Listen result can contain canonical TL and pcmHash while verified stays false.
+Refused carries the native diagnostic. Wrong PCM hashes or unavailable/withdrawn
+explicit releases are mismatch, never a fallback or a newly sealed success.
+
+Record SHA-256 covers canonical TL bytes. PCM hash is the engine's FNV-1a 64
+value, not SHA-256. Device audio resampling is outside that identity. Raw amb1
+and amb3 channels are field coefficients: inspect/export them, not speaker audio.
+
+await IntFM.metrics(text, options): render and return native metrics.
+IntFM.toWav(result, provenance={}): Blob preserving PCM, with WAV INFO credits.
+IntFM.toSvg(result): native note-gate timeline and spatial command targets.
+IntFM.showQr(url): open a local QR dialog for a complete HTTP(S) song URL;
+returns true when the code is generated. IntFM.closeQr() clears it. QR encoding
+requires no network, camera or microphone. Credentials and withdrawal links are
+refused. Oversized portable links remain copyable; use a single TL download or
+a published song link when the URL exceeds standard QR capacity.
+Notes and the saved SVG use the same wide pitch/time gate layout as the Live
+piano roll, including pitch-command splits. Text remains readable as the SVG
+fills its viewing width. Gates are not release tails, audible pitch modulation
+or the measured sound image. Spatial x/y/z use millimetres; the saved SVG's
+top view shows command targets, not interpolated trajectories. The PNG spectrogram displays channel 1 only,
+with logarithmic bass/full-range panels and seconds on the horizontal axes.
+Its worker covers all audio windows and can be cancelled independently of Play.
+The colour scale is sinusoidal-bin amplitude in dBFS, max-pooled for display;
+it is not a broadband loudness or stereo/spatial measurement.
+The Live view follows the player's cached PCM position. Its wide piano roll
+shows time horizontally and frequency vertically, with stream-coloured note
+gates, pitch-command splits and a moving playback cursor. Scope, Spectrum and
+Peaks can be switched off separately. Stereo Spectrum starts with Both:
+independent Left (gold) and Right (green, dashed) 2048-frame Hann windows at
+the cursor. The channel controls sit below the Spectrum plot. Left and Right
+buttons isolate either trace; mono and raw field
+routes retain their own channel labels. Logarithmic Hz and calibrated dBFS
+match the cursor; channels are never mixed. Trace colours match Scope, and
+the full-song spectrogram remains separate.
+Peaks are independent channel maxima in the current 512-frame PCM window.
+Off suspends live drawing and analysis without stopping audio. Scrolling the
+whole Live region out of view suspends it until it returns. Background tabs
+also suspend live displays and cancel unfinished full-song spectrogram work;
+returning to Spectrogram restarts analysis, or reuses its completed image.
+Selectable note gates follow native event commands, not audible release tails;
+pitch-class keys combine octaves. With a compatible native spatial companion,
+Space samples the kept engine's positions and listener yaw at the playback
+block. Space opens in Top view; 3D remains selectable. Both views show native
+paths, dotted jumps, distance rings and the
+listener at the origin. Select a voice to highlight its path and show its ID
+at the edge with a connecting line. Other dots keep their voice colours without
+overlapping numbers. Voices keep moving
+after note-off; brightness is only note-gate emphasis. Reduced motion holds
+animated plots while playing; pausing or seeking updates the inspection.
+If native spatial data is unavailable, the view explicitly shows command
+targets and dotted command order, without claiming actual motion or yaw.
+This optional display does not change rendered audio. Raw field routes retain
+coefficient labels and cannot play as speakers.
+await IntFM.guide(): this guide as text.
+await IntFM.reference('params'): native statement/parameter descriptors.
+await IntFM.reference('gen-params'): native generator controls and bounds.
+These are generated by the engine and are also readable under reference/.
+Do not guess undocumented fields or write another TL parser.
+
+Optional WAV provenance keys: model, model_source
+(client-reported/user-stated/unknown), client, client_version, made_by
+(agent/human/mixed), utc_day, tokens_in, tokens_out, prompt_id, licence.
+The renderer release and record identity are supplied by the result. Metadata
+never changes TL grammar. No licence is injected. Claims are unauthenticated.
+Free prompt text and plain free-prompt hashes are rejected, not exported.
+
+await IntFM.loadLink(url) loads without rendering. It accepts a plain CORS-enabled
+TL URL, #v1.<base64url(zlib-deflate(record))>, legacy #r=<sha256>, library
+references #song=<encoded songs/filename.tl>&sha=<sha256>, and service
+links under the application's path prefix: r/<sha256> and s/<submission-id>.
+Those service links require api/records/<sha256> or api/submissions/<id> to
+return {record_sha256, renderer_release, record_url}. record_url stays within
+that service's origin and prefix. Rendering checks the requested canonical hash.
+The static workbench includes no publishing service. The legacy #r form reads
+r/<sha256>.tl directly. ?release= names an exact registry entry; a conflicting
+service descriptor is refused. Unrelated anchors such as #agent do not load TL.
+
+Copy song link and Song QR code are beside the Player's exports. Exact library
+versions use compact references to existing TL bytes with their content identity.
+Other results, including changed profiles, carry TL in a portable fragment.
+Both retain the kept renderer release when available. Neither publishes anything
+or carries provenance or prompts. Keep the TL file for durable storage.
+Downloading the canonical .tl is enough to keep and replay the song.
+
+Same-origin iframe protocol:
+parent.postMessage({protocol:'intfm-v1', id:'request-1', operation:'render',
+                    args:[text, {mode:'verify', release:'RELEASE-ID'}]}, location.origin)
+Reply: {protocol:'intfm-v1', id, value} or {protocol:'intfm-v1', id, error}.
+Only same-origin callers are accepted. Use the window API for automation.
+
+Browser profile: at most 1,000,000 UTF-8 TL bytes and 300 seconds of audio;
+duration comes only from the native reader. Operational limits are 16 MiB of
+engine output, 120 seconds per Worker, 20,000 drawing events and 256 MiB Wasm
+linear memory. Native preflight gives a lower bound, with separate one-render
+and verification estimates; the page reserves PCM/playback copies too. This is
+not a bound on the whole tab. The local CLI is available for larger records.
+
+Renderer releases are selected by registry release_id/id, never executable URLs
+inside TL. Missing or withdrawn explicit releases cannot use the default.
+Development builds are labelled separately; their artifact IDs are not kept
+release IDs. Kept releases retain their runtime/shim. Engine lines describe
+knobs/tables and do not uniquely identify source revisions.
+
+STATIC CHECKSUMS AND THE KEPT WASM CONTRACT
+agent-manifest.json lists each downloadable static artifact's relative path,
+SHA-256 and byte count. engines.json selects renderer releases and their Wasm,
+runtime and library checksums. The official Node client checks cached/downloaded
+assets against its selected manifest. To check the initially downloaded client:
+
+  curl --fail --location "${SITE}agent-manifest.json" --output agent-manifest.json
+  node --input-type=module - <<'JS'
+  import {readFileSync} from 'node:fs';
+  import {createHash} from 'node:crypto';
+  const manifest = JSON.parse(readFileSync('agent-manifest.json', 'utf8'));
+  const entry = manifest.files.find(item => item.path === 'agent.mjs');
+  const bytes = readFileSync('agent.mjs');
+  if (!entry || bytes.length !== entry.bytes ||
+      createHash('sha256').update(bytes).digest('hex') !== entry.sha256)
+    throw Error('Client differs from the downloaded manifest.');
+  console.log('Client checksum matches the downloaded manifest.');
+JS
+
+These same-origin hashes detect differences from the manifest; they do not
+authenticate that manifest independently or make downloaded code trustworthy.
+The browser checks renderer Wasm and a fetched runtime wrapper against the
+registry, then loads that wrapper and its relative shim imports through normal
+same-origin module loading/cache. Those imported responses are not independently
+bound to the fetched wrapper bytes. Packaging preserves the complete archived
+shim, but only the Node client's verified loader checks each actual transitive
+import against the manifest. Both clients still trust their initial site/client.
+For the supported offline workflow, use agent.mjs setup and retain the complete
+cache. agent-start.txt describes its network requests and execution permissions.
+The Node client requires kept releases by default. Add --allow-development only
+when intentionally using your own source build; reports retain that distinction.
+
+The kept harness.wasm is a WASI preview1 command module: its host imports come
+from wasi_snapshot_preview1 and its entry exports are memory and _start. It
+accepts native CLI arguments/files through WASI; it is not a JavaScript API
+with an exported render(song) function. The browser companion has additional
+PCM access exports and is a different artifact. Use the official client or
+window.IntFM to manage the correct module, host filesystem, lifecycle and
+selected release. A replacement WASI host is not a workaround for an external
+execution-policy refusal; the supplied workflow must be authorized there.
+
+The app works beneath a path prefix. Hosted r/ and s/ pages need a base URL
+pointing at that app prefix. The service worker is scoped there, caches the app
+and used engine assets, and does not cache live service records/API responses.
+On the first visit, rendering waits up to 15 seconds for offline installation
+and control so that the first used renderer is cached too. Unsupported, failed
+or stalled setup falls back to online playback; the footer reports whether
+offline replay is ready. If setup was unavailable, load the song again online
+after installation completes to cache its renderer. Cancel remains immediate.
+It refreshes the registry online; offline revocation status may be stale.
+Save TL locally: browser caches can be evicted and are not a backup.
+Actual Safari/iPhone, Firefox and offline acceptance remain pending until run.
+
+Optional Node smoke bridge from a source checkout (not a browser UI test):
+  node tools/browser_render.mjs INPUT.tl [NEW_CANONICAL_OUTPUT.tl]
+It invokes the same Worker logic. A new canonical output is written only for a
+valid result. Use result.verified when a workflow requires saved-hash verification.

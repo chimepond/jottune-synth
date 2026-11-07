@@ -1,0 +1,60 @@
+/* Copyright (c) 2026 Nenad Micic */
+/* SPDX-License-Identifier: Apache-2.0 */
+/* Host authoring descriptors, version 1; not the GEN_PARAM C ABI.
+ * GEN_KIND(core ID, token).
+ * GEN_PARAM(stable field ID, token, kind mask, slot, type, low, high,
+ *           unit, mutable, has_default, default).
+ * Kind masks use bit(kind-1); 2047 is common, 0 is session metadata.
+ * Bounds are outer bounds. gen.c validates coupled scalar constraints,
+ * parent dependencies, text expansions, reservations and pitch extrema.
+ * All values are decimal literals so consumers need no expression eval. */
+GEN_KIND(1, white)
+GEN_KIND(2, pink)
+GEN_KIND(3, brown)
+GEN_KIND(4, multi)
+GEN_KIND(5, logistic)
+GEN_KIND(6, henon)
+GEN_KIND(7, euclid)
+GEN_KIND(8, thue)
+GEN_KIND(9, cantor)
+GEN_KIND(10, fibonacci)
+GEN_KIND(11, lsystem)
+
+GEN_PARAM(1, seed, 2047, seed, u32, 0, 4294967295, seed, 0, 0, 0)
+GEN_PARAM(2, div, 2047, div, u16, 1, 65535, ticks, 0, 1, 1)
+GEN_PARAM(3, slew, 2047, slew, u16, 0, 512, q15_per_tick, 1, 1, 0)
+GEN_PARAM(4, enabled, 2047, enabled, bool, 0, 1, boolean, 1, 1, 1)
+GEN_PARAM(5, reset, 2047, reset, u32, 0, 4294967295, seed, 1, 0, 0)
+GEN_PARAM(16, step, 4, p0, i64, 1, 4096, q15, 1, 1, 16)
+GEN_PARAM(17, p, 8, p0, i64, 2, 65536, ticks, 0, 1, 256)
+GEN_PARAM(18, k, 8, p1, i64, 2, 16, multiplier, 0, 1, 2)
+GEN_PARAM(19, octaves, 8, p2, i64, 1, 8, count, 0, 1, 6)
+GEN_PARAM(20, gain, 8, p3, i64, 0, 32768, q15, 1, 1, 24576)
+GEN_PARAM(21, r, 16, p0, i64, 0, 1125899906842624, q48, 1, 1, 1123085157075517)
+GEN_PARAM(22, a, 32, p0, i64, 0, 562949953421312, q48, 1, 1, 394064967394918)
+GEN_PARAM(23, b, 32, p1, i64, -281474976710656, 281474976710656, q48, 1, 1, 84442493013197)
+GEN_PARAM(24, k, 64, p0, i64, 0, 65535, count, 1, 1, 3)
+GEN_PARAM(25, n, 64, p1, i64, 1, 65535, count, 1, 1, 8)
+GEN_PARAM(26, rot, 64, p2, i64, 0, 65534, steps, 1, 1, 0)
+GEN_PARAM(27, length, 384, p0, i64, 1, 65535, count, 1, 1, 256)
+GEN_PARAM(28, rot, 384, p1, i64, 0, 65534, steps, 1, 1, 0)
+GEN_PARAM(29, depth, 512, p0, i64, 0, 16, iterations, 0, 1, 12)
+GEN_PARAM(30, rot, 512, p1, i64, 0, 16383, steps, 1, 1, 0)
+GEN_PARAM(31, rot, 1024, p0, i64, 0, 16383, steps, 1, 1, 0)
+
+GEN_PARAM(100, clock, 0, clock, u16, 1, 4096, frames, 0, 1, 64)
+GEN_PARAM(101, source_id, 0, source_id, u8, 0, 15, index, 0, 0, 0)
+GEN_PARAM(102, lane_id, 0, lane_id, u8, 0, 7, index, 0, 0, 0)
+GEN_PARAM(103, voice, 0, voice, u16, 0, 65535, index, 0, 0, 0)
+GEN_PARAM(104, parent, 0, parent, i8, -1, 15, index, 0, 1, -1)
+GEN_PARAM(105, lane_source, 0, lane_source, i8, -1, 15, index, 0, 1, -1)
+GEN_PARAM(106, step_ticks, 0, step_ticks, u16, 1, 65535, ticks, 0, 0, 0)
+GEN_PARAM(107, base_cents, 0, base_cents, i32, -4800, 14400, midi_cents, 0, 0, 0)
+GEN_PARAM(108, span_cents, 0, span_cents, u16, 0, 9600, cents, 0, 0, 0)
+GEN_PARAM(109, velocity, 0, velocity, u16, 1, 32767, q15, 0, 0, 0)
+GEN_PARAM(110, gate_ticks, 0, gate_ticks, u16, 1, 65535, ticks, 0, 0, 0)
+GEN_PARAM(111, scale_mask, 0, scale_mask, u16, 0, 4095, pitch_class_mask, 0, 1, 0)
+GEN_PARAM(112, axiom_depth, 0, axiom_depth, u8, 0, 16, iterations, 0, 0, 0)
+GEN_PARAM(113, axiom_word, 0, axiom_word, word, 1, 32, symbols_a_h, 0, 0, 0)
+GEN_PARAM(114, rule_symbol, 0, rule_symbol, word, 1, 1, symbols_a_h, 0, 0, 0)
+GEN_PARAM(115, rule_word, 0, rule_word, word, 0, 32, symbols_a_h, 0, 0, 0)

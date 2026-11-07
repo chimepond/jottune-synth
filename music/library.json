@@ -1,0 +1,113 @@
+{
+  "version": 1,
+  "songs": [
+    {
+      "id": "quench",
+      "title": "Quench",
+      "collection": "Listening examples",
+      "variants": [
+        {
+          "kind": "standard",
+          "id": "examples/quench-standard.tl",
+          "paths": [
+            "examples/quench-standard.tl"
+          ],
+          "discovery": {
+            "record_sha256": "14434130ababa4e577d3efca74437944e1ee8b8972370aa41bb28b2765dffa3f",
+            "source": "music/library.json",
+            "featured": {
+              "order": 1,
+              "note": "Listening selection."
+            }
+          }
+        },
+        {
+          "kind": "keys",
+          "id": "examples/quench-keys.tl",
+          "paths": [
+            "examples/quench-keys.tl"
+          ]
+        },
+        {
+          "kind": "mirror",
+          "id": "examples/quench-mirror.tl",
+          "paths": [
+            "examples/quench-mirror.tl"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rivet-line",
+      "title": "Rivet Line",
+      "collection": "Listening examples",
+      "variants": [
+        {
+          "kind": "standard",
+          "id": "examples/rivet-line-standard.tl",
+          "paths": [
+            "examples/rivet-line-standard.tl"
+          ],
+          "discovery": {
+            "record_sha256": "593d258955d36f8b83e627a5f00815710e986f9d160fa23c07e995ab2674eeed",
+            "source": "music/library.json",
+            "featured": {
+              "order": 2,
+              "note": "Listening selection."
+            }
+          }
+        },
+        {
+          "kind": "keys",
+          "id": "examples/rivet-line-keys.tl",
+          "paths": [
+            "examples/rivet-line-keys.tl"
+          ]
+        },
+        {
+          "kind": "mirror",
+          "id": "examples/rivet-line-mirror.tl",
+          "paths": [
+            "examples/rivet-line-mirror.tl"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "wind-rose",
+      "title": "Wind Rose",
+      "collection": "Listening examples",
+      "variants": [
+        {
+          "kind": "standard",
+          "id": "examples/wind-rose-standard.tl",
+          "paths": [
+            "examples/wind-rose-standard.tl"
+          ],
+          "discovery": {
+            "record_sha256": "a1dc87b11440f145a63411336613172bbebc70e2600da0674304d8739fc9bd4c",
+            "source": "music/library.json",
+            "featured": {
+              "order": 3,
+              "note": "Listening selection."
+            }
+          }
+        },
+        {
+          "kind": "keys",
+          "id": "examples/wind-rose-keys.tl",
+          "paths": [
+            "examples/wind-rose-keys.tl"
+          ]
+        },
+        {
+          "kind": "mirror",
+          "id": "examples/wind-rose-mirror.tl",
+          "paths": [
+            "examples/wind-rose-mirror.tl"
+          ]
+        }
+      ]
+    }
+  ]
+}

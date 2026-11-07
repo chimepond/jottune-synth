@@ -1,0 +1,18 @@
+<!-- Copyright (c) 2026 Nenad Micic; SPDX-License-Identifier: Apache-2.0 -->
+# JotTune host tools
+
+`fm.py` provides composition, guarded revision, native rendering, inspection,
+measurement, artifact delivery and session recovery. The host tools use the same
+TL reader and renderer as the native player. The detailed operation contract is
+in [the instrument guide](instrument.txt).
+
+`interchange.py` inspects and exports native WAV, MIDI and sampled SFZ bundles.
+`music/compose.py` contains reusable patch, recipe and performance helpers;
+`music/midi2tl.py` and `music/dx7_import.py` import supported external formats.
+`music/analyze.py` supplies optional NumPy measurements and Matplotlib plots.
+
+`build_wasm.py`, `build_spatial.py`, `build_analysis.py` and `package_web.py`
+produce the static browser player from this checkout. `export_library.py`
+validates and packages an explicitly selected catalog of complete TL songs.
+
+The MCP transport and npm launcher are maintained in `chimepond/jottune-mcp`.

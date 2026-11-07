@@ -1,0 +1,1 @@
+{"name":"JotTune Synth","short_name":"JotTune","start_url":"./","display":"standalone","background_color":"#101a20","theme_color":"#101a20","icons":[{"src":"icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any"}],"file_handlers":[{"action":"./","accept":{"text/plain":[".tl"]}}],"scope":"./"}

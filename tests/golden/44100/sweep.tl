@@ -1,0 +1,21 @@
+timeline draft1
+engine a1 sine_bits=12 exp_bits=10 phase64=1 env64=1 fb_avg=1 tables=58021f1150d3c8d2
+fs 44100
+length_ns 3000000000
+streams golden
+patch sweep 0 65536 60 0 0 256 5 3000 60 500
+patch sweep 1 65536 0 6144 256 0 5 3000 120 500
+filter sweep lp 500000 2000
+voice 0 sweep
+hash 64be289419c72dbb
+0 golden 0 on 110000 32767
+250000000 golden 0 filter 750000 2000
+500000000 golden 0 filter 1100000 2000
+750000000 golden 0 filter 1700000 2000
+1000000000 golden 0 filter 2600000 2000
+1250000000 golden 0 filter 4000000 2000
+1500000000 golden 0 filter 2600000 2000
+1750000000 golden 0 filter 1700000 2000
+2000000000 golden 0 filter 1100000 2000
+2250000000 golden 0 filter 750000 2000
+2500000000 golden 0 off

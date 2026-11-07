@@ -1,0 +1,209 @@
+timeline draft1
+engine a1 sine_bits=12 exp_bits=10 phase64=1 env64=1 fb_avg=1 tables=58021f1150d3c8d2
+fs 44100
+gen_clock 64
+length_ns 3600000000000
+streams soak
+gen 0 white 7 1 0
+gen 1 pink 8 1 64
+gen 2 brown 9 1 64 4096
+gen 3 multi 10 1 64 256 2 8 24576
+gen 4 logistic 11 1 0 1123085157075517
+gen 5 henon 12 1 128 394064967394918 84442493013197
+gen 6 euclid 13 47 0 5 11 0 -
+gen 7 thue 14 61 0 257 0
+gen 8 cantor 15 73 0 729 0
+gen 9 fibonacci 16 89 0 12 0
+gen 10 lsystem 17 101 0 0
+gen_axiom 10 10 AB
+gen_rule 10 A AB
+gen_rule 10 B BA
+gen 11 white 18 1 0
+gen 12 pink 19 1 64
+gen 13 brown 20 1 64 4096
+gen 14 multi 21 1 64 256 2 8 24576
+gen 15 logistic 22 1 0 1123085157075517
+patch bed0 0 65536 300 0 0 0 12 120 60 160
+patch bed0 1 131072 0 500 0 0 10 300 0 100
+patch bed1 0 65536 300 0 0 0 12 120 60 160
+patch bed1 1 131072 0 500 0 0 10 300 0 100
+patch bed2 0 65536 300 0 0 0 12 120 60 160
+patch bed2 1 131072 0 500 0 0 10 300 0 100
+patch bed3 0 65536 300 0 0 0 12 120 60 160
+patch bed3 1 131072 0 500 0 0 10 300 0 100
+patch bed4 0 65536 300 0 0 0 12 120 60 160
+patch bed4 1 131072 0 500 0 0 10 300 0 100
+patch bed5 0 65536 300 0 0 0 12 120 60 160
+patch bed5 1 131072 0 500 0 0 10 300 0 100
+patch bed6 0 65536 300 0 0 0 12 120 60 160
+patch bed6 1 131072 0 500 0 0 10 300 0 100
+patch bed7 0 65536 300 0 0 0 12 120 60 160
+patch bed7 1 131072 0 500 0 0 10 300 0 100
+filter bed0 lp 700000 850
+filter bed1 lp 800000 850
+filter bed2 lp 900000 850
+filter bed3 lp 1000000 850
+filter bed4 lp 1100000 850
+filter bed5 lp 1200000 850
+filter bed6 lp 1300000 850
+filter bed7 lp 1400000 850
+mod bed0 0 gen.0.x cutoff 1800 4
+mod bed0 1 gen.8.x pitch0 60 3
+mod bed0 2 gen.5.x level0 30 4
+mod bed1 0 gen.1.x cutoff 1800 4
+mod bed1 1 gen.9.x pitch0 60 3
+mod bed1 2 gen.5.y level0 30 4
+mod bed2 0 gen.2.x cutoff 1800 4
+mod bed2 1 gen.10.x pitch0 60 3
+mod bed2 2 gen.5.x level0 30 4
+mod bed3 0 gen.3.x cutoff 1800 4
+mod bed3 1 gen.11.x pitch0 60 3
+mod bed3 2 gen.5.y level0 30 4
+mod bed4 0 gen.4.x cutoff 1800 4
+mod bed4 1 gen.12.x pitch0 60 3
+mod bed4 2 gen.5.x level0 30 4
+mod bed5 0 gen.5.x cutoff 1800 4
+mod bed5 1 gen.13.x pitch0 60 3
+mod bed5 2 gen.5.y level0 30 4
+mod bed6 0 gen.6.x cutoff 1800 4
+mod bed6 1 gen.14.x pitch0 60 3
+mod bed6 2 gen.5.x level0 30 4
+mod bed7 0 gen.7.x cutoff 1800 4
+mod bed7 1 gen.15.x pitch0 60 3
+mod bed7 2 gen.5.y level0 30 4
+voice 0 bed0
+voice 1 bed1
+voice 2 bed2
+voice 3 bed3
+voice 4 bed4
+voice 5 bed5
+voice 6 bed6
+voice 7 bed7
+gen_lane 0 0 6 0 11 241 4200 900 20000 120 2741
+gen_lane 1 1 7 1 12 273 4500 900 20000 273 2741
+gen_lane 2 2 8 2 11 305 4800 900 20000 152 2741
+gen_lane 3 3 9 3 12 337 5100 900 20000 337 2741
+gen_lane 4 4 10 4 11 369 5400 900 20000 184 2741
+gen_lane 5 5 6 5 12 401 5700 900 20000 401 2741
+gen_lane 6 6 7 13 11 433 6000 900 20000 216 2741
+gen_lane 7 7 8 14 12 465 6300 900 20000 465 2741
+hash 9ae81beee413d3ca
+1000000000 soak gen 0 reset 7002
+1000000000 soak gen 1 reset 7003
+1000000000 soak gen 2 reset 7004
+1000000000 soak gen 3 reset 7005
+1000000000 soak gen 4 reset 7006
+1000000000 soak gen 5 reset 7007
+1000000000 soak gen 6 reset 7008
+1000000000 soak gen 7 reset 7009
+1000000000 soak gen 8 reset 7010
+1000000000 soak gen 9 reset 7011
+1000000000 soak gen 10 reset 7012
+1000000000 soak gen 11 reset 7013
+1000000000 soak gen 12 reset 7014
+1000000000 soak gen 13 reset 7015
+1000000000 soak gen 14 reset 7016
+1000000000 soak gen 15 reset 7017
+60000000000 soak gen 0 reset 7061
+60000000000 soak gen 1 reset 7062
+60000000000 soak gen 2 reset 7063
+60000000000 soak gen 3 reset 7064
+60000000000 soak gen 4 reset 7065
+60000000000 soak gen 5 reset 7066
+60000000000 soak gen 6 reset 7067
+60000000000 soak gen 7 reset 7068
+60000000000 soak gen 8 reset 7069
+60000000000 soak gen 9 reset 7070
+60000000000 soak gen 10 reset 7071
+60000000000 soak gen 11 reset 7072
+60000000000 soak gen 12 reset 7073
+60000000000 soak gen 13 reset 7074
+60000000000 soak gen 14 reset 7075
+60000000000 soak gen 15 reset 7076
+90000000000 soak lane 3 enable 0
+95000000000 soak lane 3 enable 1
+300000000000 soak gen 14 gain 20000
+600000000000 soak gen 0 reset 7601
+600000000000 soak gen 1 reset 7602
+600000000000 soak gen 2 reset 7603
+600000000000 soak gen 3 reset 7604
+600000000000 soak gen 4 reset 7605
+600000000000 soak gen 5 reset 7606
+600000000000 soak gen 6 reset 7607
+600000000000 soak gen 7 reset 7608
+600000000000 soak gen 8 reset 7609
+600000000000 soak gen 9 reset 7610
+600000000000 soak gen 10 reset 7611
+600000000000 soak gen 11 reset 7612
+600000000000 soak gen 12 reset 7613
+600000000000 soak gen 13 reset 7614
+600000000000 soak gen 14 reset 7615
+600000000000 soak gen 15 reset 7616
+900000000000 soak gen 0 slew 512
+1200000000000 soak gen 0 reset 8201
+1200000000000 soak gen 1 reset 8202
+1200000000000 soak gen 2 reset 8203
+1200000000000 soak gen 3 reset 8204
+1200000000000 soak gen 4 reset 8205
+1200000000000 soak gen 5 reset 8206
+1200000000000 soak gen 6 reset 8207
+1200000000000 soak gen 7 reset 8208
+1200000000000 soak gen 8 reset 8209
+1200000000000 soak gen 9 reset 8210
+1200000000000 soak gen 10 reset 8211
+1200000000000 soak gen 11 reset 8212
+1200000000000 soak gen 12 reset 8213
+1200000000000 soak gen 13 reset 8214
+1200000000000 soak gen 14 reset 8215
+1200000000000 soak gen 15 reset 8216
+1500000000000 soak gen 0 slew 0
+1800000000000 soak gen 0 reset 8801
+1800000000000 soak gen 1 reset 8802
+1800000000000 soak gen 2 reset 8803
+1800000000000 soak gen 3 reset 8804
+1800000000000 soak gen 4 reset 8805
+1800000000000 soak gen 5 reset 8806
+1800000000000 soak gen 6 reset 8807
+1800000000000 soak gen 7 reset 8808
+1800000000000 soak gen 8 reset 8809
+1800000000000 soak gen 9 reset 8810
+1800000000000 soak gen 10 reset 8811
+1800000000000 soak gen 11 reset 8812
+1800000000000 soak gen 12 reset 8813
+1800000000000 soak gen 13 reset 8814
+1800000000000 soak gen 14 reset 8815
+1800000000000 soak gen 15 reset 8816
+2100000000000 soak gen 1 enabled 0
+2120000000000 soak gen 1 enabled 1
+2700000000000 soak gen 0 reset 9701
+2700000000000 soak gen 1 reset 9702
+2700000000000 soak gen 2 reset 9703
+2700000000000 soak gen 3 reset 9704
+2700000000000 soak gen 4 reset 9705
+2700000000000 soak gen 5 reset 9706
+2700000000000 soak gen 6 reset 9707
+2700000000000 soak gen 7 reset 9708
+2700000000000 soak gen 8 reset 9709
+2700000000000 soak gen 9 reset 9710
+2700000000000 soak gen 10 reset 9711
+2700000000000 soak gen 11 reset 9712
+2700000000000 soak gen 12 reset 9713
+2700000000000 soak gen 13 reset 9714
+2700000000000 soak gen 14 reset 9715
+2700000000000 soak gen 15 reset 9716
+3500000000000 soak gen 0 reset 10501
+3500000000000 soak gen 1 reset 10502
+3500000000000 soak gen 2 reset 10503
+3500000000000 soak gen 3 reset 10504
+3500000000000 soak gen 4 reset 10505
+3500000000000 soak gen 5 reset 10506
+3500000000000 soak gen 6 reset 10507
+3500000000000 soak gen 7 reset 10508
+3500000000000 soak gen 8 reset 10509
+3500000000000 soak gen 9 reset 10510
+3500000000000 soak gen 10 reset 10511
+3500000000000 soak gen 11 reset 10512
+3500000000000 soak gen 12 reset 10513
+3500000000000 soak gen 13 reset 10514
+3500000000000 soak gen 14 reset 10515
+3500000000000 soak gen 15 reset 10516

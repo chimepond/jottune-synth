@@ -1,0 +1,21 @@
+timeline draft1
+engine a1 sine_bits=12 exp_bits=10 phase64=1 env64=1 fb_avg=1 tables=58021f1150d3c8d2
+fs 48000
+length_ns 5400000000
+streams golden
+patch retrig 0 65536 0 0 0 256 50 400 120 900
+patch retrig 1 98304 0 2560 512 0 30 600 200 700
+voice 0 retrig
+hash 433bf8313f4d6cb0
+0 golden 0 on 440000 32767
+250000000 golden 0 on 493883 24000
+270000000 golden 0 on 523251 32767
+700000000 golden 0 off
+900000000 golden 0 on 392000 20000
+1300000000 golden 0 off
+2200000000 golden 0 on 440000 32767
+2500000000 golden 0 off
+3700000000 golden 0 on 349228 32767
+3700000000 golden 0 off
+3900000000 golden 0 on 349228 32767
+4100000000 golden 0 off

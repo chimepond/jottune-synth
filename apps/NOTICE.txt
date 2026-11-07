@@ -1,0 +1,9 @@
+JotTune Synth
+Copyright (c) 2026 Nenad Micic
+SPDX-License-Identifier: Apache-2.0
+
+The synthesizer, fixed-point math and application code are licensed under the
+Apache License, Version 2.0. See the accompanying LICENSE for the complete terms.
+
+Android builds also contain the libraries listed in Android-NOTICE.txt.
+Their copyright and license terms remain with their respective authors.

@@ -1,0 +1,302 @@
+Copyright (c) 2026 Nenad Micic
+SPDX-License-Identifier: Apache-2.0
+
+JOTTUNE — AUTHOR IN MUSICAL TIME, THEN VERIFY THE SAVED SONG
+
+Start with starter.score.json and its complete editable starter.tl. This is an
+eight-bar teaching arrangement, not an original song to publish unchanged.
+Choose your own hook, answering passage, contrasting middle, return and ending.
+State the intended style, length and instrumental/vocal expectations. JotTune
+renders synthesized instruments and percussion; it does not sing your lyrics.
+
+The JSON score is editable authoring material. The TL contains the complete
+instrument and events and replays without JSON, recipes or other source files.
+starter.tl is intentionally a draft without a saved audio hash. Keep both the
+editable source and the canonical TL returned by the selected renderer.
+
+LINKS RELATIVE TO THIS PAGE
+  starter.score.json       editable score-v1 example
+  starter.tl               complete matching hashless TL draft
+  authoring.mjs            pure browser/Node authoring functions
+  browser-guide.txt        browser rendering, verification and export
+  reference/params.txt     native field units, ranges and dependencies
+  reference/gen-params.txt native generators
+  reference/recipes.txt    complete recipe rows, descriptions and tweak units
+  instrument.txt          full instrument and optional local Python/MCP tools
+
+ONE BROWSER/ NODE MODULE; NO PYTHON REQUIRED ON THE CLIENT
+
+Import authoring.mjs from the same application prefix. compileScore is pure:
+it does not fetch, render, play, save, upload or read TL. Supply the exact
+identity from the selected installed renderer registry entry, without the
+leading "ENGINE ". Engine identity is not a unique release identifier; retain
+the selected renderer release separately and use it when rendering and replaying.
+
+  const score = await (await fetch(new URL('starter.score.json', document.baseURI))).json();
+  const compiled = await IntFM.compose(score);
+  console.log(compiled.advisories);
+  const take = await IntFM.listen(compiled.draftText, {release: compiled.rendererRelease});
+  if (take.verdict !== 'valid') throw Error(take.stderr || take.verdict);
+  const savedText = new TextDecoder().decode(take.canonical);
+  const saved = await IntFM.verify(savedText, {release: compiled.rendererRelease});
+  if (!saved.verified) throw Error(saved.stderr || saved.verification);
+  const wav = IntFM.toWav(saved);
+
+The page's Listen button starts audio on its user gesture. IntFM.listen only
+renders; a returned PCM buffer is not evidence of hearing the song. Export the
+canonical bytes and WAV through the player or the supported Node client. The
+browser guide explains release discovery, limits and all result fields.
+
+compileScore returns draftText (also authored_tl), sourceMap (also line_map),
+advisories, length_ns, quarter_extent, counts and coverage. Each source-map row
+connects an emitted TL line to the original JSON pointer; expanded recipe rows
+point to /declarations. ScoreError carries pointer and details. These are source
+checks, not native validity or saved-hash verification. Native rendering must
+validate the instrument, parameter bounds, dependencies and final record.
+
+The adapter supports the EXISTING score version 1. It explicitly refuses v2/v3
+phrases, chords, automation and regions; the local compiler supports those
+versions. All 14 v1 event kinds are available. No unsupported kind is silently
+approximated. Safe JavaScript integers are required: use direct native TL for
+integer fields beyond +/-9007199254740991. Native integer result strings must
+not be converted to Number merely for display.
+
+SCORE SHAPE AND EXACT TIME
+
+Required fields: version:1, fs:44100 or 48000, clock, declarations (native text),
+streams (distinct names in ordering priority), voices (patch names indexed from
+zero), and events. Optional name and about:[single-line text] become comments.
+Unknown fields are refused. The clock is:
+
+  {bars:8, meter:[{bar:1, quarters:4}],
+   tempo:[{bar:1, bpm:96}], ramp:'step', tail_ns:3000000000}
+
+Bars are one-based in maps. Event at/duration are zero-based QUARTER-NOTE units.
+Use integers or rational strings such as "3/2", not decimal 1.5. Numerators
+must be safe integers, denominators 1..4096. Meter/tempo anchors start at bar 1
+and strictly increase. Tempo can include the final bars+1 anchor for a ramp.
+The clock integrates exact rational durations and rounds each cumulative time
+once to the nearest nanosecond, ties away from zero. No per-beat drift accumulates.
+Linear ramps interpolate nanoseconds per quarter, NOT BPM linearly.
+For example, this clock ramps across eight bars to the bar-9 boundary:
+  {bars:8, meter:[{bar:1, quarters:4}],
+   tempo:[{bar:1, bpm:96},{bar:9, bpm:120}],
+   ramp:'linear', tail_ns:3000000000}
+The final anchor sets the ramp endpoint; it does not add a ninth musical bar.
+The tail adds render time after the musical extent. Use ramp:'step' to hold each
+anchor's tempo until the next. This is a clock example, not a suggested tempo.
+
+At quarter-note BPM 96, one quarter is 625000000 ns, one eighth 312500000 ns,
+and one 4/4 bar 2500000000 ns. In 6/8 at dotted-quarter=54, enter quarters:3
+and bpm:81; each eighth occupies "1/2" quarter. Dotted-quarter=72 similarly
+means bpm:108. A tempo range alone is not a timed tempo map.
+
+An event example:
+  {kind:'note', at:0, duration:'3/2', stream:'lead', voice:0,
+   pitch:{note:'E5'}, velocity_q15:24000}
+
+Pitch accepts exactly one of note, midi (0..127), or millihz. Note names are
+uppercase A..G, optional #/b, and a one-digit octave (including -1). A4 is
+440000 mHz. Integer MIDI pitches use the existing compiler's exact generated
+table. Direct millihz is the native route for other tunings.
+
+Percussion recipes receive that same pitch; MIDI numbers here do not select
+General MIDI drum sounds. A recipe's description pitch is a suggested audition
+pitch, not an automatic transpose or a drum-key mapping. For example, kick's
+50 Hz description corresponds to pitch:{millihz:50000}; the ordinary hat's
+7 kHz description corresponds to pitch:{millihz:7000000}. Choosing another
+pitch changes the ratio-driven operators, including their noisy timbre. For
+operators with nonzero fixed frequency, that frequency replaces note frequency
+before the ratio; hat-fixed holds both operators' frequencies independently of
+the note. Consult reference/recipes.txt for each recipe's rows and description.
+
+Event kind      Additional required fields beyond kind, at, stream
+note            voice, duration, pitch, velocity_q15
+on              voice, pitch, velocity_q15
+off             voice
+pitch           voice, pitch
+ctl             voice, input, value_q15
+filter          voice, cutoff_millihz, q_milli
+send            voice, bus, level_q15
+crush           voice, bits, rate_div
+pos             voice, x_mm, y_mm, z_mm
+move            voice, duration, x_mm, y_mm, z_mm
+yaw             yaw_mdeg
+gen             id, param, value
+lane            id, enabled (0 or 1)
+mark            text (one line; an authoring comment)
+
+All musical spans end within the clock extent; tail_ns extends rendering only.
+The adapter writes events in source order, just like the Python compiler.
+Native scheduling uses timestamp, then declared stream order, then source order.
+It does not globally sort note-offs before ons. At a replacement boundary, place
+the previous note/off before the replacement on in the same stream. A note emits
+its own later off: that off can close a retriggered gate. Review advisories for
+stale offs, simultaneous ons, intentional retriggers, unmatched offs and held
+gates. Warnings do not repair notes or reject legal retriggers. Cross-role rests
+are musical intent; note gates do not measure envelope or effect tails.
+
+SOUNDS, EFFECTS AND SPACE
+
+listRecipes() returns 60 existing preset IDs, descriptions and generated carrier
+metadata: operator, named level tweak and default attenuationDb. recipe('epiano',
+'keys') returns complete native rows. A score's declarations may likewise use
+"recipe keys epiano". Defaults remain byte-for-byte the existing Python expansion.
+
+Change a preset's level by name, without editing positional patch fields:
+  recipe wind flute c_level=6
+This is a score declarations row, using the existing Python authoring syntax.
+c_level adds attenuation in dB: +6 is quieter and -6 is louder, relative to the
+preset. Flute's carrier changes from raw level 100 to 160 (10 to 16 dB of
+source attenuation). The direct function is recipe('flute','wind',{c_level:6}).
+m_level,
+o2_level and o3_level are supported only when that operator is also a carrier,
+as the Python helper requires. A noncarrier's level field is ignored by native
+synthesis, so its level tweak is refused; modulation depth uses index instead.
+Named deltas use Python's clamp to 0..120 dB and nearest-ties-even conversion to
+native tenths. They can change the balance between multiple carriers.
+
+To change every carrier together while preserving that balance:
+  const {recipeGain} = await import(new URL('authoring.mjs', document.baseURI));
+  const windDeclarations = recipeGain('flute', 'wind', -6);
+Use those complete native rows in the score's declarations alongside its other
+patches and spatial/effect declarations. recipeGain(name,patch,gainDb) uses
+signed gain: -6 is quieter, +6 louder. It accepts 0.1 dB steps and refuses a gain
+that would require clamping any carrier. It changes source carrier levels;
+nonlinear processing can make final mix loudness change by a different amount.
+Keep the chosen gain in editable score/source material and verify the new TL.
+
+LEVEL_DB10 sets source amplitude, approximately 10^(-LEVEL_DB10/200), before
+envelope, velocity, carrier summing, filters/shaping, position, sends and master
+processing. It is not the final sample peak or LUFS. In ordinary stereo, one
+dry centered carrier has another 3.01 dB attenuation per channel. A sustained
+sine has RMS another 3.01 dB below its peak. A brief low kick and a sustained
+high tone can therefore have very different measured loudness at the same
+LEVEL. Use analysis on the actual arrangement and selected time window; there
+is no universal LUFS target, required stereo width or preferred style.
+
+Calibration for the current engine: one unmodulated 1 kHz sine, fs 48000,
+LEVEL 100, velocity 32767, sensitivity 0, attack/decay 1 ms, sustain 0,
+ordinary stereo at (0,1000,0), near 100, block 64, no FX. A two-second held
+note measured over 0.1..1.9 seconds gives about -13.01 dBFS peak per channel,
+-16.02 dBFS RMS per channel and -13.00 integrated LUFS across both channels.
+These are calibration values for that fixture, not a recipe or song target.
+The native reference in instrument.txt supplies its exact patch/event rows.
+
+Other recipe tweaks/templates and the three bandlimited wavetable presets
+require the local expander or complete native declarations. No synthesis
+feature is restricted to the preset list: declarations
+accept all current native declaration keywords; parameter validity belongs to
+the engine. A caller can supply current native STATEMENT descriptors in the
+statements option to recognize later renderer declarations. Adapter-owned
+timeline/engine/fs/length_ns/streams/voice/hash rows and timed rows are refused
+inside declarations; these come from the score itself.
+
+The four starter voices are lead, bass and two independent chord tones. Bass
+and lead are centered; chord positions (-600,800,0) and (600,800,0) are in mm.
+This is ordinary stereo. Coordinates are not binaural HRTFs or measured width.
+For this route, the approximate settled dry gains are:
+  r = sqrt(x*x + y*y + z*z), u = x/max(r,near), g = 1000/max(r,1000)
+  left = g*sqrt((1-u)/2), right = g*sqrt((1+u)/2)
+All distances are mm; integer rounding applies. near only limits the pan
+denominator: distance attenuation starts beyond 1000 mm regardless of near.
+At (0,1000,0) both gains are about 0.707; at (1000,0,0) they are 0 and 1.
+Doubling radius beyond 1 m loses about 6.02 dB. At (450,880,0), u is only
+about 0.456, so moving x alone does not imply a wide pan. Gain changes ramp
+on the block grid. These equations do not describe binaural/ambisonic/PANLAW.
+Sends are pre-pan and returns have their own image: plain delay is centered;
+chorus/flanger use offset taps, reverb different left/right networks and
+ping-pong different left/right delays. Moving a voice does not move its returns.
+Try independent complementary phrases and check actual stereo/mono behavior.
+The same score can declare other native routes; raw ambisonic coefficients are
+not speaker channels. Native dependencies and selected-renderer support apply.
+
+Use the native descriptor for positional patch fields. Common traps:
+* Pitch/filter cutoff is mHz, patch envelope times ms, delay times microseconds,
+  event timestamps ns; position mm, yaw millidegrees.
+* Ratio 65536 is 1.0 (Q16); index/feedback 1024 is 1 radian (Q10);
+  velocity/sends use Q15. Positive operator level/sustain values ATTENUATE in
+  tenths of dB; signed master gain +40 means +4 dB.
+* The fixed FM path still needs both operators. An unused modulator must be
+  explicitly configured; a nonexistent field or operator is not a shortcut.
+* Declaring delay/reverb does not send audio into it. Add nonzero per-voice sends.
+  Sends demonstrate routing, not musical benefit. Compare one changed send over
+  the same phrase plus its decay, with the preceding effect history retained.
+* limiter THRESHOLD_DB10 RELEASE_MS uses POSITIVE attenuation: "limiter 30 100"
+  means a -3 dB threshold and 100 ms release. A negative threshold is invalid.
+  Do not use a limiter to conceal bad staging; no target level is a genre gate.
+* noise PATCH OP SHIFT controls coloured-noise waves 10/11 only (shift 1..15,
+  default 4), not white noise wave 4 or pink noise wave 9. Set the operator wave
+  first; a bare "noise" name is not an oscillator declaration.
+* PANLAW cannot be combined with effects. Consult the native route constraints.
+
+PATCH BEHAVIOR THAT AFFECTS A REAL ARRANGEMENT
+
+Noise waves 4/9/10/11 advance their random generator when operator phase crosses
+a half-turn, not on every output sample. Ratio and note pitch therefore change
+the noise clock. Nonzero FIXED_MILLIHZ replaces note frequency before the ratio,
+holding that clock constant across notes; pitch events and PEG/LFO/matrix pitch
+do not bend that fixed operator. Incoming phase modulation/self-feedback does
+not clock these noise waves. SHIFT shapes waves10/11 with a per-sample
+coefficient 2^-SHIFT, not a cutoff in Hz.
+
+KS LOSS_Q15 is retained loop gain: the averaged delayed signal is multiplied by
+LOSS_Q15/32768. Larger values generally retain the pluck longer; it is not an
+amount subtracted from unity. The operator envelope still shapes the result.
+Every KS note-on refills its buffer with noise, including a retrigger while
+ringing. A silent start seeds the PRNG from patch seed and operator salt; a
+sounding retrigger continues its current PRNG state. A pitch event retunes the
+delay without refilling it. FREE controls idle phase/noise behavior, not a
+persistent KS buffer across note-ons.
+
+Operator attack rises linearly in amplitude; DECAY_MS is the peak-to-sustain
+segment, linear in attenuation. RELEASE_MS specifies the peak-to-minus96dB
+slope, so release from a quieter envelope ends sooner. Rate scaling can shorten
+these times. Retriggers preserve phase and current gain, with an already-running
+attack retaining its slope. None of this guarantees click-free transitions.
+
+Velocity is linear gain normalized by 32767 (larger values clamp). Each operator
+blends it with unity, approximately:
+  gain = 1 - min(VEL_SENS_Q8,256)/256 * (1 - velocity/32767)
+Integer rounding applies. Sensitivity 0 ignores velocity; 256 fully follows it.
+This scales both output level and modulation index, so velocity can change
+timbre as well as loudness. It is not a logarithmic attenuation law.
+For the gain factor alone, half velocity gives about -6.02 dB at sensitivity
+256 or -3.25 dB at 160; sensitivity 160 approaches an -8.52 dB floor at zero
+velocity. Those are not guaranteed whole-patch loudness changes when the
+modulation spectrum also changes.
+
+Note-on refreshes filter coefficients but preserves integrator state. Note-off
+does not instantly clear a ringing filter. Once carriers idle, the filter runs
+on zero input until its quiet threshold or bounded ring-out cap. An enabled
+final amp envelope reaching idle instead ends the voice and clears filter and
+formant state. Allocate a voice separately if you need independent releases.
+
+PEG starts at L4 from silence, reaches L1/L2/L3, holds L3, and returns to L4
+after off. The master limiter shares lookahead with the compressor and uses
+interpolated safe gain with release. It is not a hard sample clamp or a true-peak
+ceiling. At its own output it bounds sample magnitude to the selected threshold
+(for example limiter 18 100 is nominally -1.8 dBFS), subject to fixed-point
+arithmetic and final PCM rounding. Downstream softclip can raise that level;
+dither and rounding can change final peak. Intersample peaks are a separate
+measurement. Keep ending audio long enough for the actual chain; inspect its measured tail.
+
+REVISION AND FINISHING
+
+Keep the original canonical record and renderer release. A deliberate revision
+starts a separate draft without the old hash assertion; score JSON naturally
+compiles to such a draft. Never remove an assertion to conceal an unexplained
+mismatch or unavailable release. A hashless valid render is unverified; replay
+its canonical output with the same release and require verified=true,
+play.match='yes' and play.block_indep='yes'. Wrong saved hashes remain errors.
+
+Render a representative dense passage early. Inspect sample peak, RMS and final
+clipping, then change the score and retain both takes. These are not LUFS or
+true peak. Measure actual ending decay; do not assume a fixed tail is adequate.
+Numerical checks cannot establish hook quality, balance, fatigue or perceived
+effect benefit. Audition named hook, middle and ending passages when possible,
+and report listening or device testing as untested when it was not performed.
+
+Source limits are 1 MiB JSON, 8192 events, 16 streams, 64 voices, 65536 quarters,
+600 seconds and 4 MiB emitted TL. The browser has the separate stricter 1,000,000
+TL bytes / 300-second profile and device budgets; compilation is not admission.

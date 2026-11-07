@@ -1,0 +1,23 @@
+# JotTune Synth
+
+Compose, render, analyze and export locally from this player URL.
+No MCP server or repository checkout required. Start here:
+
+- [Agent quickstart](agent-start.txt): supported browser and downloadable Node workflows.
+- [Official client](agent.mjs): Node 22.15+, built-ins only, pinned local runtime.
+- [Authoring](authoring.txt): score v1, recipes, musical time and native declarations.
+- [Starter score](starter.score.json): editable teaching arrangement.
+- [Native TL](native-reference.txt): complete native syntax.
+- [Parameters](reference/params.txt): generated units/ranges/dependencies.
+- [Recipe catalog](reference/recipes.txt): complete presets, tweak units and spectral guidance.
+- [Audio analysis](analysis.txt): measured PCM, advisory gates and optional dry sources.
+- [Browser API](browser-guide.txt): window.IntFM, saved verification and artifacts.
+- [Library](songs.json): examples, exact saved variants and attributed metadata.
+- [Static checksums](agent-manifest.json) and [renderer registry](engines.json):
+  artifact integrity and kept versions; same-origin hashes are not independent authenticity.
+
+All URLs stay relative to this player base. Creating and rendering a song is
+local. This player does not upload songs.
+Use the quickstart's online setup before offline work. A render with a computed
+hash is not full verification. Score solo/mute is a rerender through effects,
+not additive mix stems. No genre, loudness or width target is prescribed.

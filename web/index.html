@@ -1,0 +1,314 @@
+<!doctype html>
+<!-- Copyright (c) 2026 Nenad Micic; SPDX-License-Identifier: Apache-2.0 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#101a20">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="style.css">
+  <title>JotTune Synth</title>
+</head>
+<body>
+  <a class="skip-link" href="#player-heading">Skip to player</a>
+  <header class="app-header">
+    <a class="brand" href="./">JotTune <span>Integer synth</span></a>
+    <p class="header-note">One text file. The whole record.</p>
+    <nav class="resource-nav" aria-label="Resources"><a href="browser-guide.txt">Guide</a></nav>
+    <button id="section-toggle" class="section-toggle" aria-controls="section-nav" aria-expanded="false" hidden>Sections <span aria-hidden="true">☰</span></button>
+  </header>
+  <div class="app-shell">
+    <nav id="section-nav" class="section-nav" aria-label="Page sections">
+      <div class="section-nav-heading"><span>Sections</span><button id="section-close" aria-label="Close sections" hidden>Close</button></div>
+      <section id="rail-transport" class="rail-transport" aria-label="Selected song and playback">
+        <div class="rail-selection" tabindex="0" aria-label="Selected song details">
+          <span class="rail-label">Selected song</span>
+          <strong id="rail-selected-song">Choose a song</strong>
+          <span id="rail-selected-version" class="small"></span>
+        </div>
+        <button id="rail-load" type="button" disabled>Load song</button>
+        <p id="rail-loaded-song" class="rail-loaded-song" tabindex="0">No song loaded</p>
+        <button id="rail-play" type="button" class="primary" aria-describedby="rail-status" disabled>Play</button>
+        <p id="rail-status" class="small" aria-live="off" tabindex="0">Load a song, then press Play.</p>
+        <output id="rail-time" aria-label="Playback time" aria-live="off">0:00 / 0:00</output>
+      </section>
+      <div class="section-links">
+      <a href="#library-panel" data-section="library-panel" data-section-focus="library-summary" aria-current="location"><span aria-hidden="true">01</span> Songs</a>
+      <a href="#player-panel" data-section="player-panel" data-section-focus="player-heading"><span aria-hidden="true">02</span> Player</a>
+      <a href="#live-views" data-section="live-views" data-section-focus="views-heading"><span aria-hidden="true">03</span> Live views</a>
+      <a href="#source-panel" data-section="source-panel" data-section-focus="source-summary"><span aria-hidden="true">04</span> Source</a>
+      <a href="#details-panel" data-section="details-panel" data-section-focus="details-summary"><span aria-hidden="true">05</span> Details</a>
+      <a href="#agent" data-section="agent" data-section-focus="agent-summary"><span aria-hidden="true">06</span> Guide</a>
+      <div class="auto-move-control">
+        <label class="check-label"><input id="auto-move" type="checkbox" checked aria-describedby="auto-move-help"> Auto move</label>
+        <p id="auto-move-help" class="small">Load → Player<br>Play → Live views<br>Finish → Songs<br>Manual navigation or scrolling to another section turns this off.</p>
+      </div>
+      </div>
+    </nav>
+  <main>
+    <h1 class="sr-only">JotTune Synth player</h1>
+    <p class="agent-entry"><a href="agent-start.txt">For agents: start composing</a></p>
+    <details id="library-panel" class="song-library panel" open>
+      <summary id="library-summary">Choose a song <span class="small">Browse songs or open your own .tl file</span></summary>
+      <div class="library-body">
+      <div class="section-heading">
+        <h2 id="library-heading">Song library</h2>
+        <div class="library-views" role="group" aria-label="Discover source songs">
+          <button id="library-featured" aria-pressed="true">Favorites</button>
+          <button id="library-all" aria-pressed="false">Browse all</button>
+        </div>
+        <span id="library-status" class="small" role="status" aria-live="polite">Loading song library…</span>
+      </div>
+      <p id="library-view-detail" class="small">A curated listening selection. Browse all includes the available source songs.</p>
+      <div class="library-search-filters">
+      <div class="library-search">
+        <div><label for="song-search">Search songs</label><input id="song-search" type="search" placeholder="Title or collection" disabled></div>
+        <button id="library-clear" class="quiet">Clear filters</button>
+      </div>
+      <div class="library-filters" role="group" aria-label="Source song filters">
+        <div><label for="song-collection">Collection</label><select id="song-collection" disabled><option value="">All collections</option></select></div>
+        <div id="song-genre-field"><label for="song-genre">Genre</label><select id="song-genre" disabled><option value="">All genres</option></select></div>
+        <div id="song-tempo-field"><label for="song-tempo">Tempo</label><select id="song-tempo" disabled><option value="">All tempos</option><option value="constant">Constant BPM</option><option value="range">Changing / range</option><option value="unknown">Unknown</option></select></div>
+        <div id="song-model-field"><label for="song-model">Model (attributed)</label><select id="song-model" disabled><option value="">All models</option></select></div>
+      </div>
+      </div>
+      <div class="library-controls">
+        <div class="song-results">
+          <div id="song-results-label">Results · select a song</div>
+          <div class="song-browser">
+            <div id="song-jog-left" class="song-jog" data-song-jog role="group" aria-label="Browse songs from the left">
+              <button id="song-step-up-left" type="button" aria-label="Previous results page" title="Previous results page" aria-controls="song-select" disabled>▲</button>
+              <span class="song-jog-grip" aria-hidden="true"></span>
+              <button id="song-step-down-left" type="button" aria-label="Next results page" title="Next results page" aria-controls="song-select" disabled>▼</button>
+            </div>
+            <fieldset id="song-select" aria-labelledby="song-results-label" disabled>Loading…</fieldset>
+            <div id="song-jog-right" class="song-jog" data-song-jog role="group" aria-label="Browse songs from the right">
+              <button id="song-step-up-right" type="button" aria-label="Previous results page" title="Previous results page" aria-controls="song-select" disabled>▲</button>
+              <span class="song-jog-grip" aria-hidden="true"></span>
+              <button id="song-step-down-right" type="button" aria-label="Next results page" title="Next results page" aria-controls="song-select" disabled>▼</button>
+            </div>
+          </div>
+        </div>
+        <div class="saved-version"><label for="song-variant">Saved version</label><select id="song-variant" disabled></select></div>
+      </div>
+      <div class="catalog-pagination">
+        <p id="library-path" class="small">Source library › Favorites</p>
+        <button id="library-previous" disabled>Previous results</button>
+        <button id="library-next" disabled>Next results</button>
+      </div>
+      <section class="song-card" aria-labelledby="selected-song-title">
+        <h3 id="selected-song-title">Choose a song</h3>
+        <div class="row actions song-actions" role="group" aria-label="Selected song actions">
+          <button id="song-load" class="primary" disabled>Load song</button>
+          <button id="song-preview" aria-controls="song-preview-roll" aria-expanded="false" disabled>Inspect notes</button>
+          <button id="song-preview-cancel" hidden>Cancel inspection</button>
+          <button id="song-load-right" class="primary" disabled>Load song</button>
+        </div>
+        <p class="small">Browsing selection · playback stays unchanged until Load song</p>
+        <p id="song-detail" class="small">Choose a song and load it, then press Play when ready.</p>
+        <p id="song-note" class="small"></p>
+        <details class="song-facts"><summary>Song facts &amp; declarations</summary><p id="song-discovery" class="small"></p></details>
+        <p id="song-preview-status" class="small" role="status">Inspect the selected song’s notes without rendering audio.</p>
+        <div id="song-preview-roll" class="song-preview-roll" role="region" aria-label="Selected song note preview" hidden></div>
+      </section>
+      <details id="library-research" class="library-research">
+        <summary>About this collection &amp; research</summary>
+        <p>These readable songs explore composing with a shared instrument. Technical construction and declarations describe the collection; they do not measure musical quality or compare model ability.</p>
+        <p id="library-statistics" class="small">Collection summary is available when packaged.</p>
+        <p id="library-duration-distribution" class="small"></p>
+        <details><summary>Declared styles, tempos and models</summary><p id="library-declaration-counts" class="small"></p></details>
+      </details>
+      <div class="open-row">
+        <div id="dropzone">
+          <label for="file">Open song (.tl)</label>
+          <input id="file" type="file" accept=".tl,text/plain" aria-describedby="drop-hint">
+          <span id="drop-hint" class="small">or drop a file here</span>
+        </div>
+        <button id="example" class="quiet">Load example</button>
+      </div>
+      </div>
+    </details>
+
+    <section id="player-panel" class="workspace panel output-panel" aria-labelledby="player-heading">
+      <div class="section-heading player-heading">
+        <h2 id="player-heading" tabindex="-1">Player</h2>
+        <span id="verdict" class="badge">Choose a song</span>
+        <button id="render" class="quiet">Verify</button>
+      </div>
+      <p id="loaded-song" class="loaded-song">No song loaded</p>
+      <p id="loaded-version" class="small">Load a song, then press Play.</p>
+      <div class="transport" aria-label="Playback controls">
+        <button id="play" disabled class="primary">Play</button>
+        <button id="stop" disabled>Stop</button>
+        <label class="check-label"><input id="loop" type="checkbox"> Loop</label>
+        <output id="time" aria-label="Playback time" aria-live="off">0:00 / 0:00</output>
+        <button id="cancel" hidden>Cancel rendering</button>
+        <button id="play-right" disabled class="primary">Play</button>
+      </div>
+      <div class="position-row">
+        <label for="seek" class="sr-only">Playback position</label>
+        <input id="seek" type="range" min="0" max="0" step="any" value="0" disabled>
+      </div>
+      <p id="status" class="player-status" role="status" aria-live="polite">Open a song to prepare playback.</p>
+      <details class="song-structure">
+        <summary>Song structure · loaded song</summary>
+        <p id="song-structure" class="small">Load a song to describe its native note commands.</p>
+        <p class="small">Gates describe commands, not release tails, audible pitch or musical quality. Analyze audio under Record details for sound measurements.</p>
+      </details>
+
+      <div class="profile-controls">
+        <div><label for="listening-profile">Listening profile</label>
+          <select id="listening-profile" disabled aria-describedby="profile-detail">
+            <option value="original">Keep loaded version</option>
+            <option value="30">Keys ±30° · focused</option>
+            <option value="45">Keys ±45°</option>
+            <option value="60">Keys wide ±60°</option>
+            <option value="75">Keys ±75°</option>
+            <option value="90">Keys ±90° · full semicircle</option>
+          </select>
+        </div>
+        <label class="check-label"><input id="profile-mirror" type="checkbox" disabled> Mirror low/high sides</label>
+        <button id="profile-apply" disabled>Prepare profile</button>
+      </div>
+      <p id="profile-detail" class="small" role="status">Keep loaded version preserves the saved version named above. Preparing a profile resets playback; press Play when ready.</p>
+      <details class="profile-help"><summary>What do the profiles change?</summary>
+        <p><strong>Original</strong> is the composer’s original version: it may be mono, stereo, moving or binaural. Saved <strong>Keys</strong> versions usually use ±30°: low notes left, middle C ahead, high notes right. <strong>Keys mirror</strong> reverses left and right, like facing the piano from the audience.</p>
+        <p>The number is the angle on <strong>each side</strong> of the listener. ±30° spans 60° in total; ±60° spans 120°. Keys places note attacks on a one-metre front arc, from E1 at the left edge to G♯6 at the right; pitches outside that range stay at the edges. Wider angles increase separation. ±90° reaches the sides.</p>
+        <p>Computed Keys replaces authored spatial motion with pitch-based <strong>ordinary stereo</strong>; it does not add binaural HRTF rendering. Notes, timing and effects remain; carrier levels are adjusted together toward the existing peak target. Headphones make the comparison easiest. Prepare profile creates new audio silently; press Play to listen.</p>
+        <p>Each change starts from the loaded source, so widths do not accumulate. Choose <strong>Keep loaded version</strong> and Prepare profile to restore it. Use Save song (.tl) to keep the computed version as one complete song. Nothing is uploaded or added to the catalog.</p>
+        <p class="small">Computing a profile takes several renders and can be slower than loading a saved version, especially on a phone. Cancel stops the work.</p>
+        <label class="check-label"><input id="profile-quiet" type="checkbox" disabled> Allow a quieter result if the carrier gain limit is reached</label>
+        <p class="small">Optional recovery for quiet songs: preserves relative carrier levels and still refuses clipping or silence. The result is labelled below target rather than normalized.</p>
+      </details>
+
+      <div class="downloads" role="group" aria-label="Record exports">
+        <button id="tl-download" disabled>Save song (.tl)</button>
+        <button id="wav-download" disabled>Save audio (.wav)</button>
+        <button id="svg-download" disabled>Timeline SVG</button>
+        <button id="spectrum" disabled>Render spectrogram</button>
+        <button id="png-download" disabled>PNG</button>
+      </div>
+      <p class="small">A .tl song file reopens in this instrument; .wav is rendered audio.</p>
+      <div class="row actions" role="group" aria-label="Share the loaded song">
+        <button id="share" disabled>Copy song link</button>
+        <button id="show-qr" disabled>Song QR code</button>
+      </div>
+      <p class="small">Library songs use a compact link; local edits travel inside a portable link. If a QR is too large, share the TL file. Portable links depend on the selected renderer remaining available.</p>
+
+      <section id="live-views" class="live-views" aria-labelledby="views-heading">
+      <h3 id="views-heading" tabindex="-1">Live views</h3>
+      <div class="display-toolbar">
+        <div class="view-controls" role="group" aria-label="Display view">
+          <button id="view-live" aria-pressed="true" aria-controls="live-panel">Live</button>
+          <button id="view-notes" aria-pressed="false" aria-controls="timeline">Notes</button>
+          <button id="view-spectrum" aria-pressed="false" aria-controls="spectrum-panel">Spectrogram</button>
+          <button id="view-off" aria-pressed="false" aria-controls="display-off">Off</button>
+        </div>
+        <span class="small">Note events &amp; rendered audio</span>
+      </div>
+      <div id="display-surface" class="display-surface">
+        <p id="display-off" class="display-off" hidden>Display off. Playback remains available.</p>
+        <div id="live-panel" role="region" aria-label="Instrument display"></div>
+        <div id="timeline" class="timeline" role="region" aria-label="Note timeline and spatial targets" tabindex="0" hidden>
+          <p>Load a song to see its notes and spatial targets.</p>
+        </div>
+        <div id="spectrum-panel" hidden>
+          <div class="spectrum-tools">
+            <p id="spectrum-status" role="status" aria-live="polite">Render a song to inspect its sound.</p>
+            <button id="spectrum-cancel" hidden>Cancel analysis</button>
+          </div>
+          <canvas id="spectrogram" hidden role="img" aria-label="First-channel display-only spectrogram"></canvas>
+        </div>
+      </div>
+      </section>
+
+    </section>
+
+    <details id="source-panel" class="panel input-panel">
+      <summary id="source-summary">Timeline source</summary>
+      <div class="detail-body">
+        <label for="record">JotTune Timeline text</label>
+        <textarea id="record" spellcheck="false" placeholder="Paste a complete .tl record…" aria-describedby="edit-help"></textarea>
+        <div class="row actions"><button id="listen">Listen to edits</button><button id="draft-download">Save draft text</button><button id="verify-saved" disabled>Verify saved render</button></div>
+        <p id="edit-help" class="small">Editing stops playback and keeps the selected renderer. Listen renders the current text and starts audio. Save draft text retains unfinished or refused text locally, without claiming verification.</p>
+        <p class="small">For an intentional new version, keep the original saved TL and edit a separate draft without its old <code>hash</code> assertion. Never remove a hash to conceal an unexplained mismatch. After a valid draft render, Verify saved render replays its canonical output and checks the new saved hash. Keep your editable source too: canonical output can reorder headers and add defaults.</p>
+        <form id="url-form">
+          <label for="url">Load from a URL</label>
+          <div class="row"><input id="url" type="url" placeholder="https://example.org/song.tl"><button>Load</button></div>
+        </form>
+      </div>
+    </details>
+
+    <details id="details-panel" class="panel diagnostics">
+      <summary id="details-summary">Record details</summary>
+      <div class="detail-body">
+        <p class="small">Loading prepares one render for Play; block independence is unchecked. Verify renders twice and checks the saved PCM hash and block independence. Device playback may resample the audio.</p>
+        <dl id="facts"><dt>Engine</dt><dd>Local integer C → WebAssembly</dd><dt>Privacy</dt><dd>Opening, composing and rendering stay on this device.</dd></dl>
+        <details><summary>Audio measurements</summary>
+          <p>Measure cached PCM locally: loudness, peaks, stereo balance, windows and ending silence. This does not judge musical quality.</p>
+          <details><summary>Analysis options</summary>
+            <div class="row">
+              <label>Window length (seconds)<input id="analysis-window" type="number" min="0.1" max="300" step="0.1" value="4"></label>
+              <label><input id="analysis-dry" type="checkbox"> Include dry source levels (additional render)</label>
+            </div>
+            <label><input id="analysis-section" type="checkbox"> Measure a named section</label>
+            <div class="row">
+              <label>Section name<input id="analysis-section-name" maxlength="120" value="Section"></label>
+              <label>Start (seconds)<input id="analysis-section-start" type="number" min="0" step="any" value="0"></label>
+              <label>End (seconds)<input id="analysis-section-end" type="number" min="0" step="any" placeholder="Song end"></label>
+            </div>
+            <p class="small">Dry levels are before effects and spatial processing. This optional step has a 128 MiB / 10-second budget; an unavailable result preserves the final audio measurements. The browser API supports multiple named sections and explicit larger budgets.</p>
+          </details>
+          <div class="row actions"><button id="analyze-audio" disabled>Analyze audio</button><button id="analysis-cancel" hidden>Cancel analysis</button><button id="analysis-download" disabled>Save analysis JSON</button></div>
+          <p id="analysis-status" role="status">Analyze the prepared audio without rendering again.</p><pre id="analysis-output"></pre>
+        </details>
+        <details><summary>Engine output</summary><pre id="raw">PLAY and METRICS lines will appear here.</pre></details>
+      </div>
+    </details>
+
+    <details id="agent" class="panel agent">
+      <summary id="agent-summary">Agent guide</summary>
+      <div class="detail-body agent-grid">
+        <div>
+          <h2>The instrument is an open interface.</h2>
+          <p><strong>Give your agent this page’s URL.</strong> Start with the <a href="agent-start.txt">agent quickstart</a>: compose in musical time, render locally, measure and revise, then deliver one complete TL and WAV. No MCP server or source checkout is needed.</p>
+          <p>Browser automation uses <code>window.IntFM</code>. Terminal agents can download the <a href="agent.mjs" download>official Node client</a> (Node 22.15+; no npm packages).</p>
+          <button id="copy-guide">Copy browser guide</button>
+          <p class="reference-links"><a href="authoring.txt">Score &amp; sound recipes</a><a href="starter.score.json">Editable example</a><a href="analysis.txt">Audio analysis</a><a href="native-reference.txt">Native TL reference</a><a href="instrument.txt">Full instrument guide</a><a href="reference/params.txt">Native parameters</a><a href="reference/gen-params.txt">Generator parameters</a></p>
+        </div>
+        <div>
+          <h2>Keep your music</h2>
+          <p>Downloading one .tl file is enough to keep the song. The Player’s Copy song link and Song QR code controls share it without publishing. A portable link carries local TL text in its fragment.</p>
+          <details>
+            <summary>Optional provenance for WAV export</summary>
+            <form id="provenance">
+              <label>Model<input name="model" placeholder="model-name"></label>
+              <label>Model source<select name="model_source"><option value="unknown">Unknown</option><option value="client-reported">Client reported</option><option value="user-stated">User stated</option></select></label>
+              <label>Client<input name="client" placeholder="client-name"></label>
+              <label>Made by<select name="made_by"><option value="">Unspecified</option><option>agent</option><option>human</option><option>mixed</option></select></label>
+              <label>Licence identifier<input name="licence" placeholder="Only if you explicitly declare one"></label>
+            </form>
+          </details>
+          <p class="small">These tags stay outside the TL grammar. No licence is added by default. Free prompt text and hashes are not exported.</p>
+        </div>
+      </div>
+    </details>
+    <footer><p id="offline-status" role="status">Preparing offline support…</p>Rendered on this device. Browser profile: 1 MB of TL and 300 seconds of audio; use the local CLI for larger work. Offline support caches the app and used engines. Save the TL file to keep your music.</footer>
+  </main>
+  </div>
+  <script type="module" src="app.mjs"></script>
+<aside id="mobile-transport" class="mobile-transport" aria-label="Song controls and sections">
+  <div class="mobile-identity"><strong id="mobile-song">No song loaded</strong><span id="mobile-version"></span></div>
+  <output id="mobile-time" aria-label="Playback time">0:00 / 0:00</output>
+  <div class="mobile-actions">
+    <button id="choose-song" class="quiet" data-action="choose">Choose song</button>
+    <button id="mobile-play" class="primary" disabled>Play</button>
+  </div>
+  <nav id="mobile-section-nav" class="mobile-section-nav" aria-label="Main sections">
+    <a href="#library-panel" data-section="library-panel" data-section-focus="library-summary" aria-current="location">Song library</a>
+    <a href="#player-panel" data-section="player-panel" data-section-focus="player-heading">Player</a>
+    <a href="#live-views" data-section="live-views" data-section-focus="views-heading">Live Viz</a>
+  </nav>
+</aside>
+</body>
+</html>

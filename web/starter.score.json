@@ -1,0 +1,586 @@
+{
+  "version": 1,
+  "name": "A first conversation",
+  "about": [
+    "Copyright (c) 2026 Nenad Micic",
+    "SPDX-License-Identifier: Apache-2.0",
+    "Teaching arrangement: write your own melody before claiming original publication.",
+    "Eight bars, 4/4, quarter-note BPM 96; ordinary stereo, not binaural.",
+    "Lead and bass remain centered. Independent chord voices sit left and right."
+  ],
+  "fs": 48000,
+  "clock": {
+    "bars": 8,
+    "meter": [
+      {
+        "bar": 1,
+        "quarters": 4
+      }
+    ],
+    "tempo": [
+      {
+        "bar": 1,
+        "bpm": 96
+      }
+    ],
+    "ramp": "step",
+    "tail_ns": 3000000000
+  },
+  "declarations": "space stereo\nblock 64\nnear 100\ngain 40\ndelay 312500 6500 3500\nreverb 400 700\nrecipe lead marimba\nrecipe bass round-bass\nrecipe chord epiano\n",
+  "streams": [
+    "lead",
+    "bass",
+    "chords"
+  ],
+  "voices": [
+    "lead",
+    "bass",
+    "chord",
+    "chord"
+  ],
+  "events": [
+    {
+      "kind": "pos",
+      "at": 0,
+      "stream": "lead",
+      "voice": 0,
+      "x_mm": 0,
+      "y_mm": 1000,
+      "z_mm": 0
+    },
+    {
+      "kind": "pos",
+      "at": 0,
+      "stream": "bass",
+      "voice": 1,
+      "x_mm": 0,
+      "y_mm": 1000,
+      "z_mm": 0
+    },
+    {
+      "kind": "pos",
+      "at": 0,
+      "stream": "chords",
+      "voice": 2,
+      "x_mm": -600,
+      "y_mm": 800,
+      "z_mm": 0
+    },
+    {
+      "kind": "pos",
+      "at": 0,
+      "stream": "chords",
+      "voice": 3,
+      "x_mm": 600,
+      "y_mm": 800,
+      "z_mm": 0
+    },
+    {
+      "kind": "send",
+      "at": 0,
+      "stream": "lead",
+      "voice": 0,
+      "bus": "reverb",
+      "level_q15": 2400
+    },
+    {
+      "kind": "send",
+      "at": 0,
+      "stream": "chords",
+      "voice": 2,
+      "bus": "reverb",
+      "level_q15": 2400
+    },
+    {
+      "kind": "send",
+      "at": 0,
+      "stream": "chords",
+      "voice": 3,
+      "bus": "reverb",
+      "level_q15": 2400
+    },
+    {
+      "kind": "send",
+      "at": 0,
+      "stream": "lead",
+      "voice": 0,
+      "bus": "delay",
+      "level_q15": 3200
+    },
+    {
+      "kind": "mark",
+      "at": 0,
+      "stream": "lead",
+      "text": "Hook and answer"
+    },
+    {
+      "kind": "note",
+      "at": 0,
+      "duration": 2,
+      "stream": "bass",
+      "voice": 1,
+      "pitch": {
+        "note": "C3"
+      },
+      "velocity_q15": 23000
+    },
+    {
+      "kind": "note",
+      "at": 1,
+      "duration": "3/2",
+      "stream": "chords",
+      "voice": 2,
+      "pitch": {
+        "note": "E4"
+      },
+      "velocity_q15": 19500
+    },
+    {
+      "kind": "note",
+      "at": "3/2",
+      "duration": 1,
+      "stream": "chords",
+      "voice": 3,
+      "pitch": {
+        "note": "G4"
+      },
+      "velocity_q15": 18500
+    },
+    {
+      "kind": "note",
+      "at": 4,
+      "duration": 2,
+      "stream": "bass",
+      "voice": 1,
+      "pitch": {
+        "note": "A2"
+      },
+      "velocity_q15": 23000
+    },
+    {
+      "kind": "note",
+      "at": 5,
+      "duration": "3/2",
+      "stream": "chords",
+      "voice": 2,
+      "pitch": {
+        "note": "E4"
+      },
+      "velocity_q15": 19500
+    },
+    {
+      "kind": "note",
+      "at": "11/2",
+      "duration": 1,
+      "stream": "chords",
+      "voice": 3,
+      "pitch": {
+        "note": "A4"
+      },
+      "velocity_q15": 18500
+    },
+    {
+      "kind": "mark",
+      "at": 8,
+      "stream": "lead",
+      "text": "Answer with space"
+    },
+    {
+      "kind": "note",
+      "at": 8,
+      "duration": 2,
+      "stream": "bass",
+      "voice": 1,
+      "pitch": {
+        "note": "F2"
+      },
+      "velocity_q15": 23000
+    },
+    {
+      "kind": "note",
+      "at": 9,
+      "duration": "3/2",
+      "stream": "chords",
+      "voice": 2,
+      "pitch": {
+        "note": "F4"
+      },
+      "velocity_q15": 19500
+    },
+    {
+      "kind": "note",
+      "at": "19/2",
+      "duration": 1,
+      "stream": "chords",
+      "voice": 3,
+      "pitch": {
+        "note": "A4"
+      },
+      "velocity_q15": 18500
+    },
+    {
+      "kind": "note",
+      "at": 12,
+      "duration": 2,
+      "stream": "bass",
+      "voice": 1,
+      "pitch": {
+        "note": "G2"
+      },
+      "velocity_q15": 23000
+    },
+    {
+      "kind": "note",
+      "at": 13,
+      "duration": "3/2",
+      "stream": "chords",
+      "voice": 2,
+      "pitch": {
+        "note": "D4"
+      },
+      "velocity_q15": 19500
+    },
+    {
+      "kind": "note",
+      "at": "27/2",
+      "duration": 1,
+      "stream": "chords",
+      "voice": 3,
+      "pitch": {
+        "note": "B4"
+      },
+      "velocity_q15": 18500
+    },
+    {
+      "kind": "mark",
+      "at": 16,
+      "stream": "lead",
+      "text": "Quieter contrasting middle"
+    },
+    {
+      "kind": "note",
+      "at": 16,
+      "duration": 2,
+      "stream": "bass",
+      "voice": 1,
+      "pitch": {
+        "note": "A2"
+      },
+      "velocity_q15": 20500
+    },
+    {
+      "kind": "note",
+      "at": 17,
+      "duration": "3/2",
+      "stream": "chords",
+      "voice": 2,
+      "pitch": {
+        "note": "C4"
+      },
+      "velocity_q15": 16000
+    },
+    {
+      "kind": "note",
+      "at": "35/2",
+      "duration": 1,
+      "stream": "chords",
+      "voice": 3,
+      "pitch": {
+        "note": "E4"
+      },
+      "velocity_q15": 16000
+    },
+    {
+      "kind": "note",
+      "at": 20,
+      "duration": 2,
+      "stream": "bass",
+      "voice": 1,
+      "pitch": {
+        "note": "F2"
+      },
+      "velocity_q15": 20500
+    },
+    {
+      "kind": "note",
+      "at": 21,
+      "duration": "3/2",
+      "stream": "chords",
+      "voice": 2,
+      "pitch": {
+        "note": "C4"
+      },
+      "velocity_q15": 16000
+    },
+    {
+      "kind": "note",
+      "at": "43/2",
+      "duration": 1,
+      "stream": "chords",
+      "voice": 3,
+      "pitch": {
+        "note": "F4"
+      },
+      "velocity_q15": 16000
+    },
+    {
+      "kind": "mark",
+      "at": 24,
+      "stream": "lead",
+      "text": "Return and cadence"
+    },
+    {
+      "kind": "note",
+      "at": 24,
+      "duration": 2,
+      "stream": "bass",
+      "voice": 1,
+      "pitch": {
+        "note": "G2"
+      },
+      "velocity_q15": 23000
+    },
+    {
+      "kind": "note",
+      "at": 25,
+      "duration": "3/2",
+      "stream": "chords",
+      "voice": 2,
+      "pitch": {
+        "note": "D4"
+      },
+      "velocity_q15": 19500
+    },
+    {
+      "kind": "note",
+      "at": "51/2",
+      "duration": 1,
+      "stream": "chords",
+      "voice": 3,
+      "pitch": {
+        "note": "B4"
+      },
+      "velocity_q15": 18500
+    },
+    {
+      "kind": "note",
+      "at": 28,
+      "duration": 3,
+      "stream": "bass",
+      "voice": 1,
+      "pitch": {
+        "note": "C3"
+      },
+      "velocity_q15": 23000
+    },
+    {
+      "kind": "note",
+      "at": 29,
+      "duration": 2,
+      "stream": "chords",
+      "voice": 2,
+      "pitch": {
+        "note": "E4"
+      },
+      "velocity_q15": 19500
+    },
+    {
+      "kind": "note",
+      "at": "59/2",
+      "duration": "3/2",
+      "stream": "chords",
+      "voice": 3,
+      "pitch": {
+        "note": "G4"
+      },
+      "velocity_q15": 18500
+    },
+    {
+      "kind": "note",
+      "at": 0,
+      "duration": "1/2",
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "E5"
+      },
+      "velocity_q15": 25000
+    },
+    {
+      "kind": "note",
+      "at": "3/4",
+      "duration": "1/2",
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "G5"
+      },
+      "velocity_q15": 23000
+    },
+    {
+      "kind": "note",
+      "at": "3/2",
+      "duration": 1,
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "A5"
+      },
+      "velocity_q15": 24500
+    },
+    {
+      "kind": "note",
+      "at": 4,
+      "duration": 1,
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "G5"
+      },
+      "velocity_q15": 23000
+    },
+    {
+      "kind": "note",
+      "at": "11/2",
+      "duration": "1/2",
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "E5"
+      },
+      "velocity_q15": 21000
+    },
+    {
+      "kind": "note",
+      "at": 8,
+      "duration": "1/2",
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "F5"
+      },
+      "velocity_q15": 24000
+    },
+    {
+      "kind": "note",
+      "at": "35/4",
+      "duration": "1/2",
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "A5"
+      },
+      "velocity_q15": 22000
+    },
+    {
+      "kind": "note",
+      "at": "19/2",
+      "duration": 1,
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "G5"
+      },
+      "velocity_q15": 24000
+    },
+    {
+      "kind": "note",
+      "at": 12,
+      "duration": 1,
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "D5"
+      },
+      "velocity_q15": 22000
+    },
+    {
+      "kind": "note",
+      "at": "27/2",
+      "duration": "1/2",
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "B4"
+      },
+      "velocity_q15": 20000
+    },
+    {
+      "kind": "note",
+      "at": 16,
+      "duration": "3/2",
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "C5"
+      },
+      "velocity_q15": 20000
+    },
+    {
+      "kind": "note",
+      "at": 20,
+      "duration": "3/2",
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "F5"
+      },
+      "velocity_q15": 20000
+    },
+    {
+      "kind": "note",
+      "at": 24,
+      "duration": "1/2",
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "E5"
+      },
+      "velocity_q15": 25000
+    },
+    {
+      "kind": "note",
+      "at": "99/4",
+      "duration": "1/2",
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "G5"
+      },
+      "velocity_q15": 23000
+    },
+    {
+      "kind": "note",
+      "at": "51/2",
+      "duration": 1,
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "B5"
+      },
+      "velocity_q15": 24500
+    },
+    {
+      "kind": "note",
+      "at": 28,
+      "duration": "1/2",
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "D5"
+      },
+      "velocity_q15": 22000
+    },
+    {
+      "kind": "note",
+      "at": 29,
+      "duration": 2,
+      "stream": "lead",
+      "voice": 0,
+      "pitch": {
+        "note": "C5"
+      },
+      "velocity_q15": 23000
+    }
+  ]
+}

@@ -1,0 +1,884 @@
+# Copyright (c) 2026 Nenad Micic
+# SPDX-License-Identifier: Apache-2.0
+# Fresh-process refusal before any player is armed.
+crusherunarmedcheck
+#
+# make uitest: the Instrument controls, through the
+# setters the controls call (UIScript.swift has the step grammar). Starts on
+# the built-in patch: the fixed 2-op path, op 0 the carrier at 60 dB10,
+# op 1 the modulator at index 2048, vel sens 128, the computer keys' A at
+# MIDI 60, velocity 26000.
+
+# ---- Records: open, play to the end, the hash the record states ----
+open tests/golden/48000/sine.tl
+play
+wait end
+hash record
+seekcheck
+recoverycheck
+localfilescheck
+snap rec
+
+# ---- the audition labels: device rate and silent raw-field output ----
+expect label.device 0
+expect label.audition 0
+device 44100
+expect label.device 1
+snap devrate changed rec
+device 48000
+expect label.device 0
+snap devsame same rec
+device 0
+open tests/golden/44100/sine.tl
+device 48000
+expect label.device 1
+device 0
+open tests/golden/space/amb1.tl
+expect label.audition 1
+play
+wait 4800
+open tests/golden/space/pan.tl
+expect label.audition 0
+open tests/golden/48000/sine.tl
+
+# ---- the piano: a key while not live arms the player first ----
+expect live 0
+note ON 60
+expect live 1
+wait 4800
+note OFF 60
+wait 4800
+expect advance 4800
+hash
+snap first changed rec
+
+# ---- op 0, the carrier on the fixed path ----
+check op0.ratio 131072 centroid+
+check op0.level 200 rms-
+check op0.index 4000 inactive
+check op0.feedback 3000 inactive
+check op0.vel_sens 0 rms+
+check op0.attack 100
+check op0.decay 50 rms-
+check op0.sustain 400 rms-
+check op0.release 2000
+check op0.wave 1
+check op0.rate_scale 7
+check op0.ks_break 100000 inactive
+check op0.ks_slope 100 inactive
+check op0.fixed 440000
+check op0.phase 16384
+set op0.release 1
+set op1.release 1
+check op0.free_run 2 retrig
+check op0.free_run 1 retrig
+set op0.release 300
+set op1.release 300
+set op0.sustain 0
+check op0.decay 50 inactive
+set op0.sustain 120
+
+# ---- op 1, the modulator ----
+check op1.ratio 196608
+check op1.level 200 inactive
+check op1.index 6000 hf+
+check op1.feedback 2000
+check op1.vel_sens 0 hf+
+check op1.attack 200
+check op1.decay 100 hf-
+check op1.sustain 0 hf+
+check op1.release 2000
+check op1.wave 3
+check op1.rate_scale 7
+check op1.ks_break 300000 inactive
+check op1.ks_slope 200 hf-
+set op1.ks_slope 200
+check op1.ks_break 1000000 hf+
+set op1.ks_slope 0
+check op1.fixed 100000
+check op1.phase 16384
+set op0.release 1
+set op1.release 1
+check op1.free_run 2 retrig
+check op1.free_run 1 retrig
+set op0.release 300
+set op1.release 300
+
+# ---- the route ----
+check route.ops 2 any
+set route.ops 3
+expect route.w.1.0 256
+check route.carrier.1 1 rms+
+check route.w.1.0 512 hf+
+check op1.level 300 inactive
+check op0.index 2000 inactive
+check op2.level 300 inactive
+set op2.index 2048
+check route.w.2.0 512 hf+
+check route.ops 4 same
+set route.ops 0
+expect route.carrier.0 0
+
+# ---- the filter, and the live filter on the armed patch ----
+check filter.mode 1
+set filter.mode 1
+check filter.cutoff 500000 centroid-
+check filter.q 4000
+check live.cutoff 300000 centroid-
+check live.q 6000
+set filter.mode 0
+
+# ---- the LFO, the lfo statement ----
+expect statements patch
+check lfo.rate 5000 inactive
+set lfo.rate 5000
+expect statements patch lfo
+check lfo.pitch 100 inactive
+set lfo.pitch 100
+check lfo.mask_pitch 3
+set lfo.mask_pitch 3
+check lfo.rate 9000
+check lfo.wave 4
+check lfo.delay 100
+check lfo.fade 100
+check lfo.phase 16384
+set op0.release 1
+set op1.release 1
+check lfo.free_run 2 retrig
+set op0.release 300
+set op1.release 300
+set lfo.mask_pitch 0
+set op1.fixed 100000
+check lfo.mask_pitch 2 inactive
+set op1.fixed 0
+set lfo.pitch 0
+check lfo.mask_pitch 1 inactive
+check lfo.level 200 inactive
+set lfo.level 200
+check lfo.mask_level 1 rms-
+set lfo.level 0
+check lfo.index 1024 inactive
+set lfo.index 1024
+check lfo.mask_index 2
+set lfo.index 0
+check lfo.wave 2 inactive
+set lfo.rate 0
+expect statements patch
+
+# ---- the pitch envelope, the peg statement ----
+check peg.mask 1 inactive
+check peg.t1 100 inactive
+check peg.l3 1200 centroid+
+set peg.l3 1200
+expect statements patch peg
+check peg.t1 100
+set peg.t1 100
+check peg.l1 -1200
+check peg.t2 100
+set peg.t2 100
+check peg.l2 600
+check peg.t3 100
+check peg.l4 -1200
+check peg.t4 100
+check peg.mask 1
+set peg.l3 0
+set peg.t1 0
+set peg.t2 0
+expect statements patch
+
+# ---- the filter envelope, the fenv statement ----
+set fenv.depth 2400
+expect statements patch fenv
+set button.play_live
+expect error 1
+set fenv.depth 0
+set button.play_live
+expect error 0
+set filter.mode 1
+set filter.cutoff 500000
+expect statements patch filter
+check fenv.sustain 1000 inactive
+set fenv.sustain 1000
+check fenv.depth 2400 centroid+
+set fenv.depth 2400
+expect statements patch filter fenv
+check fenv.decay 100 inactive
+set fenv.sustain 500
+check fenv.decay 100
+check fenv.attack 100
+check fenv.release 100
+check fenv.depth -2400 centroid-
+check fenv.ref 130813 inactive
+check fenv.track 1000 same
+set fenv.track 1000
+check fenv.ref 130813 centroid+
+set fenv.track 0
+set fenv.depth 0
+set fenv.sustain 0
+expect statements patch filter
+set filter.mode 0
+
+# ---- the patch source, its name ----
+check source recipe:bell
+check source record:0
+check name other same
+
+# ---- velocity and the octave ----
+set op0.vel_sens 256
+check velocity 12000 rms-
+set op0.vel_sens 128
+check octave 72 centroid+
+
+# ---- effects and sends ----
+check fx.dcblock 1
+set fx.dcblock 1
+check fx.dcblock.fc 40000
+set fx.dcblock 0
+check fx.chorus 1 any
+set fx.chorus 1
+check send.chorus 20000
+check fx.chorus.base 22000 with send.chorus 20000
+check fx.chorus.depth 4500 with send.chorus 20000
+check fx.chorus.rate 2500 with send.chorus 20000
+set fx.chorus 0
+check fx.delay 1 any
+set fx.delay 1
+set fx.delay.time 50000
+check send.delay 20000
+check fx.delay.time 80000 with send.delay 20000
+check fx.delay.feedback 20000 with send.delay 20000
+check fx.delay.lowpass 1000 with send.delay 20000
+set fx.delay 0
+check fx.reverb 1 any
+set fx.reverb 1
+check send.reverb 20000
+check fx.reverb.room 900 with send.reverb 20000
+check fx.reverb.damp 900 with send.reverb 20000
+set fx.reverb 0
+set fx.limiter.threshold 150
+check fx.limiter 1 rms-
+set fx.limiter 1
+check fx.limiter.threshold 60 rms+
+check fx.limiter.release 2000
+set fx.limiter 0
+set op0.level 0
+set velocity 32767
+check fx.softclip 1
+set velocity 26000
+set op0.level 60
+
+# ---- stereo and the position pad ----
+check stereo 1
+set stereo 1
+check pos.x 1500
+check pos.y 3500
+check pos.voice 3 with pos.x -1500
+set stereo 0
+
+# ---- the buttons ----
+set button.play_live
+expect live 1
+expect dirty 0
+expect label.rearm 0
+set op1.index 3000
+expect dirty 1
+expect label.rearm 1
+snap dirty
+device 44100
+expect label.device 1
+device 0
+set button.apply
+expect dirty 0
+expect label.rearm 0
+set op1.index 2048
+set button.pause
+expect playing 0
+wait 4800
+expect advance 0
+set button.resume
+expect playing 1
+set button.record
+expect recording 1
+note ON 60
+wait 9600
+note OFF 60
+wait 9600
+set button.stop
+expect recording 0
+expect take 1
+set button.verify_take
+set button.save take.tl
+wavsave
+set button.copy
+expect clipboard 1
+set button.oct_down
+expect octave 48
+set button.oct_up
+expect octave 60
+set button.rescan
+expect recipes 1
+snap last changed dirty
+expect error 0
+
+# ---- a record's lfo, peg and fenv in Instrument, carried in full ----
+open tests/golden/48000/pegslide.tl
+set source record:0
+expect dropped 0
+expect statements patch route lfo peg
+expect lfo.rate 5500
+expect peg.mask 7
+check lfo.pitch 60
+check peg.l1 0
+open tests/golden/48000/fenvpluck.tl
+set source record:0
+expect dropped 0
+expect statements patch filter fenv
+expect fenv.depth 4800
+check fenv.depth 2400
+open tests/golden/48000/freelfo.tl
+set source record:0
+expect dropped 0
+expect lfo.free_run 2
+expect lfo.mask_level 1
+set op0.release 1
+set op1.release 1
+check lfo.free_run 0 retrig
+set source builtin
+expect error 0
+
+# ---- the 3D space view and the stereo picture ----
+# move.tl's paths, worked by hand from space.h's motion rule: the
+# second move cuts the first at block 600, at (98, 0, 0), as the record says
+open tests/golden/space/move.tl
+expect space.points 14
+expect space.path 0 jump -1000,0,0@0 | -1000,0,0@12032 | 98,0,0@38400 | 0,1000,0@57600 | 0,1000,0@62400 | jump 0,0,1000@62400 | 0,0,1000@67200 | jump 500,500,0@67200 | 500,500,0@72000 | 1568,144,0@95936
+expect space.path 1 jump 0,1000,0@14400 | jump 1000,0,0@14400 | 1000,0,0@14912 | -1000,0,0@38912
+expect space.pos 0 0,1000,0
+space top 0 90
+space tilted 0 30 changed top
+space again 0 30 same tilted
+space turned 90 30 changed tilted
+play
+wait 24000
+expect space.pos 0 -502,0,0
+space moving 0 30 changed tilted
+wait 14400
+expect space.pos 0 98,0,0
+space moved 0 30 changed moving
+# the stereo picture against analyze.py overview (uitest.sh): 1 s windows,
+# then its 4 s default: the shorter record is one row.
+open tests/golden/space/panlaw.tl
+stereo panlaw 1
+expect stereo.rows 2
+stereo panlaw4
+expect stereo.rows 1
+stereosilence
+expect stereo.rows 1
+
+# ---- a full take, and players retired with no callback ----
+# A take whose event log fills (65536 events) ends by itself: the Record
+# button comes back, the take arrives and says why it ended, and it replays
+# in harness --play (uitest.sh replays every .tl here).
+set source builtin
+set button.play_live
+set button.record
+expect recording 1
+flood 66000
+expect recording 0
+expect take 1
+expect take.full 1
+set button.save full.tl
+set button.record
+expect take.full 0
+set button.stop
+expect recording 0
+expect take.full 0
+# Offline no callback runs between renders, as when the device fails to
+# start: a swapped-out player must still be closed, a rewind must finish.
+open tests/golden/48000/sine.tl
+open tests/golden/48000/bell.tl
+wait 0
+expect players.pending 0
+play
+wait 4800
+rewind
+expect players.pending 1
+wait 0
+expect players.pending 0
+wait 4800
+expect position 4800
+
+# ---- live MIDI input (MidiInput.swift, the bridge's fms_midi.c) ----
+# MIDI while no live player runs is refused and counted, and arms nothing.
+# Then a take of MIDI and the piano together: two notes, the pedal holding
+# the first past its note-off, a bend over both, a key on the piano (a free
+# voice: MIDI holds two), a clock tick and a program change (ignored). The
+# take replays to its hash in the app and in harness --play (uitest.sh).
+open tests/golden/48000/sine.tl
+set source builtin
+expect live 0
+midi 90 3C 64
+expect midi.notlive 1
+expect live 0
+set button.play_live
+expect live 1
+expect midi.notlive 0
+set button.record
+midi 90 3C 64
+wait 2400
+midi B0 40 7F
+midi 80 3C 00
+midi 90 40 50
+wait 2400
+midi E0 00 60
+wait 2400
+midi B0 40 00
+note ON 67
+wait 2400
+midi 80 40 00
+midi F8
+midi C0 05
+wait 2400
+note OFF 67
+wait 4800
+set button.stop
+expect take 1
+expect midi.messages 9
+expect midi.notes 2
+expect midi.pitch 2
+expect midi.events 6
+expect midi.ignored 2
+expect midi.notlive 0
+expect midi.dropped 0
+set button.save midi.tl
+set button.verify_take
+
+# ---- token-backed typed rows; all takes replay through the harness ----
+open tests/golden/48000/route4.tl
+set source record:0
+check route.kind.1.0 am
+check route.kind.1.0 ring
+check route.kind.1.0 sync
+open tests/golden/48000/filtertwo.tl
+set source record:0
+check filter.stages 1
+open tests/golden/48000/shapehard.tl
+set source record:0
+check shape.drive 120
+check shape.kind fold
+# Without a filter, pre/post order has identical sound but distinct text.
+check shape.position pre same
+open tests/golden/48000/modenv.tl
+set source record:0
+check mod.0.source eg0
+check mod.0.source ctl0
+check mod.0.target pitch0
+check mod.0.amount 600
+check mod.0.shift 5
+modview matrix
+open tests/golden/48000/sine.tl
+modview empty changed matrix
+modview empty-again same empty
+open tests/golden/48000/egdelay.tl
+set source record:0
+check eg.0.delay 70
+open tests/golden/48000/egdecay2.tl
+set source record:0
+check eg.0.decay2 80
+check eg.0.sustain2 600
+open tests/golden/48000/ksleft.tl
+set source record:0
+check ks.1.slope 60
+open tests/golden/48000/colourlp.tl
+set source record:0
+set statement.add noise:0
+check noise.0.shift 8
+open tests/golden/48000/pdknee.tl
+set source record:0
+check pd.0.knee 24576
+open tests/golden/48000/vectorxy.tl
+set source record:0
+check vector.x 0
+check vector.y 0
+open tests/golden/48000/formant3.tl
+set source record:0
+check formant.0.center 700000
+check formant.0.q 4000
+check formant.0.level 180
+open tests/golden/48000/kspluck.tl
+set source record:0
+check ksource.0.loss 32000
+check ksource.0.seed 9
+check ksource.0.buffer 4096
+open tests/golden/48000/wtframe.tl
+set source record:0
+check wtuse.0.position 32768
+# Authored harmonics remain tokens; the harness expands them for the take.
+set source builtin
+set statement.add harmonic
+expect error 0
+check harmonic.harmonics.0.1.level 120
+check harmonic.harmonics.0.1.number 2
+check harmonic.harmonics.0.1.phase 16384
+set statement.add harmonic
+check harmonic.harmonics.0.2.level 180
+expect error 0
+
+# Partial raw rows stay visible, render safely and repair via typed controls.
+rawcheck
+
+# Section 10: read-only URL route and selected patch origin survive live arm.
+openurl tests/golden/48000/bell.tl
+expect title bell.tl
+expect playing 0
+openpatch tests/golden/48000/sine.tl 0
+expect origin.file sine.tl
+expect origin.index 0
+set button.play_live
+expect origin.file sine.tl
+expect origin.index 0
+openurl link:tests/golden/48000/sine.tl
+expect title sine.tl
+expect playing 0
+openpatch tests/golden/vector/vectorcorners-48000.tl 3
+expect origin.file vectorcorners-48000.tl
+expect origin.index 3
+set source builtin
+# Saved patch replays to its own hash; Save uses the newly retained origin.
+savepatch saved-patch.tl
+expect origin.file saved-patch.tl
+set op0.level 90
+savepatch origin
+expect origin.index 0
+set source recipe:hat-ring
+savepatch saved-recipe.tl
+openpatch out:saved-recipe.tl 0
+expect origin.patchfile 1
+saveguard
+openpatch tests/golden/48000/sine.tl 0
+expect origin.patchfile 0
+# Write Back touches only a generated fixture, never its committed source.
+savepatch writeback-patch.tl
+writeback same
+set op0.level 180
+writeback changed
+set statement.add shape
+writeback changed
+# Source tokens open the same files as the menu; recents are newest first.
+set source open:out:saved-recipe.tl
+expect origin.file saved-recipe.tl
+set source builtin
+set source recent:0
+expect origin.file saved-recipe.tl
+recentcheck
+expect recent.count 10
+# Chosen recipes use the build expansion path, including visible failures.
+importcheck
+# Exact supported recipe round trips and refusal/pending controls.
+exportcheck
+
+# ---- asymmetric shape and pre-filter placement ----
+# The filtered fixture makes pre/post audibly different; every check's
+# before/after takes are replayed by uitest.sh.
+open tests/golden/48000/shapeasympre.tl
+set source record:0
+check shape.kind cubic
+set shape.kind cubic
+check shape.kind asym
+check shape.position post
+set shape.position post
+check shape.position pre
+
+# ---- voice amp and operator loop ----
+open tests/golden/48000/ampeg.tl
+set source record:0
+check amp.attack 30
+check amp.decay 400
+check amp.sustain 60
+check amp.release 700
+open tests/golden/48000/egloop.tl
+set source record:0
+check egloop.0.op 1
+
+# ---- key-scaling targets/signs and feedback types ----
+open tests/golden/48000/kslevel.tl
+set source record:0
+set octave 72
+check kstype.0.target index
+check kstype.0.right +
+set octave 60
+check kstype.2.left -
+# A single-row case lets OP move without duplicating the golden's four rows.
+set source builtin
+set op0.ks_break 440000
+set op0.ks_slope 60
+set op1.ks_break 440000
+set op1.ks_slope 60
+set statement.add ks:0
+set statement.add ks:1
+set statement.add kstype:0
+check kstype.0.op 1
+open tests/golden/48000/fbsquare.tl
+set source record:0
+check fbtype.1.op 0
+check fbtype.1.type classic
+check fbtype.1.type pre
+check fbtype.1.type presquare
+
+# ---- signed master gain and seeded dither ----
+set source builtin
+set octave 60
+set fx.dcblock 0
+set fx.chorus 0
+set fx.delay 0
+set fx.reverb 0
+set fx.limiter 0
+set fx.softclip 0
+set fx.gain 0
+set fx.dither 0
+check fx.gain 1 rms-
+set fx.gain 1
+check fx.gain.db10 60 rms+
+set fx.gain 0
+check fx.dither 1
+set fx.dither 1
+check fx.dither.seed 1
+set fx.dither 0
+fxcheck
+
+# ---- ping-pong on the delay send bus ----
+# Refused combinations stay staged, report an error and can be repaired.
+set fx.pingpong 1
+set stereo 0
+set button.play_live
+expect error 1
+expect fx.pingpong 1
+set stereo 1
+set button.play_live
+expect error 0
+set fx.delay 1
+set button.play_live
+expect error 1
+expect fx.delay 1
+expect fx.pingpong 1
+set fx.delay 0
+set button.play_live
+expect error 0
+set fx.pingpong 0
+check fx.pingpong 1 any
+set fx.pingpong 1
+set fx.pingpong.time 50000
+check fx.pingpong.time 80000 with send.delay 20000
+check fx.pingpong.feedback 8000 with send.delay 20000
+check fx.pingpong.lowpass 1000 with send.delay 20000
+check fx.pingpong.highpass 0 with send.delay 20000
+set fx.pingpong 0
+
+# ---- per-channel controller maps ----
+set source builtin
+set stereo 0
+set fx.dcblock 0
+set fx.chorus 0
+set fx.delay 0
+set fx.pingpong 0
+set fx.reverb 0
+set fx.limiter 0
+set fx.softclip 0
+set fx.gain 0
+set fx.dither 0
+set statement.add mod:0
+set mod.0.source ctl0
+set mod.0.target pitch0
+set mod.0.amount 1200
+set mod.0.shift 0
+check midi.ctl.1 default
+check midi.ctl.2 default
+check midi.ctl.3 default
+check midi.ctl.4 default
+check midi.ctl.5 default
+check midi.ctl.6 default
+check midi.ctl.7 default
+check midi.ctl.8 default
+check midi.ctl.9 default
+check midi.ctl.10 default
+check midi.ctl.11 default
+check midi.ctl.12 default
+check midi.ctl.13 default
+check midi.ctl.14 default
+check midi.ctl.15 default
+check midi.ctl.16 default
+set midi.ctl.1 default
+check midi.ctl.1 cc11:0
+check midi.ctl.1 rand:2654435769:0
+set midi.ctl.1 off
+midimapcheck
+
+
+# ---- one selected MPE zone ----
+# : explicit offs, held-only member expression; no member CC64,
+# master pressure/CC74, unmapped Scala fallback or conformance claim.
+set source builtin
+set stereo 0
+set statement.add mod:0
+set mod.0.source ctl1
+set mod.0.target pitch0
+set mod.0.amount 1200
+set mod.0.shift 0
+set statement.add mod:1
+set mod.1.source ctl4
+set mod.1.target pitch1
+set mod.1.amount 1200
+set mod.1.shift 0
+check midi.mpe lower:2
+check midi.mpe upper:2
+mpecheck
+
+# ---- spatial header controls and live geometry ----
+set source builtin
+set midi.mpe off
+set stereo 0
+set fx.dcblock 0
+set fx.chorus 0
+set fx.delay 0
+set fx.pingpong 0
+set fx.reverb 0
+set fx.limiter 0
+set fx.softclip 0
+set fx.gain 0
+set fx.dither 0
+spacecheck
+check space.field stereo
+set space.field stereo
+check space.field binaural
+set pos.y 0
+check space.near 500 with pos.x 100
+check space.block 32 same with pos.y 1000
+check space.block 128 same with pos.y 1000
+set space.panlaw 16000
+check space.panlaw.enabled 1 with pos.x 1000
+set space.panlaw.enabled 1
+check space.panlaw 8000 with pos.x 1000
+set space.panlaw.enabled 0
+set space.field binaural
+set pos.x 700
+set pos.y 900
+set pos.z 1100
+check space.order 1 with pos.z 1300
+check space.order 3 same with pos.z 1300
+check space.pinna off same with pos.z 1300
+check space.pinna pbnh with pos.z 1300
+check space.pinna rd with pos.z 1300
+set space.pinna custom
+check space.pinna.0 100 with pos.z 1300
+check space.pinna.1 200 with pos.z 1300
+check space.pinna.2 300 with pos.z 1300
+check space.pinna.3 400 with pos.z 1300
+check space.pinna.4 500 with pos.z 1300
+set space.pinna absent
+check space.yaw.enabled 1 same with pos.x 1700
+set space.yaw.enabled 1
+check space.yaw 90000 with pos.x 1700
+set space.yaw.enabled 0
+check pos.x 1700
+check pos.y 1900
+check pos.z 2100
+check pos.voice 0 same with pos.x 1700
+check pos.duration 100000000 with pos.x 1700
+check live.yaw 30000 with pos.x 1700
+
+# Initial Space/FX only, via file and cached Records import.
+spaceimportcheck
+spaceprefcheck
+
+# Device coordinator uses only the offline fake backend.
+devicecheck
+
+# Patch edits only: retained invalid rows, bounded history and replay.
+journalcheck
+
+# Same-space A/B snapshots and seed-preserving takes.
+comparecheck
+
+# File identity and full Space metadata, no automatic arm.
+favoritecheck
+
+# One-shot CC learn; real local CoreMIDI receipt is run separately.
+learncheck
+
+# ---- compressor and duck ----
+set source builtin
+set stereo 0
+set fx.dcblock 0
+set fx.chorus 0
+set fx.delay 0
+set fx.pingpong 0
+set fx.reverb 0
+set fx.gain 0
+set fx.dither 0
+set fx.softclip 0
+set fx.limiter 1
+set fx.compressor 0
+check fx.compressor 1
+set fx.compressor 1
+check fx.compressor.threshold 240
+check fx.compressor.ratio 120
+check fx.compressor.attack 0
+check fx.compressor.release 500
+check fx.compressor.makeup 0
+check send.duck 16384
+set fx.compressor 0
+compressorcheck
+
+# ---- flanger and decodable profile ----
+set source builtin
+set stereo 0
+set fx.dcblock 0
+set fx.chorus 0
+set fx.delay 0
+set fx.pingpong 0
+set fx.reverb 0
+set fx.compressor 0
+set fx.gain 0
+set fx.dither 0
+set fx.softclip 0
+set fx.limiter 0
+set fx.flanger 0
+set fx.decodable 0
+check fx.flanger 1 with send.flanger 16384
+set fx.flanger 1
+check fx.flanger.base 3000 with send.flanger 16384
+check fx.flanger.depth 500 with send.flanger 16384
+check fx.flanger.rate 1200 with send.flanger 16384
+check fx.flanger.feedback 10000 with send.flanger 16384
+check fx.flanger.invert 1 with send.flanger 16384
+check send.flanger 16384
+set fx.flanger 0
+check fx.decodable 1 same
+set fx.decodable 0
+flangercheck
+
+# ---- crusher header and paired live fields ----
+set source builtin
+set stereo 0
+set fx.dcblock 0
+set fx.chorus 0
+set fx.delay 0
+set fx.pingpong 0
+set fx.reverb 0
+set fx.compressor 0
+set fx.gain 0
+set fx.dither 0
+set fx.softclip 0
+set fx.limiter 0
+set fx.flanger 0
+set fx.decodable 0
+set fx.crush 0
+check fx.crush 1 same
+set fx.crush 1
+check live.crush.bits 6
+check live.crush.rate_div 9
+crushercheck
+set fx.crush 0
+
+# ---- readable song library and direct TL playback ----
+librarycheck

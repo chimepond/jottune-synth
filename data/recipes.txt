@@ -1,0 +1,565 @@
+# Copyright (c) 2026 Nenad Micic
+# SPDX-License-Identifier: Apache-2.0
+# The recipes: named patches to start from. compose.py reads this file
+# once, when it loads: recipe gives a recipe as it is or moved by deltas,
+# --recipes lists them all, and a timeline's recipe statement expands to the
+# raw patch lines (compose.py --expand), so no record needs this file. op
+# still writes any patch at all. See docs/INSTRUMENT.md,
+# Patches, recipes and the synthesis repertoire.
+#
+# Host template blocks and recipe use lines are described at the end of this
+# file and in docs/INSTRUMENT.md, Bounded macros and templates. They compile to raw
+# mod/LFO headers; existing recipes remain independent of unused templates.
+#
+# Spectral guide: for ideal sine-on-sine PM without feedback, carrier fc and
+# modulator fm produce sidebands at |fc +/- n*fm|. Their signed amplitudes
+# depend on the Bessel coefficients J_n(I), where I is the instantaneous
+# modulation index in radians (Jacobi-Anger expansion: https://dlmf.nist.gov/10.12).
+# The note's carrier frequency need not be the loudest partial. Envelopes and
+# velocity change I over time; coincident partials can add or cancel. Feedback,
+# other waveforms, operator routes and processing need their own measurement.
+# These descriptions suggest a starting timbre, not a fixed harmonic spectrum.
+#
+# A recipe is a block of lines, each starting with its kind:
+#   recipe NAME              the block's start: NAME is letters, digits, . _ -
+#   carrier KEY=VALUE ...    the carrier's op arguments (operator 0)
+#   modulator KEY=VALUE ...  the modulator's op arguments (operator 1)
+#   route OPS CARRIERS FROM>TO:WEIGHT ...
+#                            a routed recipe : the timeline's route
+#                            statement without its patch name; OPS 2 to 4,
+#                            CARRIERS an odd bit mask (operator 0 is always a
+#                            carrier: the leveller moves its level), each edge
+#                            once, WEIGHT 1 to 1024 in 1/256 (256 is unity)
+#   op N KEY=VALUE ...       operator N's op arguments, under a route only:
+#                            one line for each N from 2 to OPS - 1
+#   note TEXT                what it is, ending with the piece that tested it;
+#                            more note lines go on after one space
+#   tags WORD ...            words analyze.py search --tag finds it by; this file
+#                            owns the vocabulary, compose.py skips it
+#   describe_note MILLIHZ    optional description pitch, above 0 and below 24000000;
+#                            metadata only, before prose pitch and the A4 default
+# Tag meanings: keys/bell/wind/pad/bass/chip/drum are sound families; piano,
+# pluck, reed, voice and cymbal name their sounds. noise means a wave-4 operator
+# or a modulator fed back at least 3 rad; it is not a spectral-flatness threshold.
+# layer means a partner recipe or several voices; sweep means a pitch curve/step.
+# A KEY is any argument of op in compose.py, in op's units: ratio a multiple
+# of the note's frequency, level and s in dB below peak, index and fb in
+# radians, vel in 1/256, a, d and r in ms, ks_break in Hz and ks_slope in dB an
+# octave, wave 0 to 11, rs in steps 0 to 7, fixed in Hz, phase in
+# degrees, 0 to 359.994 (360 is refused, not wrapped to 0, and a delta stops
+# at either end), and free 0, 1 or 2, and any
+# argument op gains; one left out takes op's default. The engine reads no
+# index, fb or key scaling on the carrier and no level on the modulator, so a
+# recipe sets none of them; under a route it reads a level only on a carrier
+# and an index or key scaling only on an operator that feeds an edge, so a
+# routed recipe sets those only there, and each of its operators reaches a
+# carrier through the edges. A VALUE is a plain decimal number within its
+# field's range (LIMITS in compose.py): a whole number where op's default is
+# one (vel, a, d, r, wave, rs, free), else a whole number or digits with a point,
+# kept as written (17 and 17.0 print differently in --recipes). A line whose
+# first character other than a space is # is a comment; blank lines are
+# ignored. A fault stops compose.py with this file's name and the line.
+
+# keys and plucks
+
+recipe epiano
+carrier   level=17 vel=180 a=2 d=2400 s=30 r=350
+modulator index=1.6 vel=220 a=1 d=700 s=24 r=350
+note      electric piano, 1:1; velocity opens the index, which decays faster than the level (waltz)
+tags      keys piano
+
+recipe ep-body
+carrier   level=14 vel=200 a=2 d=8000 s=50 r=450
+modulator index=1.1 vel=230 a=1 d=1400 s=14 r=450
+note      electric-piano body, 1:1, velocity opens the index; layer ep-tine on the same key
+note      (nocturne)
+tags      keys piano layer
+
+recipe ep-tine
+carrier   level=24 vel=256 a=1 d=1400 s=120 r=300
+modulator ratio=14.0 index=1.5 vel=220 a=1 d=600 s=120 r=200
+note      electric-piano tine: the modulator at 14 times the note, a metallic strike that dies away
+note      (nocturne)
+tags      keys piano layer
+
+recipe harpsichord
+carrier   level=14 vel=0 a=1 d=9000 s=120 r=160
+modulator index=2.0 fb=1.5 vel=0 a=1 d=2200 s=9 r=160
+note      1:1, a fed-back modulator, no touch sensitivity (invention)
+tags      keys pluck
+
+recipe harp
+carrier   level=18 vel=180 a=2 d=1800 s=120 r=600
+modulator index=1.2 vel=200 a=1 d=400 s=40 r=400
+note      1:1 pluck (canon)
+tags      keys pluck
+
+recipe organ
+carrier   level=17 vel=64 a=4 d=60 s=0 r=45
+modulator index=1.0 fb=0.3 vel=64 a=1 d=45 s=5 r=45
+note      1:1; the index starts 5 dB high and settles in 45 ms, a key click (shuffle)
+tags      keys
+
+recipe marimba
+carrier   level=11 vel=200 a=1 d=1100 s=120 r=250
+modulator ratio=3.0 index=2.4 vel=200 a=1 d=80 s=60 r=100
+note      1:3, a short bright strike (clockwork)
+tags      keys
+
+# bells and metal
+
+recipe celesta
+carrier   level=10 vel=160 a=2 d=3500 s=120 r=1800
+modulator ratio=4.0 index=2.2 vel=200 a=1 d=900 s=40 r=1200
+note      1:4, odd harmonics fading into a pure ring (first-light)
+tags      bell
+
+recipe bell
+carrier   level=12 vel=200 a=2 d=6000 s=120 r=3000
+modulator ratio=1.4 index=5.0 vel=160 a=1 d=4000 s=60 r=3000
+note      1:1.4 (Chowning), the index decaying with the ring (first-light)
+tags      bell
+
+recipe tooth
+carrier   level=14 vel=160 a=1 d=3500 s=120 r=400
+modulator ratio=3.5 index=2.6 vel=128 a=1 d=250 s=30 r=400
+note      a steel tooth, 1:3.5, the index falling 30 dB in 250 ms, then a near-pure ring (music-box)
+tags      bell
+
+recipe star
+carrier   level=18 vel=200 a=1 d=1200 s=120 r=600
+modulator ratio=3.0 index=1.6 vel=160 a=1 d=180 s=36 r=400
+note      1:3, a glassy ping, bright for 180 ms (night-sky)
+tags      bell
+
+# At A4 this recipe has a 440 Hz carrier and about 616 Hz modulator. Early
+# sidebands can dominate; the falling index changes their balance toward the carrier.
+recipe planet-1.4
+carrier   level=12 vel=128 a=2 d=12000 s=120 r=4000
+modulator ratio=1.4 index=4.0 vel=128 a=1 d=9000 s=36 r=4000
+note      a long bell, 1:1.4 (Chowning), the index falling with the ring (night-sky)
+tags      bell
+
+recipe planet-2.76
+carrier   level=14 vel=128 a=2 d=9000 s=120 r=3000
+modulator ratio=2.76 index=2.5 vel=128 a=1 d=6000 s=30 r=3000
+note      a bell, 1:2.76, the second mode of a free bar (night-sky)
+tags      bell
+
+recipe planet-3.17
+carrier   level=16 vel=128 a=2 d=7000 s=120 r=3000
+modulator ratio=3.17 index=2.0 vel=128 a=1 d=4000 s=30 r=3000
+note      a bell, 1:3.17 (night-sky)
+tags      bell
+
+# winds, leads and voices
+
+recipe flute
+carrier   level=10 vel=100 a=45 d=500 s=3 r=200
+modulator index=0.7 fb=0.35 vel=150 a=30 d=600 s=6 r=200
+note      a soft lead, 1:1, low index, a breath of feedback (waltz)
+tags      wind
+
+recipe hollow
+carrier   level=13 vel=100 a=35 d=400 s=2 r=250
+modulator ratio=2.0 index=1.3 vel=160 a=25 d=800 s=4 r=250
+note      clarinet-like: 1:2 gives odd harmonics (canon)
+tags      wind reed
+
+recipe harmonica
+carrier   level=12 vel=128 a=35 d=100 s=0 r=90
+modulator index=1.5 fb=1.1 vel=160 a=20 d=100 s=0 r=90
+note      1:1, a reedy fed-back modulator; 0 dB sustain on both operators (shuffle)
+tags      wind reed
+
+recipe glide
+carrier   level=24 vel=256 a=250 d=100 s=0 r=2500
+modulator ratio=2.0 index=0.7 a=250 d=100 s=0 r=2500
+note      1:2 at a low index; 0 dB sustain on both operators, so a glide is seamless (night-sky's
+note      comet)
+tags      wind sweep
+
+recipe brass
+carrier   level=18 vel=200 a=40 d=200 s=2 r=150
+modulator index=4.0 vel=160 a=50 d=240 s=1 r=150
+note      1:1, the index rising and falling with the level; velocity opens it. The fundamental
+note      cancels near index 1.8, so sustain above 2.4 or below 1.3 (Chowning's trumpet; fanfare)
+tags      wind
+
+recipe oboe
+carrier   ratio=3.0 level=16 vel=100 a=60 d=300 s=1 r=120
+modulator index=2.0 vel=160 a=40 d=300 s=1.5 r=120
+note      a double reed: the carrier at 3 times the note, the modulator at 1, harmonics 2 to 4
+note      strongest. The index must rise no slower than the level, or the attack sounds the
+note      carrier's pitch (aria)
+tags      wind reed
+
+recipe bassoon
+carrier   ratio=4.0 level=14 vel=100 a=50 d=300 s=1 r=120
+modulator index=2.0 vel=160 a=40 d=300 s=1.5 r=120
+note      the carrier at 4 times the note, the modulator at 1: a nasal band over harmonics 2 to 6,
+note      the fundamental weak (aria)
+tags      wind reed
+
+recipe clarinet
+carrier   ratio=3.0 level=15 vel=100 a=70 d=200 s=0 r=110
+modulator ratio=2.0 index=4.0 vel=128 a=5 d=150 s=6 r=110
+note      the carrier at 3, the modulator at 2: odd harmonics; the index falls from 4 to 2 as the
+note      level rises (Chowning; aria)
+tags      wind reed
+
+recipe vox
+carrier   level=16 vel=128 a=90 d=100 s=0 r=260
+modulator index=1.6 vel=200 a=160 d=100 s=0 r=260
+note      a sung vowel's body, 1:1; sing vox-formant with it: same times, pitch and velocity
+note      (Chowning; aria)
+tags      wind voice layer
+
+recipe vox-formant
+carrier   ratio=4.0 level=30 vel=128 a=90 d=100 s=0 r=260
+modulator index=0.8 vel=200 a=160 d=100 s=0 r=260
+note      a sung vowel's formant, 14 dB under vox: the carrier on the harmonic nearest 2.4 kHz, the
+note      4th for D5; move c_ratio with the note (Chowning; aria)
+tags      wind voice layer
+
+# pads and drones
+
+recipe warm-pad
+carrier   level=22 vel=96 a=700 d=1500 s=3 r=1600
+modulator ratio=1.0015 index=1.1 fb=0.45 vel=64 a=900 d=2500 s=6 r=1800
+note      1:1, the modulator 0.15 % sharp for a slow shimmer (first-light)
+tags      pad
+
+recipe night-pad
+carrier   level=30 a=3000 d=2500 s=3 r=3500
+modulator index=0.9 fb=0.2 a=4000 d=3000 s=6 r=3500
+note      1:1, the index blooming after the level; play detuned pairs (night-sky)
+tags      pad layer
+
+recipe drone
+carrier   level=25 a=4000 d=100 s=0 r=5000
+modulator index=0.6 a=4000 d=100 s=0 r=5000
+note      a soft 1:1 tone, its second harmonic 9 dB down (night-sky)
+tags      pad
+
+recipe strings
+carrier   level=24 vel=96 a=350 d=800 s=1.5 r=600
+modulator index=1.6 fb=0.8 vel=160 a=450 d=900 s=3 r=600
+note      1:1 with feedback, harmonics falling like a sawtooth's; a slow bow. Play each note on
+note      three voices 6 cents apart (aria)
+tags      pad layer
+
+# bass
+
+recipe round-bass
+describe_note 110000
+carrier   level=13 vel=128 a=30 d=3000 s=10 r=900
+modulator index=0.7 vel=128 a=10 d=1500 s=12 r=900
+note      1:1 at a low index (first-light)
+tags      bass
+
+recipe plucked-bass
+describe_note 110000
+carrier   level=12 vel=128 a=3 d=900 s=9 r=150
+modulator index=1.8 fb=0.7 vel=160 a=2 d=250 s=18 r=150
+note      1:1 with feedback, the index falling fast (waltz)
+tags      bass pluck
+
+recipe motor-bass
+describe_note 110000
+carrier   level=12 vel=128 a=2 d=400 s=12 r=90
+modulator index=2.4 fb=1.0 vel=180 a=1 d=120 s=24 r=90
+note      1:1 with feedback, a snappy index (clockwork)
+tags      bass
+
+recipe boogie-bass
+describe_note 110000
+carrier   level=9 vel=128 a=4 d=700 s=10 r=70
+modulator index=1.3 vel=160 a=1 d=160 s=16 r=70
+note      1:1, the index falling fast after the pluck (shuffle)
+tags      bass pluck
+
+# chip channels: vel 0 and 0 dB sustain on both operators, so any pitch step is seamless
+
+recipe square
+carrier   level=12 a=2 d=100 s=0 r=30
+modulator ratio=2.0 index=1.3 fb=0.9 a=1 d=100 s=0 r=30
+note      1:2 fed back, odd harmonics (arcade)
+tags      chip sweep
+
+recipe saw
+carrier   level=15 a=1 d=100 s=0 r=25
+modulator index=1.0 fb=1.2 a=1 d=100 s=0 r=25
+note      1:1 fed back, saw-like (arcade)
+tags      chip sweep
+
+recipe triangle
+carrier   level=8 a=2 d=100 s=0 r=25
+modulator ratio=2.0 index=0.3 a=1 d=100 s=0 r=25
+note      1:2 at a low index (arcade)
+tags      chip sweep
+
+# drums and noise: a modulator fed back 3.0 to 3.5 rad is noise
+
+recipe kick
+describe_note 50000
+carrier   level=8 vel=128 a=1 d=320 s=120 r=60
+modulator ratio=2.0 index=5.0 vel=128 a=1 d=60 s=120 r=40
+note      at 50 Hz, a 1:2 modulator whose index collapses in 60 ms (shuffle)
+tags      drum
+
+recipe snare-wires
+carrier   level=8 vel=200 a=1 d=450 s=120 r=60
+modulator ratio=1.41 index=3.0 fb=3.5 a=1 d=100 s=0 r=60
+note      at 1.8 kHz; the modulator holds, so the noise stays noise as it decays (shuffle)
+tags      drum noise
+
+recipe snare-body
+carrier   level=8 vel=180 a=1 d=110 s=120 r=50
+modulator ratio=1.5 index=1.4 vel=128 a=1 d=50 s=120 r=40
+note      at 190 Hz, 1:1.5, a short thud (shuffle)
+tags      drum
+
+recipe hat
+carrier   level=15 vel=200 a=1 d=160 s=120 r=25
+modulator ratio=1.41 index=2.5 fb=3.5 a=1 d=100 s=0 r=25
+note      a closed hi-hat at 7 kHz, damped after 40 ms (shuffle)
+tags      drum noise cymbal
+
+recipe open-hat
+carrier   level=16 vel=200 a=1 d=1500 s=120 r=40
+modulator ratio=1.41 index=2.5 fb=3.5 a=1 d=100 s=0 r=40
+note      at 7 kHz, ringing until choked (shuffle)
+tags      drum noise cymbal
+
+recipe crash
+carrier   level=12 vel=200 a=1 d=5000 s=120 r=700
+modulator ratio=1.41 index=3.0 fb=3.5 a=1 d=100 s=0 r=700
+note      at 5 kHz, about 24 dB a second (shuffle)
+tags      drum noise cymbal
+
+recipe pin-click
+carrier   level=36 a=1 d=20 s=120 r=10
+modulator ratio=1.41 index=2.5 fb=3.5 a=1 d=100 s=0 r=10
+note      at 2.6 kHz, a breath of noise (music-box)
+tags      drum noise
+
+recipe noise-tail
+carrier   level=38 a=400 d=100 s=0 r=1500
+modulator ratio=1.41 index=3.0 fb=3.5 a=1 d=100 s=0 r=1500
+note      noise that follows a pitch curve; the modulator holds (night-sky's comet tail)
+tags      drum noise sweep
+
+recipe tick
+carrier   level=16 vel=200 a=1 d=35 s=120 r=30
+modulator ratio=1.41 index=3.0 fb=3.5 a=1 d=40 s=120 r=30
+note      at 5.2 kHz, over in 35 ms (clockwork)
+tags      drum noise
+
+recipe tock
+carrier   level=14 vel=200 a=1 d=70 s=120 r=50
+modulator ratio=1.41 index=2.5 fb=3.0 a=1 d=80 s=120 r=50
+note      at 1.3 kHz, the tick lower and longer (clockwork)
+tags      drum noise
+
+recipe wood-drum
+carrier   level=14 vel=160 a=1 d=450 s=120 r=80
+modulator ratio=0.6875 index=25.0 vel=96 a=1 d=30 s=120 r=20
+note      80:55 (Chowning), the index falling from 25 rad within a few ms (fiesta)
+tags      drum
+
+recipe tom
+carrier   level=12 vel=128 a=1 d=100 s=0 r=650
+modulator ratio=2.0 index=0.8 vel=128 a=1 d=100 s=0 r=400
+note      1:2 at a low index; 0 dB sustain, so a curve can sweep it, and the release is the decay
+note      (fiesta)
+tags      drum sweep
+
+recipe timpani
+carrier   level=12 vel=220 a=2 d=3500 s=120 r=500
+modulator ratio=1.5 index=1.2 vel=160 a=1 d=300 s=18 r=400
+note      1:1.5, an octave-low thump in the strike that fades into the tone; retrigger it for a roll
+note      (fanfare)
+tags      drum
+
+recipe clap
+carrier   level=10 vel=128 a=1 d=450 s=120 r=6
+modulator ratio=1.41 index=2.8 fb=3.5 a=1 d=100 s=0 r=40
+note      at 1.2 kHz, short bursts 10 ms apart, then a held one for the tail (fiesta)
+tags      drum noise
+
+recipe cowbell
+carrier   level=16 vel=160 a=1 d=600 s=120 r=50
+modulator ratio=2.0 index=1.3 fb=0.9 vel=100 a=1 d=180 s=9 r=50
+note      the square wave, struck; play two voices together at 540 and 800 Hz (fiesta)
+tags      drum layer
+
+# routed : a route line, the route statement without its patch name, and an
+# op line for each operator from 2 up; the carrier line is operator 0 and the
+# modulator line operator 1
+
+recipe ep-4op
+route     4 5 1>0:256 3>2:256
+carrier   level=14 vel=200 a=2 d=8000 s=50 r=450
+modulator index=1.1 vel=230 a=1 d=1400 s=14 r=450
+op 2      level=24 vel=256 a=1 d=1400 s=120 r=300
+op 3      ratio=14.0 index=1.5 vel=220 a=1 d=600 s=120 r=200
+note      ep-body and ep-tine in one patch of four operators, two pairs side by side
+note      (carriers 0 and 2), one voice per key
+tags      keys piano
+
+recipe sub-bass
+describe_note 55000
+route     2 3
+carrier   level=14 fb=0.8 vel=128 a=3 d=1200 s=8 r=160
+modulator ratio=0.5 level=17 vel=96 a=6 d=2500 s=6 r=200
+note      two carriers and no edge: the note, its feedback rounding it towards a saw, over
+note      a sine an octave down; for notes from A1 up
+tags      bass
+
+recipe snare-3op
+route     3 3 2>0:256
+carrier   level=10 vel=180 a=1 d=110 s=120 r=50
+modulator ratio=32.0 level=12 vel=200 a=1 d=300 s=120 r=60 wave=4
+op 2      ratio=1.5 index=1.4 vel=128 a=1 d=50 s=120 r=40
+note      at 190 Hz: snare-body's thud, operator 2 on the carrier, and the wires from a noise
+note      carrier (wave 4) stepping at twice 32 times the note, about 12 kHz, in one voice
+note      suitable for one-note audition
+tags      drum noise
+
+# Manifold recipes: two blocks for the operator extras
+
+recipe hat-fixed
+carrier   level=15 vel=200 a=1 d=160 s=120 r=25 fixed=7000
+modulator ratio=1.41 index=2.5 fb=3.5 a=1 d=100 s=0 r=25 fixed=7000 free=1
+note      hat with both operators fixed, the carrier at 7 kHz and the modulator 1.41 times
+note      that, whatever the note, so in a keys version the note only places it; the
+note      modulator's phase runs on across hits from silence (free; its feedback still starts
+note      clear), so the hits need not start alike (manifold)
+tags      drum noise cymbal
+
+recipe clav-rs
+carrier   level=16 vel=200 a=1 d=1600 s=120 r=90 rs=3
+modulator ratio=3.0 index=1.8 vel=230 a=1 d=400 s=12 r=90 rs=3
+note      a 1:3 clavinet-like pluck whose envelopes shorten up the keyboard: rate scaling 3 on
+note      both operators, so every time is as written at A0, about 0.62 of it at G2, 0.48 at
+note      G3 and 0.37 at G4 (manifold)
+tags      keys pluck
+
+# regression: opt-in drum experiments over envelope pitch,  white noise and operator extension ring.
+
+recipe kick-drop
+describe_note 50000
+carrier   level=14 vel=128 a=1 d=230 s=120 r=45
+modulator index=0 vel=0 a=1 d=1 s=120 r=1
+peg       1200 0 0 90 0 0 -1200 40 1
+note      at 50 Hz, a sine falling one octave in 90 ms; no noise source (drum-study)
+tags      drum sweep
+
+recipe snare-white
+describe_note 185000
+route     2 3
+carrier   level=19 vel=160 a=1 d=85 s=120 r=35
+modulator level=20 vel=160 a=1 d=190 s=120 r=35 wave=4 fixed=7000
+note      at 185 Hz, a short sine body plus white noise clocked at 14 kHz (drum-study)
+tags      drum noise
+
+recipe clap-white
+describe_note 440000
+carrier   level=19 vel=128 a=1 d=140 s=120 r=4 wave=4 fixed=8000
+modulator index=0 vel=0 a=1 d=1 s=120 r=1
+note      three short white-noise strikes 14 ms apart, then a longer fourth strike;
+note      repeated strikes are timeline events, not a patch sequencer (drum-study)
+tags      drum noise
+
+recipe hat-ring
+describe_note 440000
+route     3 1 1>0:256:ring 2>0:256:ring
+carrier   level=17 vel=160 a=1 d=180 s=120 r=25 wave=4 fixed=9000
+modulator vel=0 a=1 d=250 s=0 r=25 fixed=3431
+op 2      vel=0 a=1 d=250 s=0 r=25 fixed=5711
+note      white noise through two ring edges from fixed inharmonic sines;
+note      the two modulating envelopes also close the strike (drum-study)
+tags      drum noise cymbal
+
+# regression host templates: first matching case, all targets fit or the call refuses.
+# target roles are present outgoing-PM modulators, two numbered modulators or
+# carriers, and brightest (largest ratio; lower operator breaks a tie).
+# Depths are raw modulation matrix integers. All smoothing shifts default to3. These are
+# provisional  values, not eight macros with eight independent curves.
+# use NAME applies a template to a recipe; no template row enters a timeline.
+template HARM
+case default
+macro HARM 0 unipolar
+target pitch.modulators 1200
+end
+
+template DTUN
+case default
+macro DTUN 1 bipolar
+target pitch.mod0 25
+target pitch.mod1 -25
+end
+
+template MIX
+case vector
+macro MIX 2 unipolar
+target vector_x 32768
+case default
+macro MIX 2 bipolar
+target level.car0 120
+target level.car1 -120
+end
+
+template Timbre
+case default
+macro Timbre 3 unipolar
+target index.modulators 2048
+end
+
+template EXPR
+case filter
+lfo 0 5000 0 0 0 0 0
+macro Wheel 0 unipolar
+target lfo_pitch 50
+macro Pressure 1 unipolar
+target index.brightest 1024
+macro Slide 4 unipolar
+target cutoff 1200
+case default
+lfo 0 5000 0 0 0 0 0
+macro Wheel 0 unipolar
+target lfo_pitch 50
+macro Pressure 1 unipolar
+target index.brightest 1024
+macro Slide 4 unipolar
+target index.brightest 2048
+end
+
+recipe warm-pad-x
+carrier   level=22 vel=96 a=700 d=1500 s=3 r=1600
+modulator ratio=1.0015 index=1.1 fb=0.45 vel=64 a=900 d=2500 s=6 r=1800
+use EXPR
+note      warm-pad with wheel vibrato, pressure brightness and slide brightness (regression EXPR)
+tags      pad expression
+
+recipe bl-saw
+carrier ratio=1 level=20 a=1 d=100 s=0 r=100 wave=0
+modulator index=0 wave=0
+wtuse 0 bl-saw 0
+note native harmonic-bank bl-saw; no TX81Z or Yamaha identity
+tags harmonic bank
+
+recipe bl-square
+carrier ratio=1 level=20 a=1 d=100 s=0 r=100 wave=0
+modulator index=0 wave=0
+wtuse 0 bl-square 0
+note native harmonic-bank bl-square; no TX81Z or Yamaha identity
+tags harmonic bank
+
+recipe bl-triangle
+carrier ratio=1 level=20 a=1 d=100 s=0 r=100 wave=0
+modulator index=0 wave=0
+wtuse 0 bl-triangle 0
+note native harmonic-bank bl-triangle; no TX81Z or Yamaha identity
+tags harmonic bank

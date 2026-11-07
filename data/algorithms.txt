@@ -1,0 +1,350 @@
+# Copyright (c) 2026 Nenad Micic
+# SPDX-License-Identifier: Apache-2.0
+#
+# algorithms.txt: the 32 DX7 algorithms and the 8 OPM/OPN connections
+# (CON 0 to 7) as routing tables, data by 's rule. They feed the
+# engine's route statement (routing, ) through dx7_import.py ;
+# README.md beside this file, DX7 import, is the guide.
+#
+# The format: one block per algorithm, a line per field, blank lines and
+# lines starting with # ignored.
+#
+#   algorithm NAME     dx7-1 to dx7-32, opm-0 to opm-7
+#   ops N              6 for the DX7, 4 for OPM and OPN
+#   carriers OP...     the operators whose outputs the voice sums
+#   edge FROM>TO...    FROM's output modulates TO's phase; one or more
+#                      pairs a line, any number of lines, none at all for
+#                      an algorithm without modulation
+#   feedback OP        the operator whose feedback the voice's feedback
+#                      level sets
+#   note TEXT          what the routing is; note lines join with a space
+#
+# Operators are numbered as the chips' own diagrams number them: DX7 OP1
+# to OP6, every edge running from a higher number to a lower one; OPM and
+# OPN OP1 to OP4 in the diagrams' order (OP1 = M1, the one with the
+# feedback, OP2 = C1, OP3 = M2, OP4 = C2), every edge running from a lower
+# number to a higher one. Both chips' registers list the slots in
+# another order, M1, M2, C1, C2 (OP1, OP3, OP2, OP4 here, the OPN's 1,
+# 3, 2, 4); the table follows the diagrams.
+#
+# Feedback: the engine's feedback is an operator's own (FEEDBACK_Q10 on
+# every operator of a routed patch). The DX7's dx7-4 and dx7-6 feed a
+# carrier's output back to OP6 through two or three operators; the table
+# names OP6, and dx7_import.py gives OP6 that feedback as its own and says
+# so in the block it writes.
+#
+# To the engine: dx7_import.py numbers the operators it keeps for the
+# route statement so that every edge runs from a higher engine operator to
+# a lower one, a forward edge, which the engine evaluates in the same
+# sample as the chips do: engine op 0 first, then repeatedly the
+# lowest-numbered operator left whose kept targets all have engine
+# numbers. CARRIERS is the mask of the kept carriers' engine numbers and
+# every kept edge has weight 256 (unity), since an operator's output level
+# becomes its INDEX_Q10.
+#
+# The reduce rule , for an algorithm with more operators than
+# the engine has (FM_OPS = 4, ) or than --ops asks for: keep the
+# carriers (at most 4), keep the modulators by depth order, drop the
+# deepest modulators first, and name every dropped operator in the
+# generated block's comment. In detail, as dx7_import.py applies it:
+#
+#   1. An operator at output level 0 is silent and drops first, unless
+#      every carrier is at 0; then the lowest-numbered carrier stays.
+#   2. Carriers beyond the limit drop quietest first (the lowest output
+#      level, then the higher operator number).
+#   3. A modulator's depth is the length of its shortest path to a kept
+#      carrier (1: it modulates a carrier). Modulators are kept by rising
+#      depth while room is left; at one depth the louder (the higher
+#      output level) goes first, then the lower operator number.
+#   4. An operator with no path left to a kept carrier drops, and every
+#      edge from or to a dropped operator goes; a dropped operator's
+#      feedback goes with it.
+#
+# The 2-operator lines (dx7_import.py's `# pair:` comment lines, the
+# form the engine plays without a route) come from the whole voice
+# before the reduction, so --ops never changes them. The carrier line
+# is the loudest carrier that sounds (as step 1 counts them; at equal
+# output levels, one that a sounding operator modulates goes first,
+# then the lower number); the modulator line is the loudest sounding
+# operator with an edge to it (the lower number of equals), or a silent
+# modulator when no sounding operator modulates it. The modulator line
+# carries the voice's feedback when its operator is the feedback
+# operator, whether or not the reduction keeps that operator.
+
+algorithm dx7-1
+ops 6
+carriers 1 3
+edge 2>1 4>3 5>4 6>5
+feedback 6
+note two stacks: OP2 on OP1, and OP6 on OP5 on OP4 on OP3
+
+algorithm dx7-2
+ops 6
+carriers 1 3
+edge 2>1 4>3 5>4 6>5
+feedback 2
+note the stacks of dx7-1, the feedback on OP2
+
+algorithm dx7-3
+ops 6
+carriers 1 4
+edge 2>1 3>2 5>4 6>5
+feedback 6
+note two stacks of three: OP3 on OP2 on OP1, OP6 on OP5 on OP4
+
+algorithm dx7-4
+ops 6
+carriers 1 4
+edge 2>1 3>2 5>4 6>5
+feedback 6
+note the stacks of dx7-3; the DX7 feeds OP4's output back to OP6, a loop through three operators
+
+algorithm dx7-5
+ops 6
+carriers 1 3 5
+edge 2>1 4>3 6>5
+feedback 6
+note three pairs: OP2 on OP1, OP4 on OP3, OP6 on OP5
+
+algorithm dx7-6
+ops 6
+carriers 1 3 5
+edge 2>1 4>3 6>5
+feedback 6
+note the pairs of dx7-5; the DX7 feeds OP5's output back to OP6, a loop through two operators
+
+algorithm dx7-7
+ops 6
+carriers 1 3
+edge 2>1 4>3 5>3 6>5
+feedback 6
+note OP2 on OP1; OP4 and OP5 on OP3, OP6 on OP5
+
+algorithm dx7-8
+ops 6
+carriers 1 3
+edge 2>1 4>3 5>3 6>5
+feedback 4
+note the routing of dx7-7, the feedback on OP4
+
+algorithm dx7-9
+ops 6
+carriers 1 3
+edge 2>1 4>3 5>3 6>5
+feedback 2
+note the routing of dx7-7, the feedback on OP2
+
+algorithm dx7-10
+ops 6
+carriers 1 4
+edge 2>1 3>2 5>4 6>4
+feedback 3
+note OP3 on OP2 on OP1; OP5 and OP6 on OP4
+
+algorithm dx7-11
+ops 6
+carriers 1 4
+edge 2>1 3>2 5>4 6>4
+feedback 6
+note the routing of dx7-10, the feedback on OP6
+
+algorithm dx7-12
+ops 6
+carriers 1 3
+edge 2>1 4>3 5>3 6>3
+feedback 2
+note OP2 on OP1; OP4, OP5 and OP6 on OP3
+
+algorithm dx7-13
+ops 6
+carriers 1 3
+edge 2>1 4>3 5>3 6>3
+feedback 6
+note the routing of dx7-12, the feedback on OP6
+
+algorithm dx7-14
+ops 6
+carriers 1 3
+edge 2>1 4>3 5>4 6>4
+feedback 6
+note OP2 on OP1; OP4 on OP3, OP5 and OP6 on OP4
+
+algorithm dx7-15
+ops 6
+carriers 1 3
+edge 2>1 4>3 5>4 6>4
+feedback 2
+note the routing of dx7-14, the feedback on OP2
+
+algorithm dx7-16
+ops 6
+carriers 1
+edge 2>1 3>1 5>1 4>3 6>5
+feedback 6
+note one carrier: OP2, OP3 and OP5 on OP1, OP4 on OP3, OP6 on OP5
+
+algorithm dx7-17
+ops 6
+carriers 1
+edge 2>1 3>1 5>1 4>3 6>5
+feedback 2
+note the routing of dx7-16, the feedback on OP2
+
+algorithm dx7-18
+ops 6
+carriers 1
+edge 2>1 3>1 4>1 5>4 6>5
+feedback 3
+note one carrier: OP2, OP3 and OP4 on OP1, OP5 on OP4, OP6 on OP5
+
+algorithm dx7-19
+ops 6
+carriers 1 4 5
+edge 2>1 3>2 6>4 6>5
+feedback 6
+note OP3 on OP2 on OP1; OP6 on both OP4 and OP5
+
+algorithm dx7-20
+ops 6
+carriers 1 2 4
+edge 3>1 3>2 5>4 6>4
+feedback 3
+note OP3 on both OP1 and OP2; OP5 and OP6 on OP4
+
+algorithm dx7-21
+ops 6
+carriers 1 2 4 5
+edge 3>1 3>2 6>4 6>5
+feedback 3
+note OP3 on both OP1 and OP2; OP6 on both OP4 and OP5
+
+algorithm dx7-22
+ops 6
+carriers 1 3 4 5
+edge 2>1 6>3 6>4 6>5
+feedback 6
+note OP2 on OP1; OP6 on OP3, OP4 and OP5
+
+algorithm dx7-23
+ops 6
+carriers 1 2 4 5
+edge 3>2 6>4 6>5
+feedback 6
+note OP1 alone; OP3 on OP2; OP6 on both OP4 and OP5
+
+algorithm dx7-24
+ops 6
+carriers 1 2 3 4 5
+edge 6>3 6>4 6>5
+feedback 6
+note OP1 and OP2 alone; OP6 on OP3, OP4 and OP5
+
+algorithm dx7-25
+ops 6
+carriers 1 2 3 4 5
+edge 6>4 6>5
+feedback 6
+note OP1, OP2 and OP3 alone; OP6 on both OP4 and OP5
+
+algorithm dx7-26
+ops 6
+carriers 1 2 4
+edge 3>2 5>4 6>4
+feedback 6
+note OP1 alone; OP3 on OP2; OP5 and OP6 on OP4
+
+algorithm dx7-27
+ops 6
+carriers 1 2 4
+edge 3>2 5>4 6>4
+feedback 3
+note the routing of dx7-26, the feedback on OP3
+
+algorithm dx7-28
+ops 6
+carriers 1 3 6
+edge 2>1 4>3 5>4
+feedback 5
+note OP2 on OP1; OP5 on OP4 on OP3; OP6 alone
+
+algorithm dx7-29
+ops 6
+carriers 1 2 3 5
+edge 4>3 6>5
+feedback 6
+note OP1 and OP2 alone; OP4 on OP3; OP6 on OP5
+
+algorithm dx7-30
+ops 6
+carriers 1 2 3 6
+edge 4>3 5>4
+feedback 5
+note OP1 and OP2 alone; OP5 on OP4 on OP3; OP6 alone
+
+algorithm dx7-31
+ops 6
+carriers 1 2 3 4 5
+edge 6>5
+feedback 6
+note OP1 to OP4 alone; OP6 on OP5
+
+algorithm dx7-32
+ops 6
+carriers 1 2 3 4 5 6
+feedback 6
+note six carriers, no modulation; the feedback on OP6
+
+algorithm opm-0
+ops 4
+carriers 4
+edge 1>2 2>3 3>4
+feedback 1
+note one stack: OP1 on OP2 on OP3 on OP4
+
+algorithm opm-1
+ops 4
+carriers 4
+edge 1>3 2>3 3>4
+feedback 1
+note OP1 and OP2 on OP3, OP3 on OP4
+
+algorithm opm-2
+ops 4
+carriers 4
+edge 1>4 2>3 3>4
+feedback 1
+note OP1 on OP4; OP2 on OP3 on OP4
+
+algorithm opm-3
+ops 4
+carriers 4
+edge 1>2 2>4 3>4
+feedback 1
+note OP1 on OP2 on OP4; OP3 on OP4
+
+algorithm opm-4
+ops 4
+carriers 2 4
+edge 1>2 3>4
+feedback 1
+note two pairs: OP1 on OP2, OP3 on OP4
+
+algorithm opm-5
+ops 4
+carriers 2 3 4
+edge 1>2 1>3 1>4
+feedback 1
+note OP1 on each of OP2, OP3 and OP4
+
+algorithm opm-6
+ops 4
+carriers 2 3 4
+edge 1>2
+feedback 1
+note OP1 on OP2; OP3 and OP4 alone
+
+algorithm opm-7
+ops 4
+carriers 1 2 3 4
+feedback 1
+note four carriers, no modulation

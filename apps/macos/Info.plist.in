@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) 2026 Nenad Micic
+     SPDX-License-Identifier: Apache-2.0
+     The app's Info.plist; the Makefile fills the @...@ fields at build time. -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleExecutable</key>         <string>IntegerFM</string>
+    <key>CFBundleIdentifier</key>         <string>local.integerfm.synth</string>
+    <key>CFBundleName</key>               <string>IntegerFM</string>
+    <key>CFBundleDisplayName</key>        <string>JotTune Synth</string>
+    <key>CFBundlePackageType</key>        <string>APPL</string>
+    <key>CFBundleShortVersionString</key> <string>0.1</string>
+    <key>CFBundleVersion</key>            <string>1</string>
+    <key>LSMinimumSystemVersion</key>     <string>14.0</string>
+    <key>CFBundleDocumentTypes</key><array><dict>
+        <key>CFBundleTypeName</key><string>FM Timeline</string>
+        <key>CFBundleTypeRole</key><string>Viewer</string>
+        <key>LSItemContentTypes</key><array><string>local.integerfm.synth.timeline</string></array>
+    </dict></array>
+    <key>UTExportedTypeDeclarations</key><array><dict>
+        <key>UTTypeIdentifier</key><string>local.integerfm.synth.timeline</string>
+        <key>UTTypeConformsTo</key><array><string>public.plain-text</string></array>
+        <key>UTTypeDescription</key><string>FM Timeline</string>
+        <key>UTTypeTagSpecification</key><dict>
+            <key>public.filename-extension</key><array><string>tl</string></array>
+        </dict>
+    </dict></array>
+    <key>CFBundleURLTypes</key><array><dict>
+        <key>CFBundleURLName</key><string>FM Timeline link</string>
+        <key>CFBundleURLSchemes</key><array><string>fmspike</string></array>
+    </dict></array>
+    <key>NSHighResolutionCapable</key>    <true/>
+    <key>NSPrincipalClass</key>           <string>NSApplication</string>
+    <key>FMSRepoRoot</key>               <string>@FMSRepoRoot@</string>
+    <key>FMSRecipesDir</key>              <string>@FMSRecipesDir@</string>
+    <key>FMSRecipeTool</key>              <string>@FMSRecipeTool@</string>
+    <key>FMSMusicDir</key>                <string>@FMSMusicDir@</string>
+    <key>FMSHarness</key>                 <string>@FMSHarness@</string>
+    <key>FMSHeadCommit</key>              <string>@FMSHeadCommit@</string>
+    <key>FMSEngineLine</key>              <string>@FMSEngineLine@</string>
+</dict>
+</plist>

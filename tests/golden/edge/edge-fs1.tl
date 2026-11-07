@@ -1,0 +1,21 @@
+# Edge inputs of  at the lowest rate, 1 Hz: ten samples, the Nyquist
+# clamp at 0.5 Hz, every segment 1 sample.
+timeline draft1
+engine a1 sine_bits=12 exp_bits=10 phase64=1 env64=1 fb_avg=1 tables=58021f1150d3c8d2
+fs 1
+length_ns 10000000000
+streams edge
+patch plain 0 65536 0 0 0 256 5 500 200 800
+patch plain 1 65536 0 3072 1024 0 5 500 200 800 440000 120
+patch max 0 4294967295 65535 65535 65535 65535 65535 65535 65535 65535 4294967295 65535
+patch max 1 4294967295 65535 65535 65535 65535 65535 65535 65535 65535 4294967295 65535
+voice 0 plain
+voice 1 max
+hash c8d739221d633f47
+0 edge 0 on 440000 32767
+0 edge 1 on 4294967295 65535
+3000000000 edge 0 pitch 0
+5000000000 edge 0 off
+6000000000 edge 0 on 250 32767
+9000000000 edge 1 off
+9999999999 edge 0 pitch 4294967295

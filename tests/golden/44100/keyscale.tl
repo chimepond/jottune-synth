@@ -1,0 +1,19 @@
+timeline draft1
+engine a1 sine_bits=12 exp_bits=10 phase64=1 env64=1 fb_avg=1 tables=58021f1150d3c8d2
+fs 44100
+length_ns 4000000000
+streams golden
+patch keyscale 0 65536 0 0 0 256 1 1500 400 300
+patch keyscale 1 917504 0 1536 0 128 1 250 300 300 698456 120
+voice 0 keyscale
+hash 016fb4bc6a2d7530
+0 golden 0 on 440000 32767
+400000000 golden 0 off
+800000000 golden 0 on 1046502 32767
+1200000000 golden 0 off
+1600000000 golden 0 on 1318510 20000
+2000000000 golden 0 off
+2400000000 golden 0 on 698456 32767
+2700000000 golden 0 on 1567982 32767
+3000000000 golden 0 pitch 783991
+3300000000 golden 0 off

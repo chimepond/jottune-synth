@@ -1,0 +1,209 @@
+Copyright (c) 2026 Nenad Micic
+SPDX-License-Identifier: Apache-2.0
+
+JOTTUNE SYNTH: START HERE, GIVEN THIS PLAYER URL
+
+Goal: compose an original instrumental song, render locally with the complete
+JotTune engine, inspect/revise it, and deliver ONE complete canonical .tl plus
+WAV. Keep your editable score too. No source checkout, MCP server, npm install,
+Python, renderer bridge or custom TL parser is required. No audio is sent to
+the service by these local tools. Synthesized instruments do not sing lyrics.
+All following links are relative to THIS player prefix, not the domain root.
+The Node client requires a kept renderer by default. When intentionally testing
+your own source build, add --allow-development; its reports remain labelled as
+development and do not claim release status.
+
+CREATIVE FREEDOM
+Choose your musical idea and style from the user's brief before consulting
+musical examples. This guide prescribes no genre, mood, meter, tempo, scale,
+instrumentation or song form. Aim for a finished, distinctive work in the style
+you choose; use the instrument's capabilities when they serve that intention.
+The starter teaches syntax, not what your music should resemble. Its melody,
+sounds, length and arrangement are not a benchmark or a template to copy.
+References are optional; their selection can influence the result. Never claim
+that valid rendering, feature counts or loudness measurements prove a masterpiece.
+
+1. DISCOVER
+Read this guide, then authoring.txt to write a score and render a first take.
+Use the other references when their subject is needed; reading all source code
+or all documentation before composing is unnecessary. Approximate download sizes
+below are UTF-8 bytes, not model tokens. agent-manifest.json files[].bytes gives
+the exact size of each served file for this deployment.
+  authoring.txt             ~19 KB: score fields, clock, recipes and sound laws
+  reference/recipes.txt     ~22 KB: look up chosen recipes and their native rows
+  analysis.txt              ~9 KB: inspect a take, sections, levels and dry voices
+  browser-guide.txt         ~19 KB: browser API; terminal users can skip it
+  reference/params.txt      ~81 KB: look up native fields, units and bounds
+  reference/gen-params.txt  ~5 KB: read when using native generators
+  instrument.txt           broad instrument reference, including local CLI tools
+native-reference.txt is the native-instrument subset of instrument.txt; consult
+it for synthesis features beyond the authoring guide. There is no need to read
+agent.mjs source: run node agent.mjs --help for supported commands and flags.
+starter.score.json is an editable eight-bar syntax example; starter.tl is its
+complete hashless draft. Make an original arrangement, not a renamed example.
+
+2. CHOOSE ONE SUPPORTED INTERFACE
+A. Browser automation: await IntFM.compose(score) returns draftText and the
+selected rendererRelease. IntFM.recipes() lists the sounds. A score declaration
+"recipe wind flute c_level=6" lowers the flute carrier by 6 dB; for all carriers,
+IntFM.recipeGain("flute","wind",-6) returns complete native rows. Positive
+c_level attenuates; positive gain amplifies. See authoring.txt for bounds. Then:
+  const draft = await IntFM.compose(score);
+  const take = await IntFM.listen(draft.draftText, {release:draft.rendererRelease});
+  if (take.verdict !== 'valid') throw Error(take.stderr || take.verdict);
+  const saved = await IntFM.verify(new TextDecoder().decode(take.canonical),
+                                 {release:draft.rendererRelease});
+  if (!saved.verified) throw Error(saved.stderr || saved.verification);
+  const measured = await IntFM.analyze(saved, {windowSeconds:4});
+  const wav = IntFM.toWav(saved);  // Blob; original integer PCM
+  const svg = IntFM.toSvg(saved); // native note gates, not an audio spectrum
+Use the existing player buttons to save TL, WAV, SVG, analysis JSON and PNG
+spectrogram. browser-guide.txt documents the complete API. Loading/rendering
+via API is silent; Play needs a human audio gesture. Do not claim you listened
+unless you actually auditioned it. No browser automation? Use B.
+
+B. Terminal agents: download agent.mjs from this page's prefix; run with
+Node 22.15 or newer. It uses Node built-ins only and fetches pinned static
+assets to a local cache. Set SITE to the clean player base URL including its prefix and TRAILING SLASH.
+Use the base of the page's agent.mjs link (document.baseURI in browser), not
+a song s/.../r/... URL, query or portable fragment. For example, append '/'
+to a slashless player address before these shell commands:
+  curl --fail --location "${SITE}agent.mjs" --output agent.mjs
+  node agent.mjs "$SITE" discover
+  curl --fail --location "${SITE}starter.score.json" --output syntax-example.score.json
+Write your own song.score.json for your chosen musical idea. Consult the syntax
+example for field shapes, not for its melody, instrumentation or arrangement.
+Then:
+  node agent.mjs "$SITE" compose song.score.json --mode listen --out audition
+  node agent.mjs "$SITE" verify audition.tl --analysis --out finished --formats tl,json,wav,svg,link
+--analysis measures PCM from that invocation without another render. For quick
+revision checks, add it to compose --mode listen instead. Standalone analyze is
+useful for a saved TL from an earlier session, but renders/verifies it again;
+prefer --analysis when already composing, rendering or verifying the same take.
+Use distinct output stems for revisions; existing files are refused unless
+--force is explicit, and source files cannot be overwritten. --release ID
+pins a kept renderer. --cache DIR selects cache (default ~/.cache/jottune-agent). Use --cache ./cache
+on each command to keep downloads inside your working folder; --offline uses only a complete
+previous setup and labels revocation status unknown. --timeout-ms bounds work.
+Run --help for options. Discovery shows recipe IDs once; --detail full adds
+descriptions and carrier metadata, or save with discover --out catalog --formats json.
+--detail full expands other console results; JSON outputs retain
+full diagnostics. setup downloads required runtime files without making music.
+
+FILES AND JSON RESULTS
+--out STEM is a filename prefix, not a directory or a JSON filename. The
+requested --formats select these files (default tl,json):
+  tl    STEM.tl                 complete canonical song
+  json  STEM.verification.json  full render/verification/analysis report
+  wav   STEM.wav                native integer PCM audio
+  svg   STEM.svg                native note gates and spatial command targets
+  link  STEM.link.txt           portable player URL, not a publication
+Discover with --out STEM writes STEM.discovery.json.
+The client does not save your editable score: retain that input yourself.
+
+Default console JSON is compact. --detail full prints the full saved-report
+shape, including diagnostics; the flag adds no render. With JSON export, both
+contain the same completed outputFiles list. Important field differences:
+  compact dimensions       full sampleRate/channels plus native info fields
+  dimensions.frames        Number(info.frames) in the full report
+  dimensions.voices        Number(info.voices) in the full report
+  dimensions.durationSeconds  Number(info.frames) / sampleRate
+  authoring.warnings        grouped summaries of full authoring.advisories
+Full analysis.windows/sections and dryAnalysis.voices/streams retain the rows
+that compact output counts or summarizes. Other native info fields are strings;
+convert only known safe integers. A .verification.json file is a local report,
+not a replacement for the canonical song or editable score.
+
+OFFLINE SETUP AND EXECUTION BOUNDARIES
+Run setup once while online in your chosen working folder, containing agent.mjs
+and your song files. Use the same SITE, cache and release for subsequent work:
+  WORK="$PWD"
+  node agent.mjs "$SITE" setup --cache "$WORK/cache"
+  node agent.mjs "$SITE" verify finished.tl --offline --cache "$WORK/cache" --out checked
+Setup selects the default kept release unless --release ID is supplied. Copying
+only harness.wasm is insufficient: use setup, then retain its complete cache.
+Do not construct cache metadata manually. A missing/incomplete cache refuses;
+return online and rerun setup. Offline use cannot establish current revocation.
+
+Online commands fetch agent-manifest.json and missing selected runtime assets.
+Discover --examples additionally GETs songs.json without fetching the songs.
+Offline commands use a complete verified local cache.
+There is no hidden model/API request or upload during local composition/rendering.
+agent-manifest.json lists static SHA-256 checksums; engines.json identifies kept
+renderer files/checksums. browser-guide.txt explains the optional bootstrap
+checksum check and WASI artifact contract. Same-origin checksums prove integrity
+against that manifest, not independent authenticity of the website/client.
+
+3. INSPECT AND REVISE
+analysis.txt describes LUFS, windows, named sections, peaks, stereo and tails.
+CLI --sections '[{"name":"hook","startSeconds":4,"endSeconds":12}]' measures
+an interval. --dry-voices '[0,1]' requests bounded native PRE-EFFECTS voice
+measurements; --dry-max-bytes and --dry-timeout-ms allow an explicit larger
+budget. Dry voices do not sum to the final nonlinear mix. Browser equivalent:
+IntFM.analyze(saved,{dryVoices:[0,1],sections:[{name:'hook',startSeconds:4,endSeconds:12}]}).
+Missing optional diagnostics preserve the valid song and say unavailable.
+CLI --timeout-ms defaults to and cannot exceed 120000 ms for the complete
+render/verification/analysis worker; --dry-timeout-ms must fit within it. The
+browser analysis API's 300000 ms maximum does not extend this CLI limit.
+Dry output needs frames * ALL native voices * 4 bytes: selecting fewer voices
+does not lower that output budget. Default --dry-max-bytes is 134217728 (128 MiB),
+maximum 2147483648 (2 GiB). On a byte-budget refusal, inspect the required bytes
+and explicitly retry with a sufficient --dry-max-bytes value and fresh --out
+stem, or omit dry analysis. analysis.txt explains the timing and memory scopes.
+To audition a score part through its effects, use a controlled rerender:
+  node agent.mjs "$SITE" compose song.score.json --solo-streams '["lead"]' --mode listen --analysis --out lead-only
+Or use --mute-streams '["bass"]'; the two options are mutually exclusive.
+Browser: await IntFM.compose(score,{soloStreams:['lead']}) or {muteStreams:['bass']}.
+The complete original score is natively inspected before filtering. All patches,
+duration, effects, positions and controls stay; only other note/on/off gates
+are removed. Generators and voices shared by retained/muted gates are refused.
+This is a new performance through the chain, not additive stems of the original
+mix: shared effects, dynamics and preceding audio history can change the result.
+Inspect authoring.selection in CLI results (selection in browser compose output).
+Check a dense passage, arrangement contrasts, note overlap, ending decay and
+stereo/mono behavior. Level targets and gate warnings are advice, not musical
+quality/originality proofs. Use identical phrases plus effect history for A/B.
+Revise the retained score; never erase an unexplained saved hash mismatch.
+
+4. DELIVER
+Canonical .tl is self-contained. Keep it, its renderer release, WAV and editable
+score. Hashless valid drafts are unverified: canonical replay must report
+verified=true, match=yes and block_indep=yes. Listen is one pass; verify is two.
+The CLI automatically replays a draft's canonical output in verification mode.
+execution.canonicalReplay means this EXTRA invocation for a newly canonicalized
+draft, not whether verification succeeded: draft verify has 2 invocations/4 native
+passes and canonicalReplay=true; saved-TL verify has 1 invocation/2 passes and
+canonicalReplay=false. Both succeed with verified=true, match=yes, block_indep=yes.
+Listen has 1 invocation/1 pass and does not verify a saved record.
+Its computed hash and canonical output are useful artifacts, but verified=false
+is intentional until full saved-record verification succeeds.
+PNG spectrogram and native animated spatial paths are browser views/exports;
+CLI SVG shows native note gates and spatial command targets. MIDI/SFZ and
+score v2/v3 abstractions use the separate local tools described in local-tools.txt
+and interchange.txt; they are not silently advertised as browser operations.
+Portable links and QR codes are created locally; save the canonical TL for durable storage.
+
+Use songs.json or Browse all for examples; Favorites is a curated listening selection.
+Optional references, after choosing your own musical direction:
+  node agent.mjs "$SITE" discover --examples 3
+This returns a fresh random selection of distinct songs from the source library,
+not multiple spatial variants of one composition. It does not download, render
+or upload the songs. Open any returned TL URL that you actually want to inspect.
+The selection includes its seed and exact song IDs. To repeat it for a comparison:
+  node agent.mjs "$SITE" discover --examples 3 --example-seed comparison-01
+The same seed and catalog select the same songs; normal discovery selects none.
+The current songs.json catalog has no acoustic loudness measurements. To compare
+levels, download one chosen TL URL locally as reference.tl, then run:
+  node agent.mjs "$SITE" analyze reference.tl --out reference-analysis
+This measures that song with the official client; it establishes no universal
+loudness target or musical-quality ranking.
+COUNT is 1–10, up to the number of playable source songs; this option needs a
+connection. Selection ignores genre/Favorites rank and prefers each song's usable
+Standard version. Keep reference IDs with a comparison when examples are used.
+A library is a collection of particular works, not a neutral distribution of
+styles. Random references can broaden exposure but cannot remove that bias.
+A measured feature/level is not a quality score. Missing model/tempo/genre is
+unknown; don't inherit another creator's attribution or invent your own model.
+Browser profile: 1,000,000 TL bytes / 300 seconds.
+Invalid inputs, wrong hashes, resource limits and withdrawn releases are explicit
+refusals. Offline caches cannot prove current revocation. Keep local source files.

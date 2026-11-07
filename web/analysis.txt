@@ -1,0 +1,171 @@
+Copyright (c) 2026 Nenad Micic
+SPDX-License-Identifier: Apache-2.0
+
+LOCAL AUDIO ANALYSIS
+
+Analysis measures a completed render. It does not change the PCM, canonical
+timeline, verification verdict or master gain.
+
+INTERFACE BUDGETS
+The terminal client's --timeout-ms bounds its complete worker invocation:
+rendering, any canonical replay, PCM analysis and optional dry analysis together.
+It defaults to 120000 ms and accepts 1..120000. Setup/downloads occur separately.
+CLI --dry-timeout-ms defaults to the smaller of 10000 ms and that total deadline;
+an explicit value must be 1..120000 and no greater than --timeout-ms. A larger
+dry deadline does not add time to the worker's remaining overall budget.
+
+Browser IntFM.analyze measures an existing render in its own worker. Its timeoutMs
+defaults to 120000 and can reach 300000; dryTimeoutMs defaults to 10000 and can
+reach 300000, still within the browser analysis worker's overall timeout.
+The direct analysis companion's maxMilliseconds has the same
+10000 default/300000 maximum. These are separate API limits, not permission to
+pass --timeout-ms 300000 or --dry-timeout-ms 300000 to the terminal client.
+The native dry pass still verifies a full mix; it is additional rendering work.
+
+For terminal revisions, --analysis on compose/render/verify reuses that call's
+PCM. A standalone analyze SONG.tl verifies/renders the saved song again. Browser
+analysis reuses the cached PCM for mix measurements. See agent-start.txt for
+artifact suffixes and the compact versus full JSON result shapes.
+
+analyzePCM(result, options) in analysis.mjs returns a Promise. result supplies
+pcm (Int16Array), sampleRate and channels. Options:
+  windowSeconds: 4 by default, 0.1 to 300
+  sections: [{name:'verse', startSeconds:4, endSeconds:12}], at most 32
+  truePeak: true by default; false skips the additional interpolation work
+  signal: optional AbortSignal
+  shouldCancel: optional callback
+
+The output reports sample peak, first peak frame/time/channel, RMS, per-channel
+DC mean and exact PCM rail counts; stereo correlation and channel balance;
+window and section measurements; and trailing exact-zero digital silence.
+Whole-record stereo also reports mean-square mid/side energy in full-scale
+squared units and RMS dBFS, using M=(L+R)/2 and S=(L-R)/2, including DC.
+side_energy_fraction is side/(mid+side), null for silence; zero-energy RMS
+levels are null. This is a signal measurement, not a stereo-width target.
+Channels are zero based. dBFS references signed PCM16 full scale. Null means
+silence, insufficient duration or an unavailable measurement, never minus infinity.
+
+For mono/stereo, integrated loudness uses the same rate-dependent BS.1770-4
+K filters and absolute/relative gates as tools/music/analyze.py. Mono counts
+twice, matching that tool's two-speaker playback convention. The maximum
+short-term value needs three seconds; integrated needs a complete 400 ms
+block. Blocks advance every 100 ms. The absolute gate keeps blocks strictly
+above -70 LUFS; the relative gate then keeps blocks above the absolute survivors’
+mean energy minus 10 LU. The integrated result averages surviving energy, not
+LUFS values. Windows/sections keep preceding filter history but gate within their
+selection. mean_k_weighted_lufs is ungated and is labelled separately.
+An exactly-zero PCM selection can therefore retain a tiny ungated filter-history
+reading even when integrated_lufs is null. This is not residual audio: use raw
+sample peak, RMS and trailing digital silence to determine PCM silence. Analyzing
+the isolated silent slice starts filters from zero and can give a different
+ungated result. No silence threshold or automatic trimming is implied.
+Raw four/sixteen-channel field components have no assigned speaker loudness.
+
+true_peak_dbtp is a 4x FFT interpolation estimate, not a guaranteed continuous
+signal maximum or a certified meter. The shared FFT processes 65,536 original
+samples per block, including 4,096-frame margins on both sides, and measures
+only the central 57,344 frames. Values outside the record are zero. The result
+includes its method and maximum's fractional frame, time and channel.
+Named sections expose the same true_peak_* fields directly on each section.
+They share the full record's interpolation pass and neighboring samples; only
+maxima inside each section's half-open frame interval are selected. Positions
+are absolute record coordinates. A section of zero-valued PCM beside a sharp
+edge can have a nonzero interpolated peak; use sample_peak for digital silence.
+This is different from cropping audio and zero-padding each cropped edge.
+Ordinary fixed windows omit true-peak fields; request named sections when needed.
+This uses different FFT block lengths from tools/music/analyze.py; both are
+estimates in the same interpolation family. Sample peak remains separate.
+At sharp record boundaries, especially exact-Nyquist alternating samples,
+finite-block interpolation is sensitive to block length. The adversarial
+alternating-sample test differs from the Python estimate by up to 1.27 dB;
+the tested ordinary/high-frequency signals, impulses and DC steps differ by
+less than 0.05 dB. Those fixture results are not a universal error bound or
+proof that a selected ceiling cannot be exceeded on playback.
+Silence returns null. Raw field components have no speaker true-peak value.
+The optional pass retains bounded FFT work buffers (about 12 MiB), yields
+between blocks and can be cancelled. Failure leaves other measurements intact.
+No LRA, musical quality score, automatic normalization or genre-independent
+stem target is inferred. The work limit is 128 MiB input PCM and 300 seconds.
+Analysis yields periodically for cancellation; run it away from audio playback.
+
+diagnoseEvents(result) reads only native --events rows. It reports per-voice
+and per-stream note counts, held-gate retriggers, on/off in one sample frame,
+explicit positioning before the first note, and gates still on at EOF.
+These are advisories about gates, not measured envelope releases or clicks.
+This native event export merges sends into generic control rows, so it cannot
+identify missing sends to individual buses. The source companion below adds
+native bus diagnostics without parsing the raw TL in JavaScript.
+
+The browser's events.structure is a version-1 descriptive song profile shared
+with the loaded player (IntFM.result().structure) and selected-song inspection.
+The terminal client's full analysis JSON exposes the same profile under
+diagnostics.structure. It needs no PCM and does not rerender. status is available or unavailable with a reason;
+unavailable results contain no partial counts. Complete native INSPECT geometry
+and EVENT/GEN_EVENT rows are required, capped at 20,000 rows.
+
+scope is native_gate_commands. duration_seconds is frames/sample_rate_hz.
+note_attacks counts every on command, including held-voice retriggers;
+attacks_per_second uses the full record duration. active_voices counts distinct
+voices receiving on; allocated_voices comes from INSPECT. Pitch commands do not
+add attacks. commanded_frequency_hz.minimum/maximum preserve the native
+millihertz values of on commands and pitch changes while a gate is open, including
+zero Hz; both are null when no on occurs. This range is not audible pitch or an
+estimate of key, tuning or percussion. It is not rounded to 12-TET note names.
+
+maximum_open_gates and mean_open_gates measure command occupancy over rendered
+sample frames, with time_ns mapped by floor(time_ns*fs/1e9). Native ordering is
+preserved at a frame, including authored commands before generated commands.
+Same-frame on/off still counts an attack but contributes no gate duration;
+an unclosed gate ends at the record boundary. no_gate_seconds measures frames
+with no open gates, not silence: releases, delay and reverb may remain audible.
+Transient same-frame frequency commands stay in the commanded range even when
+their gate has no duration. These facts do not rank composition quality.
+
+DRY SOURCES
+
+analysis-runtime.mjs exports:
+  analyzeDryVoices({module, recordText, info, events, pcmHash}, options)
+
+module is the optional analysis companion, never the kept renderer module.
+Before loading it, verify analysis-view.json format 1, its wasm_sha256, and
+both browser_sha256/library_sha256 against the selected kept engine. The
+companion does not replace any archived renderer or runtime. It uses the
+production TL reader, full verifier and native dry-source writer. Its full-mix
+PCM hash must equal the caller's already completed render before accepting
+any source measurements. The parent must terminate its worker on timeout:
+the native verification is synchronous and a JS timer cannot interrupt it.
+
+Options: voices (distinct native indices, default all), maxBytes (default
+134217728 = 128 MiB; at most 2147483648 = 2 GiB), maxMilliseconds (default
+10000; at most 300000), signal and shouldCancel. Failures return
+status:'unavailable' with a reason and leave the original render usable. The caller can retry with an
+explicit larger budget. No draft or diagnostic audio is uploaded.
+
+The dry payload requires frames * ALL native voices * 4 bytes, excluding its
+44-byte WAV header. Choosing fewer voices reduces analysis work but not native
+output. Compute this from full result.info.frames and result.info.voices, or
+compact dimensions.frames and dimensions.voices. If the required payload
+exceeds the default, explicitly retry with CLI --dry-max-bytes REQUIRED_BYTES
+(or browser dryMaxBytes / companion maxBytes), up to the 2 GiB maximum. Retain
+the valid song when optional dry analysis is unavailable; do not keep retrying
+with the same insufficient budget. A byte budget is a processing cap, not an
+allocation of that much RAM. At 48 kHz, eight voices and 60 seconds require
+92,160,000 bytes; 46 voices and 125 seconds require
+1,104,000,000 bytes. Those bytes stream through a checked append-only sink;
+the complete dry audio file is never retained. Output RIFF geometry and the
+native STEMS payload hash are checked. Rendering still needs the ordinary
+two PCM verification buffers within its memory admission and costs CPU.
+
+Voice values are signed Q2.30 output BEFORE per-voice crusher, positioning,
+sends and master effects. Levels use Q30 unity, and LUFS is a hypothetical
+dual-mono audition of each dry voice. It is not the final audible stem level.
+Stream rows sum only selected voices whose native onsets name exactly one
+stream. Ambiguous/unlabelled voices stay separate. Dry sums are useful for
+finding silent or disproportionate source parts; nonlinear effects and shared
+returns mean they do not reconstruct the final mix or identify its exact peak
+contributors. No voice gate or stream name is parsed from raw TL text.
+
+The companion also reports configured audible buses and their native nonzero
+send-event counts. A declared bus with no nonzero sends receives an advisory;
+a nonzero send event alone is not proof that a wet return is audible. Duck is
+a detector, not an audible return, and is excluded from this warning.
