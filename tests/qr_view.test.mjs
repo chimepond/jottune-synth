@@ -84,6 +84,7 @@ test('oversized safe links keep copying available without a stale SVG',async()=>
   assert.equal(page.get('qr-image').innerHTML,'');assert.equal(page.get('qr-image').hidden,true);
   assert.equal(page.get('qr-download').disabled,true);assert.equal(page.get('qr-copy').disabled,false);
   assert.match(page.get('qr-status').textContent,/too large/);
+  assert.doesNotMatch(page.get('qr-help').textContent,/Scan/);
   await page.get('qr-copy').click();assert.deepEqual(copied,[tooLong]);
   page.view.close();await Promise.resolve();
 });
@@ -108,5 +109,14 @@ test('untrusted display labels remain text outside the constant encoder markup',
   assert.equal(page.get('qr-heading').innerHTML,'');
   assert.ok(!page.get('qr-image').innerHTML.includes(label));
   assert.ok(!page.get('qr-image').innerHTML.includes(LINK));
+  page.view.close();await Promise.resolve();
+});
+
+
+test('a failed initial copy opens with the same URL selected and a manual recovery message',async()=>{
+  const page=fixture();page.view.open(LINK,{selectLink:true});
+  assert.equal(page.get('qr-url').selected,true);
+  assert.equal(page.document.activeElement,page.get('qr-url'));
+  assert.match(page.get('qr-status').textContent,/Clipboard access.*copy it manually/);
   page.view.close();await Promise.resolve();
 });

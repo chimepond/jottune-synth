@@ -162,7 +162,7 @@ async function withPage(run, configuration = {}) {
   install('window', {addEventListener: (type, listener) => listeners.set(type, listener), dispatchEvent: event => pageEvents.push(event)});
   install('CustomEvent', class {constructor(type, value) {this.type = type; this.detail = value.detail;}});
   install('location', new URL(configuration.href || 'https://player.invalid/'));
-  const navigation = {onLine:configuration.online ?? true, clipboard: {writeText: async text => { copied.push(text); }}};
+  const navigation = {onLine:configuration.online ?? true, clipboard: {writeText: async text => {if(configuration.clipboardDenied)throw Error('Permission denied'); copied.push(text); }}};
   if (configuration.serviceWorker) navigation.serviceWorker = configuration.serviceWorker;
   if (configuration.serviceWorkerAccess) Object.defineProperty(navigation,'serviceWorker',configuration.serviceWorkerAccess);
   if (configuration.audioSession) Object.defineProperty(navigation, 'audioSession', configuration.audioSession);
@@ -402,25 +402,24 @@ function installingService() {
   return service;
 }
 
-test('first render waits for its own service worker control and reports readiness after success', async () => {
+test('optional offline installation never blocks first rendering or claims an uncached renderer', async () => {
   const service = installingService();
   await withPage(async page => {
     page.ready(); const pending = page.api.listen('cold first song'); await nextTurn();
-    assert.equal(page.workers.length,0);
+    assert.equal(page.workers.length,1,'Rendering starts before optional precaching finishes');
     service.activate('https://player.invalid/other/sw.js');await nextTurn();
-    assert.equal(page.workers.length,0,'A different controlling worker does not establish this app cache');
+    assert.equal(page.workers.length,1,'A different worker cannot restart the render');
     service.activate();await nextTurn();
-    assert.equal(page.workers.length,1);
-    assert.match(page.get('offline-status').textContent,/Load a song/);
     page.workers[0].reply(validResult());await pending;
+    assert.match(page.get('offline-status').textContent,/Used renderers may be cached/);
+    await complete(page,'controlled song');
     assert.match(page.get('offline-status').textContent,/this renderer are ready/);
-    const staleReply = page.workers[0].onmessage;
+    const staleReply = page.workers[1].onmessage;
     const next = page.api.listen('refused song');await nextTurn();
-    assert.match(page.get('offline-status').textContent,/Load a song/);
     staleReply({data:validResult()});
-    assert.match(page.get('offline-status').textContent,/Load a song/,'Stale worker messages cannot label a newer request');
-    page.workers[1].reply({verdict:'refused',code:2,stderr:'Unavailable renderer'});await next;
-    assert.match(page.get('offline-status').textContent,/Load a song/);
+    assert.match(page.get('offline-status').textContent,/Used renderers may be cached/);
+    page.workers[2].reply({verdict:'refused',code:2,stderr:'Unavailable renderer'});await next;
+    assert.match(page.get('offline-status').textContent,/Used renderers may be cached/);
   }, {serviceWorker:service});
 });
 
@@ -520,7 +519,7 @@ test('cancel settles a call even while the engine registry is pending', () => wi
 test('agent render updates the visible result and export controls', () => withPage(async page => {
   const result = await complete(page);
   assert.equal(page.get('record').value, 'authored fixture');
-  assert.equal(page.get('verdict').textContent, 'Ready to play');
+  assert.equal(page.get('verdict').textContent, 'Verified · ready to play');
   assert.equal(page.get('verdict').getAttribute('title'), 'Verified');
   assert.equal(page.get('status').textContent, 'Ready. Press Play to listen.');
   assert.equal(page.workers[0].request.mode, 'verify');
@@ -530,6 +529,15 @@ test('agent render updates the visible result and export controls', () => withPa
   assert.match(page.get('timeline').innerHTML, /^<svg /);
   assert(page.get('facts').children.some(child => child.textContent === result.recordSha256));
   for (const id of ['play', 'share', 'show-qr', 'tl-download']) assert.equal(page.get(id).disabled, false);
+}));
+
+test('verification budget refusals leave prepared listening audio intact and disable known impossible actions',()=>withPage(async page=>{
+  const value=validResult({info:{route:'0',voices:'1',length_ns:'286480000000',pcm_bytes:'55004160',render_bytes_lower_bound:'116222544'}});
+  await complete(page,'large listened song',value);
+  assert.equal(page.get('play').disabled,false);
+  for(const id of ['render','verify-saved','profile-apply'])assert.equal(page.get(id).disabled,true);
+  await assert.rejects(page.api.verifySaved(),/fixed budget/);
+  assert.equal(page.api.result(),value);assert.equal(page.get('play').disabled,false);
 }));
 
 test('editing text invalidates playback and canonical sharing', () => withPage(async page => {
@@ -1019,24 +1027,16 @@ test('browsing past a loaded library song preserves its exact compact sharing id
   },{catalog,network:{'/web/songs/song-0.tl':'song zero'}});
 });
 
-test('sparse Unicode search reports partial scope and scans at most four pages per step', async () => {
+test('sparse Unicode search continues bounded chunks until it finds an existing song', async () => {
   const catalog=largeCatalog(110);catalog.songs[105].title='夜の旅';
   await withPage(async page=>{
     page.get('song-search').value='夜の旅';page.get('song-search').dispatch('input');await nextTurn();
-    assert.equal(page.get('song-load').disabled,true);
-    assert.match(page.get('library-status').textContent,/Searched 96 of 110 songs\./);
-    assert.match(page.get('library-status').textContent,/More songs may match/);
-    assert.equal(page.get('library-next').disabled,false);
-    assert.equal(page.get('song-step-down-left').disabled,false);assert.equal(page.get('song-step-down-right').disabled,false);
-    assert.equal(page.requests.filter(url=>/catalog\/all-\d+.json$/.test(url)).length,4);
-    await page.get('song-step-down-right').click();
+    assert.equal(page.get('song-load').disabled,false);
     assert.equal(page.get('selected-song-title').textContent,'夜の旅');
     assert.match(page.get('library-status').textContent,/1 matches in this source selection/);
+    assert.equal(page.requests.filter(url=>/catalog\/all-\d+.json$/.test(url)).length,5);
     assert.equal(page.get('library-next').disabled,true);assert.equal(page.workers.length,0);
-    assert.equal(page.get('song-step-down-right').disabled,true);
-    await page.get('song-step-up-left').click();
-    assert.equal(page.get('song-load').disabled,true);assert.equal(page.get('song-step-up-left').disabled,true);
-    assert.equal(page.get('song-step-down-right').disabled,false,'An empty prior search step still permits continuing forward');
+    assert.equal(page.get('library-previous').disabled,true,'Empty scan chunks are not false result pages');
     await page.get('library-clear').click();
     assert.match(page.get('library-path').textContent,/Source library › Browse all$/);
   },{catalog});
@@ -2025,6 +2025,20 @@ test('prepareLink renders a named service record silently and preserves its expe
   '/preview/r/song.tl': 'service record',
 }}));
 
+test('an unknown shared song clears an unrelated library selection while leaving Play available',()=>withPage(async page=>{
+  assert.notEqual(selectedSongId(page),'');
+  await prepared(page,page.api.prepareLink('https://player.invalid/preview/r/'+'a'.repeat(64)),'service record');
+  assert.equal(page.get('play').disabled,false);assert.equal(page.get('song-load').disabled,true);
+  assert.equal(page.get('rail-load').disabled,true);assert.equal(selectedSongId(page),'');
+  assert.equal(page.get('rail-selected-song').textContent,'No song selected');
+},{catalog:curatedCatalog(),network:{['/preview/api/records/'+'a'.repeat(64)]:{record_sha256:'a'.repeat(64),renderer_release:'test',record_url:'r/song.tl'},'/preview/r/song.tl':'service record'}}));
+
+test('denied guide copying exposes a direct manual guide link instead of rejecting silently',()=>withPage(async page=>{
+  await page.get('copy-guide').click();
+  assert.equal(page.get('guide-manual').hidden,false);assert.equal(page.copied.length,0);
+  assert.match(page.get('status').textContent,/Clipboard access.*manually/);
+},{clipboardDenied:true,network:{'/web/browser-guide.txt':'Browser guide text'}}));
+
 test('a late prepareLink fetch cannot overwrite a newer edit or render it', async () => {
   const response = deferred();
   await withPage(async page => {
@@ -2156,7 +2170,10 @@ test('a cold compact link outside Featured restores exact saved title/version wi
   assert.equal(result.recordSha256,'a'.repeat(64));assert.equal(result.pcmHash,'0123456789abcdef');
   assert.equal(page.get('loaded-song').textContent,'Beyond Featured');
   assert.equal(page.get('loaded-version').textContent,'Keys mirror · saved ±30°');
-  assert.equal(page.get('selected-song-title').textContent,'Preview song','Browsing selection remains separate');
+  assert.equal(page.get('selected-song-title').textContent,'Beyond Featured','The incoming song is surfaced as the selection');
+  assert.equal(page.get('rail-selected-song').textContent,'Beyond Featured');
+  assert.equal(page.get('song-variant').value,'mirror');
+  assert.equal(songRows(page).length,1);
   assert.equal(page.get('play').textContent,'Play');assert.equal(page.audioCreations(),0);
   assert.deepEqual([...new Set(page.requests.filter(url=>url.includes('/catalog/')).map(url=>new URL(url).pathname))].sort(),
     ['/web/catalog/all-2.json','/web/catalog/featured-1.json','/web/catalog/index.json']);
@@ -2185,6 +2202,7 @@ test('missing or mismatched hinted metadata never blocks valid audio or attaches
       await prepared(page,undefined,'mirror song');assert.equal(page.api.result().verdict,'valid');
       assert.equal(page.get('play').disabled,false);assert.equal(page.get('loaded-song').textContent,'Linked song');
       assert.equal(page.get('loaded-version').textContent,'Linked saved version');assert.equal(page.audioCreations(),0);
+      assert.equal(selectedSongId(page),'');assert.equal(page.get('song-load').disabled,true);assert.equal(page.get('rail-load').disabled,true);
     },{href:coldLinkURL(),catalog,network:{'/web/songs/beyond-mirror.tl':'mirror song',
       '/web/catalog/all-2.json':()=>new Response(JSON.stringify(response),{status:failure==='unavailable'?503:200})}});
   }
@@ -2202,6 +2220,23 @@ test('late hinted metadata is aborted and cannot rename a replacement local song
     assert.equal(page.get('record').value,'replacement');assert.equal(page.audioCreations(),0);
   },{href:coldLinkURL(),catalog,network:{'/web/songs/beyond-mirror.tl':'mirror song','/web/catalog/all-2.json':options=>{signal=options.signal;return pending.promise;}}});
 });
+
+test('importing known canonical bytes restores the catalog title without trusting the filename',()=>withPage(async page=>{
+  page.get('file').files=[{name:'a'.repeat(64)+'.tl',size:10,text:async()=>'imported complete record'}];
+  await prepared(page,page.get('file').onchange(),'imported complete record');
+  assert.equal(page.get('loaded-song').textContent,'<First song>');
+  assert.equal(document.title,'<First song> · JotTune Synth');
+  assert.equal(page.audioCreations(),0);
+},{catalog:curatedCatalog()}));
+
+test('auto move leaves a visible transport focused so a second activation pauses',()=>withPage(async page=>{
+  await complete(page,'keyboard song',transportResult());page.get('play').focus();
+  await page.get('play').click();
+  assert.equal(document.activeElement,page.get('rail-play'));
+  assert.equal(page.get('rail-play').textContent,'Pause');
+  page.advance(1);await page.get('rail-play').click();
+  assert.equal(page.get('play').textContent,'Resume');
+}));
 
 test('sharing a saved library version uses its short link, while a modified result stays portable', () => withPage(async page => {
   await complete(page, 'library song', validResult({recordSha256:'a'.repeat(64)}));
@@ -2254,19 +2289,20 @@ test('service worker isolates prefixes and excludes live records while caching e
   const ownOld = 'intfm-workbench-%2Fpreview-a%2F-old';
   const other = 'intfm-workbench-%2Fpreview-b%2F-old';
   stores.set(ownOld, new Map()); stores.set(other, new Map());
-  let offline = false;
+  let offline = false, writable = true, storageAvailable = true;
   const caches = {
     keys: async () => [...stores.keys()],
     delete: async name => { removed.push(name); return stores.delete(name); },
     open: async name => {
+      if (!storageAvailable) throw Error('Storage unavailable');
       if (!stores.has(name)) stores.set(name, new Map());
       const entries = stores.get(name);
       return {match: async request => entries.get(request.url)?.clone(),
-        put: async (request, response) => { entries.set(request.url, response.clone()); }};
+        put: async (request, response) => {if(!writable)throw Error('Quota exceeded'); entries.set(request.url, response.clone()); }};
     },
   };
   vm.runInNewContext(readFileSync(new URL('../web/sw.template.js', import.meta.url), 'utf8'), {
-    URL, Request, caches,
+    URL, Request, Response, caches,
     self: {location: new URL('https://player.invalid/preview-a/sw.js'),
       addEventListener: (name, listener) => handlers.set(name, listener), clients: {claim: async () => {}}},
     fetch: async request => {
@@ -2292,6 +2328,14 @@ test('service worker isolates prefixes and excludes live records while caching e
   assert.equal(await (await request('/preview-a/engines.json')).text(), 'revision-3');
   offline = true;
   assert.equal(await (await request('/preview-a/engines.json')).text(), 'revision-3');
+  for(const path of ['/preview-a/catalog/index.json','/preview-a/songs/not-cached.tl','/preview-a/engines/not-cached/browser.wasm']) {
+    const missing=await request(path);assert.equal(missing.status,503);assert.match(await missing.text(),/Not available offline/);
+    assert.equal(missing.headers.get('Cache-Control'),'no-store');
+  }
+  offline = false;writable = false;
+  assert.equal(await (await request('/preview-a/engines/uncached-when-full/browser.wasm')).text(),'revision-4');
+  storageAvailable = false;
+  assert.equal(await (await request('/preview-a/engines/storage-denied/browser.wasm')).text(),'revision-5');
 });
 
 function wavChunks(bytes, start = 12, end = bytes.length) {

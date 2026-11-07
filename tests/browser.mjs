@@ -17,12 +17,21 @@ assert.ok(base&&['http:','https:'].includes(new URL(base).protocol),
 assert.ok(['chromium','firefox','webkit'].includes(type));
 const module=process.env.PLAYWRIGHT_MODULE||'playwright';
 const playwright=await import(path.isAbsolute(module)?pathToFileURL(module).href:module);
-const browser=await playwright[type].launch({headless:true,...(executablePath?{executablePath}:{})});
+const browser=await playwright[type].launch({headless:true,...(type==='chromium'?{args:['--mute-audio']}:{}),...(executablePath?{executablePath}:{})});
 try{
-  for(const viewport of [{width:1440,height:900},{width:1280,height:650},{width:390,height:844},{width:320,height:568}]){
-    const mobile=viewport.width<500;
-    const context=await browser.newContext({viewport,acceptDownloads:true,serviceWorkers:'allow',
+  for(const viewport of [{width:1440,height:900},{width:1280,height:650},{width:390,height:844},{width:320,height:568},{width:734,height:343,mobile:true},{width:720,height:450}]){
+    const mobile=viewport.width<500||viewport.mobile===true,compact=viewport.width<1100;
+    const context=await browser.newContext({viewport:{width:viewport.width,height:viewport.height},acceptDownloads:true,serviceWorkers:'allow',
       hasTouch:mobile,...(type==='firefox'?{}:{isMobile:mobile})});
+    // Keep tests silent in every browser while leaving rendered PCM untouched.
+    await context.addInitScript(()=>{
+      const Original=window.AudioContext||window.webkitAudioContext;if(!Original)return;
+      class QuietAudioContext extends Original {
+        constructor(...args){super(...args);const mute=this.createGain();mute.gain.value=0;mute.connect(this.destination);
+          Object.defineProperty(this,'destination',{get:()=>mute});}
+      }
+      window.AudioContext=QuietAudioContext;if(window.webkitAudioContext)window.webkitAudioContext=QuietAudioContext;
+    });
     const page=await context.newPage(),errors=[],requests=[];
     page.setDefaultTimeout(60000);
     page.on('pageerror',error=>errors.push(error.message));
@@ -65,6 +74,14 @@ try{
       console.log(`PASS ${type} ${viewport.width}x${viewport.height}: Favorite Load matches saved SHA and channels without autoplay`);
     }
 
+    const rowLayout=await page.locator('#song-select').evaluate(node=>({height:node.clientHeight,rows:[...node.querySelectorAll('.song-choice')].map(row=>row.getBoundingClientRect().height)}));
+    assert.ok(rowLayout.rows.every(height=>height>=24),'Every song row has a24px target');
+    assert.ok(rowLayout.rows.reduce((a,b)=>a+b,0)<=rowLayout.height+1,'All eight compact rows remain visible');
+    if(viewport.height<=500){
+      assert.equal(await page.locator('.app-header').evaluate(node=>getComputedStyle(node).position),'static');
+      await page.locator('#details-panel').evaluate(node=>{node.open=true;for(const child of node.querySelectorAll('details'))child.open=true;});
+      assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false,'Expanded analysis options fit short windows');
+    }
     const take=await page.evaluate(async()=>{
       const score=await(await fetch(new URL('starter.score.json',document.baseURI))).json();
       const compiled=await IntFM.compose(score),listened=await IntFM.listen(compiled.draftText,{release:compiled.rendererRelease});
@@ -76,13 +93,15 @@ try{
     });
     assert.equal(take.verdict,'valid');assert.equal(take.verified,true);
     assert.ok(take.wavBytes>44&&take.svg);
-    const controls=mobile?'#mobile-play':'#rail-play';
-    await page.locator(controls).click();
+    const controls=compact?'#mobile-play':'#rail-play';
+    await page.locator(controls).focus();await page.keyboard.press('Space');
     await page.waitForFunction(()=>document.querySelector('#play').textContent==='Pause');
-    await page.locator(controls).click();
+    assert.equal(await page.evaluate(()=>document.activeElement.id),controls.slice(1));
+    await page.waitForFunction(()=>Number(document.querySelector('#seek').value)>0);
+    await page.keyboard.press('Space');
     await page.waitForFunction(()=>document.querySelector('#play').textContent==='Resume');
     await page.locator('#player-panel').evaluate(node=>node.scrollIntoView({block:'start',behavior:'instant'}));
-    for(const selector of ['#play','#play-right','#stop',...(mobile?['#choose-song','#mobile-play']:['#rail-load','#rail-play'])]){
+    for(const selector of ['#play','#play-right','#stop',...(compact?['#choose-song','#mobile-play']:['#rail-load','#rail-play'])]){
       const fit=await page.locator(selector).evaluate(node=>{
         const range=document.createRange();range.selectNodeContents(node);
         const style=getComputedStyle(node),rect=node.getBoundingClientRect();
@@ -104,6 +123,26 @@ try{
     assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
     const [download]=await Promise.all([page.waitForEvent('download'),page.locator('#tl-download').click()]);
     assert.equal(await fs.readFile(await download.path(),'utf8'),take.canonical);
+    const shared=await page.evaluate(async()=>{
+      const row=(await(await fetch(new URL('catalog/featured-1.json',document.baseURI))).json()).items[1];
+      const url=new URL(document.baseURI);url.hash=new URLSearchParams({song:row.path,sha:row.record_sha256,catalog:'catalog/featured-1.json'}).toString();
+      return {url:url.href,title:row.title};
+    });
+    await page.goto(shared.url);await page.waitForFunction(()=>IntFM.result()?.verdict==='valid');
+    await page.waitForFunction(title=>document.querySelector('#selected-song-title').textContent===title,shared.title);
+    assert.equal(await page.locator('#loaded-song').textContent(),shared.title);
+    assert.equal(await page.locator('#rail-selected-song').textContent(),shared.title);
+    assert.equal(await page.locator('#play').textContent(),'Play','Incoming links stay silent');
+    if(viewport.width===1440){
+      const lateTitle=await page.evaluate(async()=>{
+        const index=await(await fetch(new URL('catalog/index.json',document.baseURI))).json();
+        let path=index.categories.find(item=>item.id==='all').first_page;const titles=[];
+        while(path){const page=await(await fetch(new URL(path,document.baseURI))).json();titles.push(...page.items.map(item=>item.title));path=page.next;}
+        return titles.find((title,i)=>i>=96&&titles.findIndex(other=>other.includes(title))===i)||null;
+      });
+      if(lateTitle){await page.locator('#song-search').fill(lateTitle);await page.waitForFunction(title=>document.querySelector('#selected-song-title').textContent===title,lateTitle);
+        assert.match(await page.locator('#library-status').textContent(),/Results [1-9]/);}
+    }
     await page.waitForFunction(()=>Boolean(navigator.serviceWorker.controller));
     await context.setOffline(true);await page.reload();
     await page.waitForFunction(()=>typeof window.IntFM?.result==='function');

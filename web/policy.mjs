@@ -44,7 +44,7 @@ export function checkInspection(info, mode = 'verify') {
   const lower = BigInt(mode === 'listen' ? info.once_render_bytes_lower_bound ?? info.render_bytes_lower_bound : info.render_bytes_lower_bound);
   const pcmBytes = BigInt(info.pcm_bytes);
   if (lower > 192n * 1024n * 1024n || lower + pcmBytes * 3n > BigInt(limits.wasmMemoryBytes))
-    throw Error('Too large for this device: estimated rendering and playback storage exceed this player’s budget.');
+    throw Error('Too large for the browser profile: estimated rendering and playback storage exceed its fixed budget. Use the local CLI for this operation.');
 }
 
 export function verification(result) {

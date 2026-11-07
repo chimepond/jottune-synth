@@ -186,7 +186,6 @@ export function createInstrumentView(container, {onSeek} = {}) {
   const voiceTitle = make('h3', null, 'Voices · select to inspect');
   const voices = make('div', 'instrument-voices');voices.setAttribute('role', 'group');voices.setAttribute('aria-label', 'Select a voice');
   const detail = make('p', 'instrument-detail', 'No rendered voice selected.', 'instrument-detail');
-  detail.setAttribute('tabindex', '0');
   const keyboardTitle = make('p', null, 'Pitch classes · all octaves combined · native note gates, not release tails', 'instrument-caption');
   const keyboard = make('div', 'instrument-keyboard');
   keyboard.setAttribute('role', 'img');keyboard.setAttribute('aria-label', 'No open note gates');

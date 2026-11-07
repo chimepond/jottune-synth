@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Nenad Micic
 // SPDX-License-Identifier: Apache-2.0
 import {toSvg, toWav, spectrogram, songStructure, songStructureText} from './media.mjs';
-import {limits, options, selectEngine, checkRecord, verification} from './policy.mjs';
+import {limits, options, selectEngine, checkRecord, checkInspection, verification} from './policy.mjs';
 import {fetchRecord, isRecordLink, resolveLink, portableLink, libraryLink} from './links.mjs';
 import {openQr, closeQr} from './qr-view.mjs';
 import {createCatalog, catalogJSON} from './catalog.mjs';
@@ -11,6 +11,7 @@ import {createSpatialSampler} from './spatial.mjs';
 import {compileScore, listRecipes, recipe, recipeGain} from './authoring.mjs';
 
 const $ = id => document.getElementById(id);
+const pageTitle = document.title || 'JotTune Synth';
 function playerStatus(message) {
   if ($('status').textContent !== message) $('status').textContent = message;
   const hint = message || 'Choose a song, press Load, then Play.';
@@ -23,7 +24,13 @@ function currentSectionChanged(id) {
 }
 function stopAutoMove() { $('auto-move').checked = false; autoMoveEpoch++; }
 function followSection(id, epoch = autoMoveEpoch) {
-  if ($('auto-move').checked && epoch === autoMoveEpoch) sectionNavigation?.jump(id);
+  if (!$('auto-move').checked || epoch !== autoMoveEpoch) return;
+  const transport = id === 'live-views' && ['play','play-right','rail-play','mobile-play'].some(key => $(key) === document.activeElement);
+  sectionNavigation?.jump(id, {focus:!transport});
+  if (transport) {
+    const compact = typeof matchMedia === 'function' && matchMedia('(max-width: 1099px)').matches;
+    $(compact ? 'mobile-play' : 'rail-play').focus({preventScroll:true});
+  }
 }
 $('auto-move').addEventListener('change', () => { autoMoveEpoch++; });
 
@@ -59,7 +66,7 @@ function prepareSectionNavigation() {
     }
   }
   function sectionAtViewport() {
-    const edge = header.getBoundingClientRect().bottom + 24;
+    const edge = Math.max(0, header.getBoundingClientRect().bottom) + 24;
     let current = links[0].dataset.section;
     for (const link of links) {
       if ($(link.dataset.section).getBoundingClientRect().top <= edge) current = link.dataset.section;
@@ -79,12 +86,12 @@ function prepareSectionNavigation() {
     if (!queued) { queued = true; requestAnimationFrame(updateCurrent); }
   }
   function syncLayout() {
-    document.documentElement.style.setProperty('--header-height', `${header.getBoundingClientRect().height}px`);
+    document.documentElement.style.setProperty('--header-height', `${getComputedStyle(header).position === 'static' ? 0 : header.getBoundingClientRect().height}px`);
     const dockHeight = $('mobile-transport').getBoundingClientRect().height;
     if (dockHeight) document.documentElement.style.setProperty('--mobile-dock-height', `${dockHeight}px`);
     scheduleCurrent();
   }
-  function jump(link) {
+  function jump(link, {focus:moveFocus = true} = {}) {
     clearManualScroll();
     const target = $(link.dataset.section), focus = $(link.dataset.sectionFocus);
     for (let node = target; node; node = node.parentElement) {
@@ -93,7 +100,7 @@ function prepareSectionNavigation() {
     requested = target.id;
     markCurrent(requested);
     setOpen(false);
-    focus.focus({preventScroll:true});
+    if (moveFocus) focus.focus({preventScroll:true});
     target.scrollIntoView({block:'start', behavior:reduced.matches ? 'auto' : 'smooth'});
     clearTimeout(jumpTimer);
     jumpTimer = setTimeout(() => { requested = null; }, 1500);
@@ -168,7 +175,7 @@ function prepareSectionNavigation() {
   }
   setOpen(false);
   syncLayout();
-  sectionNavigation = {jump: id => { const link = links.find(item => item.dataset.section === id); if (link) jump(link); }};
+  sectionNavigation = {jump: (id, options) => { const link = links.find(item => item.dataset.section === id); if (link) jump(link, options); }};
 }
 prepareSectionNavigation();
 const assetBase = new URL('./', import.meta.url);
@@ -180,7 +187,7 @@ function hasOfflineControl() {
 }
 function updateOfflineStatus(rendererReady = false) {
   $('offline-status').textContent = rendererReady ? 'Offline player and this renderer are ready. Save the TL locally.'
-    : hasOfflineControl() ? 'Offline app is ready. Load a song online to cache its renderer.'
+    : hasOfflineControl() ? 'Offline app is ready. Used renderers may be cached; save the TL locally.'
     : offlineSetupPending ? 'Preparing offline support…' : 'Offline setup is unavailable; online playback remains available.';
 }
 function prepareOfflineSupport() {
@@ -212,7 +219,7 @@ function prepareOfflineSupport() {
     controlled();
   });
 }
-const offlineSupport = prepareOfflineSupport();
+void prepareOfflineSupport();
 let activeWorker, activeReject, lastResult, audio, source, started = 0, elapsed = 0;
 // Compiled native modules are private view state, never part of the public API.
 const spatialModules = new WeakMap();
@@ -260,12 +267,20 @@ const registryPromise = fetch(new URL('engines.json', assetBase)).then(response 
 });
 registryPromise.catch(() => {}); // A render reports the failure; opening an idle page must not reject globally.
 
+function verificationBudgetReason(result = lastResult) {
+  if (result?.verdict !== 'valid' || result.info?.render_bytes_lower_bound === undefined) return '';
+  try {checkInspection(result.info,'verify');return '';}
+  catch (error) {return error.message;}
+}
 function busy(value) {
   rendering = value;
-  $('render').disabled = value;
+  const budgetReason = verificationBudgetReason();
+  $('render').disabled = value || !!budgetReason;
+  $('render').setAttribute('title',budgetReason || 'Verify the current record.');
   $('listen').disabled = value;
   $('cancel').hidden = !value;
-  $('verify-saved').disabled = value || !lastResult?.canonical?.length || lastResult.verdict !== 'valid' || lastResult.verified;
+  $('verify-saved').disabled = value || !lastResult?.canonical?.length || lastResult.verdict !== 'valid' || lastResult.verified || !!budgetReason;
+  $('verify-saved').setAttribute('title',budgetReason || 'Verify the prepared saved record.');
   updateProfileControls();
   updateTransport();
 }
@@ -291,7 +306,7 @@ function invalidate(retainProfile = false, retainRelease = false) {
   playbackBuffer = null; playbackBufferResult = null;
   instrumentView.clear();
   if (!retainProfile) {
-    profileBase = null; appliedProfile = null; loadedIdentity = null; loadedSong = null;
+    profileBase = null; appliedProfile = null; loadedIdentity = null; loadedSong = null; linkedSelectionActive = false;
     linkedMetadata?.controller.abort(); clearTimeout(linkedMetadata?.timer); linkedMetadata = null;
   }
   updateProfileControls(true);
@@ -322,7 +337,7 @@ function rawRender(recordText, config) {
     };
     const rejectRequest = error => { finish(); reject(error); };
     activeReject = rejectRequest;
-    Promise.all([registryPromise, offlineSupport]).then(([registry]) => {
+    registryPromise.then(registry => {
       if (requestGeneration !== generation || activeReject !== rejectRequest) return;
       let engine;
       try { engine = selectEngine(registry, config.release); }
@@ -537,6 +552,8 @@ async function verifySaved() {
     throw Error('Render a valid draft before verifying its saved canonical output.');
   // This explicit action replays accepted output; a failed hash assertion never
   // supplies canonical bytes and cannot be silently replaced by a new hash.
+  const budgetReason = verificationBudgetReason(result);
+  if (budgetReason) throw Error(budgetReason);
   const text = new TextDecoder('utf-8', {fatal:true}).decode(result.canonical);
   return verify(text, {release:result.rendererRelease || result.engineId});
 }
@@ -555,7 +572,9 @@ function updateProfileControls(resetSelection = false) {
   $('listening-profile').disabled = !available;
   $('profile-mirror').disabled = !available || $('listening-profile').value === 'original';
   $('profile-quiet').disabled = !available || $('listening-profile').value === 'original';
-  $('profile-apply').disabled = !available;
+  const budgetReason = verificationBudgetReason();
+  $('profile-apply').disabled = !available || !!budgetReason;
+  $('profile-apply').setAttribute('title',budgetReason || 'Prepare the selected listening profile.');
   const selected = selectedProfile();
   const pending = (selected?.halfWidth ?? null) !== (appliedProfile?.halfWidth ?? null)
     || !!selected?.mirror !== !!appliedProfile?.mirror
@@ -564,6 +583,7 @@ function updateProfileControls(resetSelection = false) {
     + (pending ? `${profileDescription(selected)} selected; Prepare profile resets playback and prepares the change. Press Play afterward.`
       : appliedProfile ? 'Computed on this device from the loaded source. Save song (.tl) keeps this version.'
         : 'Keeps the saved version named above, including any saved Keys placement.');
+  if (budgetReason) $('profile-detail').textContent += ' Browser verification and computed profiles are unavailable for this record; its prepared listening audio is unchanged.';
   if (lastResult?.profile?.targetMet === false)
     $('profile-detail').textContent += ' Below the normalization target at the carrier gain limit; relative levels are preserved.';
 }
@@ -669,6 +689,7 @@ function updateTransport(redraw = true) {
   const version = appliedProfile ? `${profileDescription(appliedProfile)} · computed from ${loadedIdentity?.version || 'loaded source'}`
     : loadedIdentity?.version || (lastResult ? 'Local version' : 'Load a song, then press Play.');
   $('loaded-song').textContent = title;
+  document.title = lastResult?.verdict === 'valid' && loadedIdentity?.title ? `${title} · ${pageTitle}` : pageTitle;
   $('loaded-version').textContent = version;
   const prepared = lastResult?.verdict === 'valid' && !!lastResult.pcm?.length;
   const selected = selectedSong(), variant = selectedVariant();
@@ -696,7 +717,7 @@ function updateTransport(redraw = true) {
   $('rail-selected-version').textContent = variant ? variantLabels[variant.kind] || variant.kind : '';
   $('rail-load').disabled = rendering || !!pendingSongLoad || !selectionReady;
   $('rail-load').textContent = rendering ? 'Preparing…' : pendingSongLoad ? 'Loading…' : 'Load song';
-  $('rail-load').setAttribute('aria-label', selected ? `Load ${selected.title}` : 'Load song');
+  $('rail-load').setAttribute('aria-label', selected ? `Load song: ${selected.title}` : 'Load song');
   $('rail-play').disabled = $('mobile-play').disabled;
   $('rail-play').textContent = $('mobile-play').textContent;
   $('rail-play').setAttribute('aria-label', prepared ? `${$('play').textContent} ${title}` : 'Play');
@@ -812,7 +833,11 @@ function show(result) {
   result.structure = result.verdict === 'valid' ? songStructure(result)
     : {version:1,status:'unavailable',scope:'native_gate_commands',reason:'A valid loaded or inspected song is required.'};
   $('song-structure').textContent = songStructureText(result.structure);
-  $('verdict').textContent = result.verdict === 'valid' ? (canAudition(result) ? 'Ready to play' : 'Ready to export') : label(result); $('verdict').setAttribute('title', label(result)); $('verdict').className = 'badge ' + result.verdict.split(':')[0];
+  $('verdict').textContent = result.verdict === 'valid'
+    ? result.verified ? `Verified · ready to ${canAudition(result) ? 'play' : 'export'}` : result.verification === 'checksum-matched' ? 'Ready · checksum matched' : 'Ready · unverified'
+    : label(result);
+  $('verdict').setAttribute('title', label(result));
+  $('verdict').className = 'badge ' + (result.verdict === 'valid' ? result.verified ? 'valid' : 'unverified' : result.verdict.split(':')[0]);
   $('raw').textContent = [result.stdout, result.stderr, result.eventsError].filter(Boolean).join('\n');
   const rendered = !!result.pcm && result.verdict === 'valid';
   for (const id of ['play', 'stop']) $(id).disabled = !canAudition(result);
@@ -865,7 +890,7 @@ $('render').onclick = () => verify($('record').value).catch(() => {});
 $('cancel').onclick = cancel;
 
 let songLibrary = [], librarySelection = [], selectedSongId = '', songChoices = new Map(), libraryView = 'featured', catalogIndex, catalogResult;
-let libraryRequest, librarySequence = 0, libraryHistory = [], libraryCursor = null, loadedSong = null;
+let libraryRequest, librarySequence = 0, libraryHistory = [], libraryCursor = null, loadedSong = null, linkedSelectionActive = false;
 let previewWorker, previewAbort, previewSequence = 0, previewTimer;
 const catalog = createCatalog(assetBase, validDiscovery);
 const variantLabels = {standard: 'Original · saved', keys: 'Keys · saved ±30°', mirror: 'Keys mirror · saved ±30°'};
@@ -882,7 +907,7 @@ function songChoice(song, label) {
   songChoices.set(song.id,radio);
   radio.addEventListener('change',() => {
     if (!radio.checked || $('song-select').disabled || songChoices.get(song.id) !== radio) return;
-    selectedSongId = song.id;
+    linkedSelectionActive = false; selectedSongId = song.id;
     for (const [id,choice] of songChoices) choice.checked = id === selectedSongId;
     libraryVariants();
   });
@@ -979,6 +1004,11 @@ function libraryDetails() {
   updateJogControls();
   $('selected-song-title').textContent = song?.title || (libraryView === 'featured' ? 'No matching favorites on these pages' : 'No matching song on these pages');
   if (!variant) {
+    if (linkedSelectionActive) {
+      $('selected-song-title').textContent = 'Song from link';
+      $('song-detail').textContent = 'The linked song is in Player. Press Play, or choose Favorites or Browse all to select a replacement.';
+      $('song-discovery').textContent = ''; $('song-note').textContent = ''; return;
+    }
     $('song-detail').textContent = (libraryView === 'featured' ? 'Browse all searches beyond Favorites with the same filters. ' : '')
       + (catalogResult?.next ? 'Next results continues the search. You can also clear filters or open a .tl file.' : 'Clear filters or open your own .tl file below.');
     $('song-discovery').textContent = ''; $('song-note').textContent = ''; return;
@@ -1022,7 +1052,8 @@ function categoryForFilters() {
   }
   return category || categories.find(item => item.id === 'all');
 }
-async function librarySongs({cursor = null, reset = true} = {}) {
+async function librarySongs({cursor = null, reset = true, preserveLinked = false} = {}) {
+  if (!preserveLinked) linkedSelectionActive = false;
   if (!catalogIndex) return;
   libraryRequest?.abort(); libraryRequest = new AbortController();
   const request = ++librarySequence, signal = libraryRequest.signal;
@@ -1045,11 +1076,21 @@ async function librarySongs({cursor = null, reset = true} = {}) {
   $('library-previous').disabled = $('library-next').disabled = true;
   updateJogControls();
   try {
-    const result = await catalog.browse(category, matchingVariants, cursor, signal);
+    let result = await catalog.browse(category, matchingVariants, cursor, signal);
+    const start = result.start;
+    // Continue empty search chunks without displaying a premature zero result.
+    // Each chunk still reads at most four bounded pages; a changed query aborts it.
+    while (!result.items.length && result.next) {
+      if (request !== librarySequence || signal.aborted) return;
+      $('library-status').textContent = `Searching… ${result.examined} of ${result.total} songs checked.`;
+      result = await catalog.browse(category, matchingVariants, result.next, signal);
+    }
+    result = {...result,start};
     if (request !== librarySequence) return;
     catalogResult = result; libraryCursor = result.start; librarySelection = result.items;
     songLibrary = [...result.items.map(item => item.song)];
     if (loadedSong && !songLibrary.includes(loadedSong.song)) songLibrary.push(loadedSong.song);
+    if (linkedSelectionActive) { surfaceLinkedSelection(); reconcileLinkedIdentity(); return; }
     const select = $('song-select');
     selectedSongId = result.items.some(item => item.song.id === previous) ? previous : result.items[0]?.song.id || '';
     songChoices.clear();
@@ -1083,7 +1124,7 @@ async function loadLibrary() {
   try {
     catalogIndex = await catalog.open(); libraryFilters();
     if (!catalogIndex.categories.find(item => item.id === 'featured')?.count) libraryView = 'all';
-    $('song-search').disabled = false; await librarySongs();
+    $('song-search').disabled = false; await librarySongs({preserveLinked:true});
   } catch {
     emptySongChoices('Catalog unavailable');
     $('library-status').textContent = 'Song library unavailable. Open or drop a .tl file below.';
@@ -1121,7 +1162,7 @@ for (const side of ['left','right']) {
     void jogPage(direction).finally(() => setTimeout(() => {jogWheelCooling = false;},120));
   }, {passive:false});
 }
-$('song-variant').onchange = libraryDetails;
+$('song-variant').onchange = () => {linkedSelectionActive = false; libraryDetails();};
 function showPlayer() { followSection('player-panel'); }
 function updateMobileSongAction() {
   const load = currentSection === 'library-panel' && $('library-panel').open && !!selectedVariant();
@@ -1237,8 +1278,27 @@ async function loadFile(file) {
     const text = await file.text();
     if (requestGeneration !== generation) return;
     checkRecord(text); $('record').value = text; loadedIdentity = {title:file.name.replace(/\.tl$/i,''),version:'Local file · as saved'};
-    return await preparePlayback(text);
+    const result = await preparePlayback(text);
+    if (lastResult === result && result?.verdict === 'valid' && result.recordSha256) {
+      linkedMetadata = {path:null,sha:result.recordSha256,match:catalog.cached(null,result.recordSha256),controller:new AbortController(),timer:null};
+      reconcileLinkedIdentity();
+    }
+    return result;
   } catch (error) { if (requestGeneration === generation) playerStatus(error.message); }
+}
+function surfaceLinkedSelection(match = null) {
+  libraryHistory = []; libraryCursor = null; catalogResult = null;
+  librarySelection = match ? [{song:match.song,variants:match.song.variants}] : [];
+  selectedSongId = match?.song.id || ''; songChoices.clear();
+  $('song-select').replaceChildren(...(match ? [songChoice(match.song,songLabel(match.song,match.variant))] : []));
+  $('song-select').disabled = !match; $('song-select').setAttribute('aria-busy','false');
+  $('library-previous').disabled = $('library-next').disabled = true;
+  for (const view of ['featured','all']) $('library-' + view).setAttribute('aria-pressed','false');
+  $('library-view-detail').textContent = 'The incoming song is selected here. Choose Favorites or Browse all to resume browsing.';
+  $('library-path').textContent = 'Source library › Song from link';
+  $('library-status').textContent = match ? 'Linked saved version selected. Browse the library to choose another song.'
+    : 'The linked song is in Player; no unrelated library song is selected.';
+  libraryVariants(match?.variant.kind);
 }
 // A link never supplies its display title. Only exact path/hash matches in a
 // validated packaged catalog can label a successfully prepared linked record.
@@ -1251,6 +1311,7 @@ function reconcileLinkedIdentity() {
   loadedIdentity = {title:loadedSong.song.title,version:variantLabels[loadedSong.variant.kind] || loadedSong.variant.kind};
   songLibrary = librarySelection.map(item => item.song);
   if (!songLibrary.some(song => song.id === loadedSong.song.id)) songLibrary.push(loadedSong.song);
+  if (linkedSelectionActive) surfaceLinkedSelection(loadedSong);
   updateTransport(false);
 }
 async function hydrateLinkedIdentity(context) {
@@ -1267,7 +1328,7 @@ async function hydrateLinkedIdentity(context) {
   } finally {clearTimeout(context.timer);}
 }
 async function loadLink(value) {
-  invalidate(); const requestGeneration = generation;
+  invalidate(); linkedSelectionActive = true; surfaceLinkedSelection(); const requestGeneration = generation;
   playerStatus('Loading record…');
   try {
     const loaded = await resolveLink(value, location.href);
@@ -1390,7 +1451,14 @@ document.addEventListener?.('visibilitychange', () => {
   }
 });
 $('png-download').onclick = () => $('spectrogram').toBlob(blob => download(blob, 'spectrogram-channel-1.png'));
-$('copy-guide').onclick = async () => { await navigator.clipboard.writeText(await guide()); playerStatus('Browser guide copied.'); };
+$('copy-guide').onclick = async () => {
+  let text;
+  try {text = await guide();}
+  catch (error) {playerStatus(error.message);$('guide-manual').hidden = false;return;}
+  try {await navigator.clipboard.writeText(text);$('guide-manual').hidden = true;playerStatus('Browser guide copied.');}
+  catch {$('guide-manual').hidden = false;playerStatus('Clipboard access is unavailable. Open Browser guide to read or copy it manually.');}
+};
+
 async function loadedSongLink(result) {
   for (const song of songLibrary) {
     const variant = song.variants.find(item => item.record_sha256 === result.recordSha256);
@@ -1406,7 +1474,7 @@ $('share').onclick = async () => {
     const {url, label:linkLabel, portable} = await loadedSongLink(result);
     if (lastResult !== result) return;
     try { await navigator.clipboard.writeText(url); }
-    catch { if (lastResult === result) openQr(url, {label:linkLabel, trigger:$('share')}); return; }
+    catch { if (lastResult === result) { openQr(url, {label:linkLabel, trigger:$('share'), selectLink:true}); playerStatus('Clipboard access is unavailable. The song link is selected in the dialog; copy it manually. Nothing was published.'); } return; }
     if (lastResult !== result) return;
     playerStatus(portable ? 'Portable record link copied. Nothing was published.' : 'Song link copied for this exact saved version. Nothing was published.');
   } catch (error) { if (lastResult === result) playerStatus(error.message); }

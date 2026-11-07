@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#101a20">
   <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
   <title>JotTune Synth</title>
 </head>
@@ -274,6 +275,7 @@
           <p><strong>Give your agent this page’s URL.</strong> Start with the <a href="agent-start.txt">agent quickstart</a>: compose in musical time, render locally, measure and revise, then deliver one complete TL and WAV. No MCP server or source checkout is needed.</p>
           <p>Browser automation uses <code>window.IntFM</code>. Terminal agents can download the <a href="agent.mjs" download>official Node client</a> (Node 22.15+; no npm packages).</p>
           <button id="copy-guide">Copy browser guide</button>
+          <a id="guide-manual" class="guide-manual" href="browser-guide.txt" hidden>Open Browser guide</a>
           <p class="reference-links"><a href="authoring.txt">Score &amp; sound recipes</a><a href="starter.score.json">Editable example</a><a href="analysis.txt">Audio analysis</a><a href="native-reference.txt">Native TL reference</a><a href="instrument.txt">Full instrument guide</a><a href="reference/params.txt">Native parameters</a><a href="reference/gen-params.txt">Generator parameters</a></p>
         </div>
         <div>
@@ -293,7 +295,9 @@
         </div>
       </div>
     </details>
-    <footer><p id="offline-status" role="status">Preparing offline support…</p>Rendered on this device. Browser profile: 1 MB of TL and 300 seconds of audio; use the local CLI for larger work. Offline support caches the app and used engines. Save the TL file to keep your music.</footer>
+    <footer><p id="offline-status" role="status">Preparing offline support…</p>Rendered on this device. Browser profile: 1 MB of TL and 300 seconds of audio; use the local CLI for larger work. Offline support caches the app and used engines. Save the TL file to keep your music.
+      <p>WebAssembly third-party notices: <a href="notices/wasi-libc-LICENSE">wasi-libc and dependencies</a> · <a href="notices/compiler-rt-LICENSE">compiler runtime</a>.</p>
+    </footer>
   </main>
   </div>
   <script type="module" src="app.mjs"></script>

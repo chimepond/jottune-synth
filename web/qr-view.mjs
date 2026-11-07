@@ -65,7 +65,7 @@ export function createQrView({document=globalThis.document,clipboard=globalThis.
     setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);
     status.textContent='QR SVG download requested.';
   };
-  function open(value,{label='Song link',trigger=document.activeElement}={}) {
+  function open(value,{label='Song link',trigger=document.activeElement,selectLink=false}={}) {
     if(!dialog.open)target=trigger;
     clear();heading.textContent='QR code · '+String(label);
     let success=false;
@@ -89,7 +89,12 @@ export function createQrView({document=globalThis.document,clipboard=globalThis.
         : error instanceof TypeError ? error.message : 'Use a valid HTTP or HTTPS song link without credentials.';
     }
     if(!dialog.open)dialog.showModal();
-    dismiss.focus();
+    help.textContent = success ? 'Scan with your phone’s camera to open this song link.'
+      : currentUrl ? 'Copy the song link below or save the TL file from the player.' : 'Use a valid song link to make a QR code.';
+    if (selectLink && currentUrl) {
+      status.textContent = 'Clipboard access is unavailable. The link is selected; copy it manually.' + (success ? '' : ' No QR code is available.');
+      urlText.focus(); urlText.select();
+    } else dismiss.focus();
     return success;
   }
   return {open,close};

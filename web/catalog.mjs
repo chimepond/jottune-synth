@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Nenad Micic
 // SPDX-License-Identifier: Apache-2.0
 // A visit reads bounded static pages, never the complete song manifest. Cursors
-// retain positions, not old result pages; a search advances only on Next.
+// retain positions, not old result pages; the caller can continue empty chunks.
 const documentLimit = 262144;
 const pagePath = value => typeof value === 'string' && /^catalog\/[a-z0-9-]+-\d+\.json$/.test(value);
 const check = (condition, message = 'Invalid song catalog.') => {if (!condition) throw Error(message);};
@@ -96,7 +96,7 @@ export function createCatalog(base, validDiscovery) {
   }
   function findIn(rows, recordPath, sha) {
     for (const song of rows) {
-      const variant = song.variants.find(item => item.path === recordPath && item.record_sha256 === sha);
+      const variant = song.variants.find(item => (!recordPath || item.path === recordPath) && item.record_sha256 === sha);
       if (variant) return {song, variant};
     }
     return null;
