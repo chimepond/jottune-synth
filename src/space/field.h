@@ -2,8 +2,7 @@
  * Copyright (c) 2026 Nenad Micic
  * SPDX-License-Identifier: Apache-2.0
  *
- * field.h — the spatial module's field routes (space/SPEC.md sections 11 to
- * 16; , ): the voices encoded into an ambisonic field at order 1 or
+ * field.h — the spatial module's field routes (docs/INSTRUMENT.md, spatial routes; ): the voices encoded into an ambisonic field at order 1 or
  * 3 (AmbiX: ACN channel order, SN3D, no Condon-Shortley phase), the field
  * turned by the listener's yaw, then written out as 4 or 16 channels or
  * decoded to two ears by the caller's FIR table; Brown and Duda's pinna per

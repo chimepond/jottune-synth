@@ -3,6 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 """Build the CLI and freestanding synth library with Zig's WASI toolchain."""
 import os
+import json
 import re
 from pathlib import Path
 import shlex
@@ -19,7 +20,7 @@ def run(args):
 # Ignored headers and generator binaries are not evidence of a source build.
 # Rebuild both from source even when their timestamps look current.
 run(['make', '-B', 'build/s12e10p1v1/fm_tables.h', 'build/s12e10p1v1/sp_binaural_tables.h'])
-flags = ['-std=c99', '-O2', '-Wall', '-Wextra', '-Wshadow', '-DFM_SINE_BITS=12',
+flags = ['-std=c99', '-ffp-contract=off', '-O2', '-Wall', '-Wextra', '-Wshadow', '-DFM_SINE_BITS=12',
          '-DFM_EXP_BITS=10', '-DFM_PHASE64=1', '-DFM_ENV64=1', '-Isrc/host',
          '-Ibuild/s12e10p1v1', '-I.', '-DSP_BINAURAL_H="build/s12e10p1v1/sp_binaural_tables.h"']
 sources = ['src/host/fm_a1.c', 'src/gen/gen.c', 'src/space/space.c', 'src/fx/fx.c', 'src/space/field.c']
@@ -52,6 +53,35 @@ for name in ('harness.wasm', 'browser.wasm', 'library.wasm'):
 version_command = cc[:-1] + ['version'] if cc[-1] == 'cc' else cc + ['--version']
 version = subprocess.check_output(version_command, text=True).strip().splitlines()[0]
 toolchain = 'zig cc ' + version
+# Copy notices from the exact installed compiler distribution, not a network
+# download or an unrelated archive. Zig changed env output from JSON to ZON.
+env_command = cc[:-1] + ['env'] if cc[-1] == 'cc' else None
+if not env_command:
+    raise SystemExit('Use Zig cc to collect its matching toolchain notices.')
+environment = subprocess.check_output(env_command, text=True)
+try:
+    zig_env = json.loads(environment)
+except json.JSONDecodeError:
+    zig_env = {key: json.loads(value) for key, value in
+               re.findall(r'\.(lib_dir|zig_exe)\s*=\s*("(?:[^"\\]|\\.)*")', environment)}
+lib = Path(zig_env['lib_dir'])
+zig_license = Path(zig_env['zig_exe']).resolve().parent.parent / 'LICENSE'
+notice_inputs = {
+    'wasi-libc-LICENSE': [lib / 'libc/wasi/LICENSE'],
+    'compiler-rt-LICENSE': [zig_license, lib / 'libc/musl/COPYRIGHT',
+                            lib / 'libc/wasi/LICENSE-APACHE-LLVM'],
+}
+notice_dir = OUT / 'notices'
+notice_dir.mkdir(exist_ok=True)
+for name, paths in notice_inputs.items():
+    contents = []
+    for path in paths:
+        data = path.read_text()
+        if not data.strip():
+            raise SystemExit('Empty toolchain licence: ' + path.name)
+        contents.append(data.rstrip())
+    (notice_dir / name).write_text(('\n\n' + '=' * 72 + '\n\n').join(contents) + '\n')
+
 (OUT / 'toolchain.txt').write_text(toolchain + '\n')
 write_json(OUT / 'build.json', {
     'source_commit': revision if source_commit(ROOT) == revision else None,

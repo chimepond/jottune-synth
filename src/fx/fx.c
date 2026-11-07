@@ -15,7 +15,7 @@
  * channel), the returns added to the wide sum, then per channel the gain,
  * the DC blocker, the shared dynamics delay and ramped gains, the
  * soft clip, the dither, and the one rounding and saturation to int16
- * ('s order).
+ * (the order).
  */
 #include "fx.h"
 
@@ -26,7 +26,7 @@ typedef char fx_assert_asr[(((int32_t)-1 >> 1) == -1 && ((int64_t)-1 >> 1) == -1
 
 #define FX_TWO_PI_Q29 3373259426u          /* round(2 pi 2^29) */
 #define FX_RV_GAIN    32212255             /* Freeverb's input gain, 0.015 in Q1.31 */
-#define FX_GAIN_C     23170                /* isqrt(2^29): space/'s centre gain, Q1.15, for the returns in stereo */
+#define FX_GAIN_C     23170                /* isqrt(2^29): space/the centre gain, Q1.15, for the returns in stereo */
 #define FX_LIM_MAX    ((((int64_t)1 << 45) - ((int64_t)1 << 29)) - 1)   /* the largest Q.45 value that rounds to 32767 */
 #define FX_ON_SENDS   (FX_ON_BUSES | FX_ON_COMPRESSOR)  /* duck has no audible return */
 
@@ -89,7 +89,7 @@ static uint32_t fx_rv_len(uint32_t i, uint32_t s, uint32_t fs)
     return (uint32_t)fx_udiv((uint64_t)len44 * fs + 22050u, 44100u);
 }
 
-/* The delay line's length: T, or 2T for the ping-pong . */
+/* The delay line's length: T, or 2T for the ping-pong. */
 static uint32_t fx_dly_len(const fx_cfg_t *c, uint32_t fs)
 {
     return fx_us(c->delay_us, fs) << ((c->on & FX_ON_PINGPONG) ? 1 : 0);
@@ -195,7 +195,7 @@ static unsigned char *fx_line_at(fx_line_t *l, uint32_t len, unsigned char *p)
 /* Zeroes bytes at p, one character at a time: a character type may alias
  * any object, the state's int64 and pointer members too. The stores are
  * volatile so that no compiler makes the loop a memset or bzero call,
- * which 's lists do not hold on every target; init only. */
+ * which the lists do not hold on every target; init only. */
 static void fx_clear(void *p, size_t bytes)
 {
     volatile unsigned char *w = (volatile unsigned char *)p;
@@ -662,7 +662,7 @@ static void fx_comp_boundary(fx_t *fx, uint32_t n)
     }
 }
 
-/* The dither : two steps of 's xorshift32, each giving a draw
+/* The dither : two steps of the xorshift32, each giving a draw
  * uniform on [-2^29, 2^29 - 1], half an output LSB either way; their sum
  * is triangular over +-1 LSB in the rounding's units (an LSB is 2^30). */
 static int64_t fx_dither(fx_t *fx)
@@ -742,7 +742,7 @@ static fx_return_t fx_return_sample(fx_t *fx, uint32_t n, uint32_t t, uint32_t b
 
 /* Existing post-return chain, one sample. Legacy input is below 2^53 Q45;
  * raw field mode admits below 2^55 only with gain/DC (no nonlinear master).
- * That wider linear bound and its <2^62 DC intermediates are 's proof. */
+ * That wider linear bound and its <2^62 DC intermediates are the proof. */
 static uint32_t fx_post_sample(fx_t *fx, const int64_t *acc, uint32_t stride, uint32_t frac,
                               int16_t *out, uint32_t t, int64_t rl, int64_t rr)
 {

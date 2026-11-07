@@ -2,16 +2,16 @@
  * Copyright (c) 2026 Nenad Micic
  * SPDX-License-Identifier: Apache-2.0
  *
- * space.h — the integer spatial module (space/SPEC.md,  to ): the
+ * space.h — the integer spatial module (docs/INSTRUMENT.md, spatial routes): the
  * library's voices placed in a listener-centred space and rendered to
- * channels. Offline stereo first . Integer only: no floating
+ * channels. Offline stereo first. Integer only: no floating
  * point, no libm, no heap, no mutable global state; bit-exact across
  * targets.
  *
  * Units : positions in mm, x right, y forward, z up, the listener at
  * the origin facing +y. Gains are Q1.15 (32768 = 1.0), recomputed at each
  * block boundary from the position and ramped linearly across the block
- * . A voice is a source . A voice moves in straight lines
+ *. A voice is a source. A voice moves in straight lines
  * between block boundaries : its position at boundary b is a
  * function of b alone, so chunking and seeking never change it.
  */
@@ -45,7 +45,7 @@ typedef struct sp_stereo {
     sp_voice_t v[SP_MAX_VOICES];
     int32_t    buf[SP_MAX_BLOCK];      /* the render's scratch: one voice's block in Q2.30, and the */
     int64_t    acc[2][SP_MAX_BLOCK];   /* channel accumulators; in the state, so the call's frame stays small */
-    /* The effects (fx/SPEC.md, , ): NULL, as sp_stereo_init leaves
+    /* The effects (docs/INSTRUMENT.md, effects): NULL, as sp_stereo_init leaves
      * it, renders as without them. Set after init to an fx state made with
      * this block and 2 channels at the counter's 0: each voice's block goes
      * through fx_voice_process (insert before sends/pan), and the accumulators
@@ -59,7 +59,7 @@ typedef struct sp_stereo {
  * unusable. Every voice starts at (0, 1000, 0), 1 m ahead at the centre,
  * with the counter at 0. */
 int      sp_stereo_init(sp_stereo_t *sp, uint32_t block, uint32_t near_mm);
-/* The voice's position from the next block boundary on , ending any
+/* The voice's position from the next block boundary on, ending any
  * move. Coordinates within -SP_POS_MAX to SP_POS_MAX by contract; voices at
  * or past SP_MAX_VOICES are ignored. */
 void     sp_stereo_set_pos(sp_stereo_t *sp, uint32_t voice, int32_t x, int32_t y, int32_t z);
@@ -79,7 +79,7 @@ void     sp_stereo_move(sp_stereo_t *sp, uint32_t voice, int32_t x, int32_t y, i
  * chunking never changes the bits. */
 uint32_t sp_stereo_render(sp_stereo_t *sp, fm_voice_t *voices, uint32_t count, int16_t *out, uint32_t frames);
 
-/* Test surface: floor(sqrt(v)); n / d for d >= 1 ('s one division). */
+/* Test surface: floor(sqrt(v)); n / d for d >= 1 (the one division). */
 uint32_t sp_isqrt64(uint64_t v);
 uint32_t sp_udiv64_32(uint64_t n, uint32_t d);
 /* Shared with field.c: one coordinate of the voice's position at boundary

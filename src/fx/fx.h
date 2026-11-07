@@ -2,13 +2,13 @@
  * Copyright (c) 2026 Nenad Micic
  * SPDX-License-Identifier: Apache-2.0
  *
- * fx.h — the integer effects module (fx/SPEC.md,  and ): per-voice
+ * fx.h — the integer effects module (docs/INSTRUMENT.md, effects): per-voice
  * sends to four audible buses (chorus, delay, reverb, flanger) and the silent duck
  * detector bus. The audible returns join the dry
  * sum, and a master chain (gain, DC blocker, compressor, look-ahead limiter, soft
- * clip, dither; 's order) run on the wide sum before its one
+ * clip, dither; the order) run on the wide sum before its one
  * rounding to int16, on the mono mix or on
- * space/'s stereo accumulators. Integer only: no floating point, no libm,
+ * space/the stereo accumulators. Integer only: no floating point, no libm,
  * no heap, no mutable global state; bit-exact across targets. Every part
  * is opt-in, and with no part on the output is the plain mix's, bit for
  * bit.
@@ -19,14 +19,14 @@
  * never includes space. Memory for the delay lines is the caller's
  * (fx_mem_bytes, fx_init); per-sample work is 32x32->64 multiplies, adds,
  * shifts and table reads, and divisions happen only at init and at the
- * dynamics' half-block boundaries (fx/SPEC.md, section 6).
+ * dynamics' half-block boundaries (docs/INSTRUMENT.md, section 6).
  *
  * Units: signals are Q2.30 per voice (1 << 30 = int16 full scale), the
  * audible buses and the effects' lines Q5.27 int32 (1 << 27 = full scale, 16
  * times full scale of headroom for a loud send, the delay's feedback and
  * the combs' sum), the duck sum and master work in Q.45 int64 (1 << 45 = full
  * scale). Send levels are Q1.15, 0 to 32768, ramped linearly across each
- * block like space/'s gains.
+ * block like space/the gains.
  */
 #ifndef FX_FX_H
 #define FX_FX_H
@@ -63,11 +63,11 @@ static const uint32_t FX_BUS_BIT[FX_BUSES] = { FX_ON_CHORUS, FX_ON_DELAY, FX_ON_
 
 #define FX_ON_BUSES    (FX_ON_CHORUS | FX_ON_DELAY | FX_ON_REVERB | FX_ON_FLANGER)
 /* Every defined bit: fx_init refuses any other. A new stage takes the next
- * free bit and joins this mask (; fx/SPEC.md, section 5). */
+ * free bit and joins this mask (docs/INSTRUMENT.md, section 5). */
 #define FX_ON_ALL      (FX_ON_DC | FX_ON_BUSES | FX_ON_LIMITER | FX_ON_SOFTCLIP | FX_ON_GAIN | FX_ON_DITHER \
                         | FX_ON_PINGPONG | FX_ON_COMPRESSOR | FX_ON_CRUSH)
 
-/* A configuration, in the timeline's units (fx/SPEC.md, section 7). Only
+/* A configuration, in the timeline's units (docs/INSTRUMENT.md, section 7). Only
  * the fields of the parts in `on` are read; their ranges are checked by
  * fx_init. */
 typedef struct {
@@ -120,7 +120,7 @@ typedef struct fx {
     int32_t   vbuf[FX_MAX_BLOCK];                    /* fx_render_mono's scratch: one voice's block, Q2.30 */
     int64_t   dry[FX_MAX_BLOCK];                     /* the mono dry sum, Q2.30 */
     int64_t   bus[FX_BUSES][FX_MAX_BLOCK];           /* the bus sums, Q.45; 0 between pieces (fx_master clears what it reads) */
-    uint32_t  dc_r;                                  /* 's R, Q1.31 */
+    uint32_t  dc_r;                                  /* the R, Q1.31 */
     int64_t   dc_x1[FX_MAX_CH], dc_y1[FX_MAX_CH];    /* the blocker's state, Q.45 */
     int64_t  *lim_ring;                              /* shared dynamics caller memory: ch * k delayed samples, Q.45 */
     uint64_t  lim_thr, lim_peak;                     /* the threshold and the running half-block peak, Q.45 */
@@ -167,7 +167,7 @@ size_t   fx_field_mem_bytes(const fx_cfg_t *cfg, uint32_t fs);
 int      fx_field_init(fx_t *fx, uint32_t fs, const fx_cfg_t *cfg, void *mem, size_t bytes);
 /* A voice's send to a bus (FX_CHORUS, FX_DELAY, FX_REVERB, FX_DUCK, FX_FLANGER), Q1.15 up to
  * 32768, taken before the pan; it applies from the next block boundary on,
- * reached at that block's last sample (fx/SPEC.md, section 3). Voices at
+ * reached at that block's last sample (docs/INSTRUMENT.md, section 3). Voices at
  * or past FX_MAX_VOICES and other buses are ignored. */
 void     fx_set_send(fx_t *fx, uint32_t voice, uint32_t bus, uint32_t level_q15);
 /* Pending insert pair: unsigned bits clamp to 1..24 and div to 1..64;

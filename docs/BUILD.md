@@ -1,7 +1,7 @@
 <!-- Copyright (c) 2026 Nenad Micic; SPDX-License-Identifier: Apache-2.0 -->
 # Building JotTune Synth
 
-The native tools require a C99 compiler, Make and Python 3.10+. Browser builds
+The native tools require a C99 compiler, GNU Make and Python 3.10+. Browser builds
 also require Zig's WASI toolchain. Optional analysis uses NumPy; PNG generation
 uses Matplotlib. Those packages are host dependencies and are not linked into
 the integer synthesis library.
@@ -19,6 +19,12 @@ make -C bindings/native check link-smoke
 The optional complete song collection is selected through `JOTTUNE_TUNES_ROOT`
 for corpus replay. A missing optional collection is reported explicitly.
 `make check-interchange` exercises MIDI, native WAV and sampled SFZ exports.
+
+Native CLI/bridge builds support macOS and Linux; the macOS application requires
+Apple Silicon, macOS 14+ and Xcode command-line tools. The shared bridge targets
+iOS 15+ and Android API 23+ when their SDK/NDK is selected; phone device acceptance
+is separate. Windows native builds are not supported. Browser support targets
+current Chromium and WebKit; actual Safari/phone acceptance remains explicit.
 
 ## Browser builds
 
@@ -56,5 +62,33 @@ in `bindings/native`. iOS and Android consume that bridge from a separately
 selected synth checkout. Platform audio adapters own playback and resampling;
 the bridge owns validation, rendering, cancellation and canonical export.
 
-See each client README for its toolchain and current supported behavior.
+See [the macOS README](../apps/macos/README.md) and [the bridge README](../bindings/native/README.md)
+for toolchains and current supported behavior.
 Source builds do not imply signed distribution or store approval.
+
+## Release preparation
+
+The CLI reports `0.1.0` with `harness --version`. Freeze the final public source
+before creating `v0.1.0` and stamping kept renderer archives or MCP packages.
+Run the release checks against that exact source. Tagging, package publication
+and hosted deployment remain explicit release operations.
+
+`make wasm` collects wasi-libc, musl, Zig and LLVM runtime notices from its exact
+installed Zig distribution into `build/wasm/notices/`. Browser packaging copies
+those texts into new renderer archives and `web/notices/` for the root display
+modules. Existing archives keep their immutable bytes. An explicitly supplied
+`--notices-dir` must contain notices matching the archived build's toolchain.
+
+The prepared GitHub workflow runs native regression, CLI/documented-example
+checks, complete bridge linking and browser package lifecycle tests on Ubuntu
+and macOS. Native regression reports optional targets not available on each
+runner. Browser interaction and signed macOS distribution are not established by
+that workflow. Its hosted execution remains a release acceptance step.
+
+`make clean` removes build outputs. Generated browser files and archived renderers
+are retained deliberately; a kept archive cannot always be reconstructed from
+current source. Remove only known disposable generated assets when resetting a
+local browser build.
+
+After `make wasm`, `node --expose-gc tests/browser_pcm.mjs` compares native and
+WASI PCM/canonical output, including normalized input/output collision refusals.

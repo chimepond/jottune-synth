@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Nenad Micic
 # SPDX-License-Identifier: Apache-2.0
+# Portions Copyright 2012 Google Inc.
+# Portions Copyright 2013 Google Inc.
+# Adapted lookup tables and LFO constants from Google's music-synthesizer-for-android
+# (msfa), under Apache-2.0. Modified for this host-side translation and its tests.
+# See NOTICE and LICENSE at the repository root.
 """The invariants of dx7_import.py's translation, over every DX7 algorithm.
 
     python3 -B tools/music/checks/dx7_invariants.py

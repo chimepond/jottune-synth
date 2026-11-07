@@ -28,7 +28,12 @@ clients. Consult the header for exact types, ownership and status values.
 make -C bindings/native check link-smoke
 ```
 
-This builds `build/native/libjottune_native.a`. Table generators run with HOSTCC;
+This builds `build/native/libjottune_native.a`, including the MIDI translator
+whose functions are declared in the shared header. MIDI scaling needs a 64-bit
+compiler with `__int128`; the standalone integer engine retains its separate
+portable wide backend. The link smoke does not depend on dead-code stripping.
+This bridge is host-side code; bundled comparison models satisfy references from
+the embedded host CLI and can be discarded by application linkers. Table generators run with HOSTCC;
 engine and bridge sources compile with the target compiler. For Apple targets:
 
 ```sh

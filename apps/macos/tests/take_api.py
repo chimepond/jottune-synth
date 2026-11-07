@@ -36,8 +36,8 @@ source = change(source, '    if (prepared && p && p->live) {',
                 '    if (prepared && p && p->live) {\n        take_hook(4);')
 source = change(source, '    memcpy(&h->take_tl, h->ui_cur->tl, sizeof h->take_tl);',
                 '    take_hook(5);\n    memcpy(&h->take_tl, h->ui_cur->tl, sizeof h->take_tl);')
-source = change(source, '            usleep(1);\n            continue;',
-                '            take_hook(6);\n            usleep(1);\n            continue;')
+source = change(source, '            fms_sleep_us(1);\n            continue;',
+                '            take_hook(6);\n            fms_sleep_us(1);\n            continue;')
 source = change(source, '                fms_player_rewind(p);',
                 '                take_hook(7);\n                fms_player_rewind(p);')
 (work / 'fmspike-take.c').write_text(source)
@@ -78,6 +78,6 @@ run('claim-copy', change(source,
     '        !(fms_take_change(h, TAKE_IDLE, TAKE_PREPARING) ||\n'
     '          fms_take_change(h, TAKE_CLAIMED, TAKE_PREPARING))) return;'), False)
 run('swap-retry', change(source,
-    '            usleep(1);\n            continue;',
-    '            usleep(1);\n            break;'), False)
+    '            fms_sleep_us(1);\n            continue;',
+    '            fms_sleep_us(1);\n            break;'), False)
 (work / 'fmspike-take.c').write_text(source)

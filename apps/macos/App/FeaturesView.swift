@@ -13,8 +13,8 @@ struct FeaturesView: View {
 
     init() {
         let plist = Bundle.main.infoDictionary ?? [:]
-        head = (plist["FMSHeadCommit"] as? String) ?? "unknown (no FMSHeadCommit in Info.plist)"
-        engineLine = (plist["FMSEngineLine"] as? String) ?? "unknown (no FMSEngineLine in Info.plist)"
+        head = (plist["FMSHeadCommit"] as? String) ?? "standalone bundle"
+        engineLine = (plist["FMSEngineLine"] as? String) ?? "not recorded"
         if let url = Bundle.main.url(forResource: "FEATURES", withExtension: "md"),
            let text = try? String(contentsOf: url, encoding: .utf8) {
             var content = FeaturesView.joinParagraphs(text.components(separatedBy: "\n").filter { !$0.hasPrefix("<!--") })

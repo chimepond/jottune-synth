@@ -299,7 +299,7 @@ struct RecordDetailContent: View {
                             .id(engine.title)
                     }
                 } else if engine.errorText == nil {
-                    Text("Pick a record in the sidebar.").foregroundStyle(.secondary).padding()
+                    Text("Import or choose a TL record to prepare it for playback.").foregroundStyle(.secondary).padding()
                 }
             }
             .padding(14)

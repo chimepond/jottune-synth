@@ -99,3 +99,22 @@ Freestanding Wasm exports the C functions, linear memory, `__data_end` and
 `__heap_base`. Embedders use the matching wasm32 C structure layouts in the
 headers and place caller-owned, aligned state above `__heap_base`; this is a
 low-level library ABI, not a second TL player or a JavaScript allocation API.
+
+## Host command safety
+
+`harness --help` is read-only and `harness --version` identifies the public synth
+version. WAV, canonical and stem outputs cannot identify any input or another
+output, including through symlinks or hardlinks. Parent directories must exist.
+There is no implicit in-place editing mode.
+
+For an explicit PCM allocation bound use, for example:
+
+```sh
+harness --play song.tl --pcm-limit 32000000 --wav song.wav
+```
+
+The bound is checked before PCM allocation and rendering. Use `--inspect` to
+review dimensions and allocation estimates first. A PCM limit does not bound
+parser work, generator cost or wall time. Run untrusted native inputs in a
+process with an external deadline and memory limit; the low-level CLI itself
+has no default process sandbox or wall-clock deadline.

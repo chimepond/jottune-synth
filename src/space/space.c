@@ -2,12 +2,12 @@
  * Copyright (c) 2026 Nenad Micic
  * SPDX-License-Identifier: Apache-2.0
  *
- * space.c — the integer spatial module, offline stereo (space/SPEC.md).
+ * space.c — the integer spatial module, offline stereo (docs/INSTRUMENT.md).
  *
  * Per block boundary and voice (control rate): the position, a straight
  * line between the move's ends by the 64/32 division while the voice
- * moves (, section 4), then r = isqrt(x^2 + y^2 + z^2), ux = x /
- * max(r, near) in Q2.30 by the one 64/32 division , the
+ * moves (section 4), then r = isqrt(x^2 + y^2 + z^2), ux = x /
+ * max(r, near) in Q2.30 by the one 64/32 division, the
  * constant-power pan by integer square roots, the 1/r distance gain by a
  * second division, the targets in Q1.15 (sections 2 and 3 of the SPEC).
  * Per sample and voice: the gain ramp, an add and a shift per channel, and
@@ -63,7 +63,7 @@ void sp_stereo_set_pos(sp_stereo_t *sp, uint32_t voice, int32_t x, int32_t y, in
 }
 
 /* a + trunc((b - a) * i / d) toward zero, i < d: |b - a| < 2^25 keeps the
- * product below 2^57 (the one 64/32 division, ); the quotient is below
+ * product below 2^57 (the one 64/32 division); the quotient is below
  * 2^25. */
 static int32_t sp_lerp(int32_t a, int32_t b, uint32_t i, uint32_t d)
 {

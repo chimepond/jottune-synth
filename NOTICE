@@ -1,0 +1,13 @@
+JotTune Synth
+Copyright (c) 2026 Nenad Micic
+
+The DX7 import helper and invariant checks adapt lookup tables and LFO constants
+from music-synthesizer-for-android (msfa):
+Copyright 2012 Google Inc.
+Copyright 2013 Google Inc.
+https://github.com/google/music-synthesizer-for-android
+Those portions retain Apache-2.0; the translation and checks have been modified.
+See LICENSE. This notice does not imply endorsement by the upstream authors.
+
+Other distributed components retain notices in web/vendor/, web/fonts/ and
+vendor/. WebAssembly builds also require notices from their matching toolchain.

@@ -42,12 +42,12 @@ STRIP_FLAGS ?= -Wl,--gc-sections
 endif
 
 B := $(abspath $(BUILD_DIR))
-WARN := -std=c99 -Wall -Wextra -Wshadow
+WARN := -std=c99 -Wall -Wextra -Wshadow -ffp-contract=off
 DEFS := -DFM_SINE_BITS=12 -DFM_EXP_BITS=10 -DFM_PHASE64=1 -DFM_ENV64=1
 INCLUDES := -I$(HERE) -I$(ROOT)/src/host -I$(B) -I$(ROOT)
 HDEFS := -DSP_BINAURAL_H='"$(B)/sp_binaural_tables.h"'
 TARGET_COMPILE = $(CC) $(WARN) $(CFLAGS) $(CPPFLAGS) $(TARGET_FLAGS) $(DEFS) $(INCLUDES) -fPIC -ffunction-sections -fdata-sections
-OBJS := $(addprefix $(B)/,jottune_bridge.o fm_a1.o gen.o space.o fx.o field.o)
+OBJS := $(addprefix $(B)/,jottune_bridge.o fms_midi.o fm_a1.o gen.o space.o fx.o field.o ref_double.o fx_ref.o field_ref.o)
 ENGINE_HEADERS := $(wildcard $(ROOT)/src/*/*.h $(ROOT)/src/*/*.def $(ROOT)/vendor/*.h) $(HERE)/Makefile
 
 all: $(B)/libjottune_native.a
@@ -72,6 +72,18 @@ $(B)/sp_binaural_tables.h: $(B)/host/gen_binaural_int | $(B)
 tables: $(B)/fm_tables.h $(B)/sp_binaural_tables.h
 
 $(B)/jottune_bridge.o: $(HERE)/jottune_bridge.c $(HERE)/jottune_bridge.h $(ROOT)/src/host/harness.c $(ENGINE_HEADERS) $(B)/fm_tables.h $(B)/sp_binaural_tables.h
+	$(TARGET_COMPILE) $(HDEFS) -c -o $@ $<
+
+$(B)/fms_midi.o: $(HERE)/fms_midi.c $(HERE)/jottune_bridge.h $(ENGINE_HEADERS)
+	$(TARGET_COMPILE) -c -o $@ $<
+
+# The included host CLI references these comparison models. Keeping them in the
+# archive makes ordinary linking complete; application linkers can discard them.
+$(B)/ref_double.o: $(ROOT)/src/host/ref_double.c $(ENGINE_HEADERS) $(B)/fm_tables.h
+	$(TARGET_COMPILE) -c -o $@ $<
+$(B)/fx_ref.o: $(ROOT)/src/host/fx_ref.c $(ENGINE_HEADERS)
+	$(TARGET_COMPILE) -c -o $@ $<
+$(B)/field_ref.o: $(ROOT)/src/host/field_ref.c $(ENGINE_HEADERS) $(B)/sp_binaural_tables.h
 	$(TARGET_COMPILE) $(HDEFS) -c -o $@ $<
 
 $(B)/fm_a1.o: $(ROOT)/src/host/fm_a1.c $(ENGINE_HEADERS) $(B)/fm_tables.h
@@ -99,6 +111,8 @@ $(B)/link-smoke: $(B)/libjottune_native.a $(HERE)/jottune_bridge.h $(HERE)/Makef
 	    'int main(int argc, char **argv) {' \
 	    '    char err[FMS_ERR_LEN]; int16_t pcm[64 * FMS_MAX_CH]; fms_info_t info; fms_player_t *p;' \
 	    '    fms_player_t *derived = 0; uint32_t written = 0; fms_cancel_t *cancel = fms_cancel_create();' \
+	    '    fms_midi_config_t cfg = {1, 0, 65535, 100, 200, 1, 0, 707, 0}; fms_midi_t *m = fms_midi_create(&cfg);' \
+	    '    if (!m) return 5; fms_midi_reset(m); fms_midi_destroy(m);' \
 	    '    if (!cancel) return 1; fms_cancel_request(cancel);' \
 	    '    if (fms_player_import("x", 1, cancel, &derived, err, sizeof err) != FMS_CANCELLED) return 2;' \
 	    '    fms_cancel_close(cancel);' \
@@ -108,7 +122,7 @@ $(B)/link-smoke: $(B)/libjottune_native.a $(HERE)/jottune_bridge.h $(HERE)/Makef
 	    '    p = fms_player_open((const char *const *)(argv + 1), argc - 1, err, sizeof err); if (!p) return 1;' \
 	    '    fms_player_info(p, &info); (void)fms_player_render(p, pcm, 64); fms_player_close(p); return !info.fs;' \
 	    '}' | $(CC) $(WARN) $(CFLAGS) $(CPPFLAGS) $(TARGET_FLAGS) -I$(HERE) \
-	    -x c - -x none $(B)/libjottune_native.a $(STRIP_FLAGS) $(LDFLAGS) $(LDLIBS) -o $@
+	    -x c - -x none $(B)/libjottune_native.a $(LDFLAGS) $(LDLIBS) -o $@
 
 link-smoke: $(B)/link-smoke
 

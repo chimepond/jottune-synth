@@ -2,8 +2,7 @@
  * Copyright (c) 2026 Nenad Micic
  * SPDX-License-Identifier: Apache-2.0
  *
- * field.c — the spatial module's field routes (space/SPEC.md sections 11 to
- * 16): the ambisonic encoder at orders 1 and 3, the yaw, the binaural
+ * field.c — the spatial module's field routes (docs/INSTRUMENT.md, spatial routes): the ambisonic encoder at orders 1 and 3, the yaw, the binaural
  * decoder, the per-voice pinna and the stereo pan law (c).
  *
  * Per block boundary and voice (control rate), when the voice's position
@@ -16,7 +15,7 @@
  * and saturation; on the binaural route a 256-tap FIR per channel and the
  * ears' sums. vendor/fp_math.h gives the CORDIC's angles and gain and pi,
  * read at init; its own sincos and atan2 are not called, as they import a
- * 64-bit arithmetic shift helper the gate refuses on two targets .
+ * 64-bit arithmetic shift helper the gate refuses on two targets.
  */
 #include <stddef.h>
 #include "field.h"
@@ -80,7 +79,7 @@ int sp_field_init(sp_field_t *f, const sp_field_cfg_t *cfg)
     const uint32_t *d = sp_dpb;
     if (cfg->route < SP_FIELD_AMB1 || cfg->route > SP_FIELD_PANLAW) return -1;
     f->nsh = sp_route_nsh[cfg->route];                                /* a table, not a switch: the gate refuses */
-    f->ch  = sp_route_ch[cfg->route];                                 /* Cortex-M0+'s halfword jump-table helper */
+    f->ch  = sp_route_ch[cfg->route];                                 /* Cortex-M0+the halfword jump-table helper */
     if (cfg->route == SP_FIELD_BINAURAL) {
         if ((cfg->order != 1 && cfg->order != 3) || !cfg->table || cfg->table_shift < 1 || cfg->table_shift > 30) return -1;
         f->nsh = cfg->order == 1 ? 4 : 16;
@@ -304,7 +303,7 @@ static void sp_wet_targets(sp_field_t *f, sp_fvoice_t *v, uint32_t ear)
     sp_field_target_finish(f, v, 1u << 23);
 }
 
-/* The pan law (c)'s targets (SPEC section 15): space.c's law with the
+/* The pan law (c)the targets (SPEC section 15): space.c's law with the
  * pan's ux narrowed by W, so the far ear keeps (1 - W) / 2 of the power. */
 static void sp_panlaw_targets(const sp_field_t *f, sp_fvoice_t *v, int32_t x, int32_t y, int32_t z)
 {

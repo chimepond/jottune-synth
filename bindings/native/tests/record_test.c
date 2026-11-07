@@ -588,6 +588,59 @@ done:
     fms_cancel_close(cancel); free(pcm);
 }
 
+typedef struct { fms_host_t *host; unsigned done; } scope_job_t;
+static void *scope_writer(void *argument)
+{
+    scope_job_t *job = (scope_job_t *)argument;
+    float samples[FMS_MAX_CH][256], *out[FMS_MAX_CH];
+    uint32_t i, channel;
+    for (channel = 0; channel < FMS_MAX_CH; channel++) out[channel] = samples[channel];
+    for (i = 0; i < 512; i++) fms_host_render_f32(job->host, out, FMS_MAX_CH, 256);
+    __atomic_store_n(&job->done, 1u, __ATOMIC_RELEASE);
+    return NULL;
+}
+
+static void concurrent_scope(void)
+{
+    fms_player_t *player;
+    fms_host_t *host;
+    fms_info_t info;
+    pthread_t thread;
+    scope_job_t job;
+    unsigned reads = 0;
+    int valid = 1;
+    context = "concurrent scope ring";
+    if (!bounded_source) return;
+    {
+        const char *paths[1] = { bounded_source };
+        char error[FMS_ERR_LEN];
+        player = fms_player_open(paths, 1, error, sizeof error);
+    }
+    host = fms_host_create();
+    CHECK(player && host);
+    if (!player || !host) { fms_player_close(player); fms_host_destroy(host); return; }
+    fms_player_info(player, &info);
+    CHECK(fms_host_swap(host, player) == NULL);
+    fms_host_set_playing(host, 1);
+    job.host = host; job.done = 0;
+    if (pthread_create(&thread, NULL, scope_writer, &job) == 0) {
+        do {
+            int16_t samples[64 * FMS_MAX_CH + 1];
+            uint32_t channels = 0, frames;
+            samples[64 * FMS_MAX_CH] = 12345;
+            frames = fms_host_scope(host, samples, 64, &channels);
+            if (frames > 64 || channels != info.channels || samples[64 * FMS_MAX_CH] != 12345) valid = 0;
+            reads++;
+        } while (!__atomic_load_n(&job.done, __ATOMIC_ACQUIRE));
+        CHECK(pthread_join(thread, NULL) == 0);
+        CHECK(reads && valid);
+    } else CHECK(0);
+    CHECK(fms_host_swap(host, NULL) == player);
+    fms_host_settle(host);
+    CHECK(fms_host_retired(host));
+    fms_host_destroy(host); fms_player_close(player);
+}
+
 int main(int argc, char **argv)
 {
     int i;
@@ -597,6 +650,7 @@ int main(int argc, char **argv)
     if (bounded_source) invalid_inputs(bounded_source);
     diagnostic_threads();
     cancellation();
+    concurrent_scope();
     context = "fixture coverage";
     CHECK(fixtures == (unsigned)(argc - 1));
     CHECK(keys_manual == 1 && keys_generated == 1);

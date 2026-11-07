@@ -307,6 +307,16 @@ class Packages(unittest.TestCase):
             pkg.package(self.root, notices_dir=self.root / 'notices')
         self.assertEqual((self.root / 'web/engines.json').read_bytes(), before)
 
+    def test_fresh_toolchain_notices_are_automatic_for_archives_and_root_companions(self):
+        import shutil
+        shutil.copytree(self.root / 'notices', self.root / 'build/wasm/notices')
+        entry = pkg.package(self.root)
+        self.assertIsNotNone(entry['toolchain_notices'])
+        for name in pkg.NOTICES:
+            expected = (self.root / 'build/wasm/notices' / name).read_bytes()
+            self.assertEqual((self.root / 'web/notices' / name).read_bytes(), expected)
+            self.assertEqual((self.root / 'web' / entry['toolchain_notices'] / name).read_bytes(), expected)
+
     def test_kept_source_binding_immutability_and_withdrawal(self):
         revision = '1234567' + 'a' * 33
         release = '2026-10-25-1234567'

@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 beta — prepared, not published
 
 - Preserve eight Favorites and prefer saved Keys ±30° when selecting a song.
 - Integer synthesis, generators, effects and spatial rendering.

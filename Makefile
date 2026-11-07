@@ -12,7 +12,7 @@ VARIANT ?=
 EXTRA ?=
 TAG := s$(SINE_BITS)e$(EXP_BITS)p$(PHASE64)v$(ENV64)$(VARIANT)
 B := build/$(TAG)
-WARN := -std=c99 -pedantic -Wall -Wextra -Wshadow
+WARN := -std=c99 -pedantic -Wall -Wextra -Wshadow -ffp-contract=off
 LIBWARN := $(WARN) -Werror -Wsign-conversion
 DEFS := -DFM_SINE_BITS=$(SINE_BITS) -DFM_EXP_BITS=$(EXP_BITS) -DFM_PHASE64=$(PHASE64) -DFM_ENV64=$(ENV64) $(EXTRA)
 INCLUDES := -Isrc/host -I$(B) -I.
@@ -45,7 +45,7 @@ $(B)/fx.o: src/fx/fx.c src/fx/fx.h src/host/fm_a1.h | $(B)
 	$(CC) $(LIBWARN) $(OPT) $(DEFS) $(INCLUDES) -c -o $@ $<
 $(B)/field.o: src/space/field.c src/space/field.h src/space/space.h src/fx/fx.h src/host/fm_a1.h vendor/fp_math.h | $(B)
 	$(CC) $(LIBWARN) $(OPT) $(DEFS) $(INCLUDES) -c -o $@ $<
-$(B)/harness: src/host/harness.c src/host/ref_double.c src/host/fx_ref.c src/host/field_ref.c src/host/ref_double.h src/host/fx_ref.h src/host/field_ref.h src/host/params.def src/gen/params.def $(OBJS) $(B)/sp_binaural_tables.h
+$(B)/harness: src/host/harness.c src/host/version.h src/host/ref_double.c src/host/fx_ref.c src/host/field_ref.c src/host/ref_double.h src/host/fx_ref.h src/host/field_ref.h src/host/params.def src/gen/params.def $(OBJS) $(B)/sp_binaural_tables.h
 	$(CC) $(WARN) $(OPT) $(DEFS) $(HDEFS) $(INCLUDES) -o $@ src/host/harness.c src/host/ref_double.c src/host/fx_ref.c src/host/field_ref.c $(OBJS) -lm
 portable:
 	$(MAKE) EXTRA=-DFP_MATH_FORCE_PORTABLE VARIANT=-portable
@@ -60,6 +60,7 @@ clean:
 .PHONY: all portable ubsan check macos clean
 
 quick: all
+	python3 -B tests/cli_safety.py
 	$(B)/harness --check
 	$(B)/harness --play tests/golden/48000/sine.tl --metrics
 	python3 tools/music/compose.py --selftest-perf
@@ -71,7 +72,7 @@ wasm:
 
 SONG_JOBS ?= 1
 TUNES_ROOT ?= $(CURDIR)
-SONG_CATALOG ?= $(TUNES_ROOT)/music/library.json
+SONG_CATALOG ?= $(if $(wildcard $(TUNES_ROOT)/library.json),$(TUNES_ROOT)/library.json,$(TUNES_ROOT)/music/library.json)
 ifneq ($(filter web songs web/songs.json,$(MAKECMDGOALS)),)
 SONG_INPUTS := $(shell python3 tools/export_library.py --root "$(TUNES_ROOT)" --catalog "$(SONG_CATALOG)" --list-inputs || printf '\nINVALID_SONG_INPUTS\n')
 ifneq ($(filter INVALID_SONG_INPUTS,$(SONG_INPUTS)),)

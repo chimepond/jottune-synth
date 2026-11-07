@@ -285,7 +285,7 @@ def main():
             lib.fms_midi_destroy(m)
 
     if controls:
-        source = (bridge / 'fms_midi.c').read_text()
+        source = ((shared if shared.is_dir() else bridge) / 'fms_midi.c').read_text()
         mutations = {
             'reset-seed': ('m->map[c].rng = m->map[c].seed;', '/* negative: retain random stream */'),
             'capacity': ('(m->mapped || m->zone_mask) && m->cfg.ctl_reads ? 2 * m->cfg.nvoices + 10 : m->cfg.nvoices + 2',

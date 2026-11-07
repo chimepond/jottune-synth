@@ -12,7 +12,7 @@ LIB := $(REPO)/build/$(TAG)
 DEFS := -DFM_SINE_BITS=12 -DFM_EXP_BITS=10 -DFM_PHASE64=1 -DFM_ENV64=1
 HDEFS := -DSP_BINAURAL_H='"$(LIB)/sp_binaural_tables.h"'
 CC ?= cc
-CFLAGS := -std=c99 -O2 -Wall -Wextra
+CFLAGS := -std=c99 -O2 -Wall -Wextra -ffp-contract=off
 OBJS := $(LIB)/fm_a1.o $(LIB)/space.o $(LIB)/fx.o $(LIB)/field.o $(LIB)/gen.o
 HARNESS := $(LIB)/harness
 APP := $(B)/IntegerFM.app
@@ -51,7 +51,7 @@ native: | $(B)
 	$(MAKE) -C $(REPO) $(KNOBS) VARIANT=-macos
 
 NATIVE_SRC := $(wildcard $(REPO)/src/*/*.c $(REPO)/src/*/*.h $(REPO)/src/*/*.def $(REPO)/vendor/*.h)
-SHARED_BRIDGE := $(REPO)/bindings/native/jottune_bridge.c $(REPO)/bindings/native/jottune_bridge.h
+SHARED_BRIDGE := $(REPO)/bindings/native/jottune_bridge.c $(REPO)/bindings/native/jottune_bridge.h $(REPO)/bindings/native/fms_midi.c
 $(B)/lib.stamp: $(NATIVE_SRC) $(REPO)/Makefile $(HERE)/Makefile | native
 	touch $@
 
@@ -60,10 +60,10 @@ $(B)/jottune_bridge.o: $(HERE)/bridge/jottune_bridge.c $(HERE)/bridge/jottune_br
 
 # The live MIDI translator (regression); the mutants are check (a)'s controls:
 # 1 wrong velocity, 2 dropped note-off, 3 wrong ctl map, 4 wrong MPE bend range.
-$(B)/fms_midi.o: $(HERE)/bridge/fms_midi.c $(HERE)/bridge/jottune_bridge.h | $(B)
+$(B)/fms_midi.o: $(REPO)/bindings/native/fms_midi.c $(HERE)/bridge/fms_midi.c $(HERE)/bridge/jottune_bridge.h | $(B)
 	$(CC) $(CFLAGS) -I$(HERE)/bridge -c -o $@ $<
 
-$(B)/fms_midi_m%.o: $(HERE)/bridge/fms_midi.c $(HERE)/bridge/jottune_bridge.h | $(B)
+$(B)/fms_midi_m%.o: $(REPO)/bindings/native/fms_midi.c $(HERE)/bridge/fms_midi.c $(HERE)/bridge/jottune_bridge.h | $(B)
 	$(CC) $(CFLAGS) -DFMS_MIDI_MUTANT=$* -I$(HERE)/bridge -c -o $@ $<
 
 $(B)/lines_model: $(HERE)/App/PatchLines.swift $(HERE)/App/Params.swift $(HERE)/tests/patch_model.swift $(HERE)/bridge/jottune_bridge.h $(B)/jottune_bridge.o $(B)/fms_midi.o
@@ -114,7 +114,7 @@ $(APP)/Contents/MacOS/IntegerFM: $(HERE)/FEATURES.md $(HERE)/PrivacyInfo.xcpriva
 recipes: $(B)/recipes/.done
 
 $(B)/recipes/.done: $(B)/lib.stamp $(B)/fms_verify $(HERE)/tools/make_recipes.py $(REPO)/tools/music/compose.py $(REPO)/data/recipes.txt $(REPO)/data/tables.txt
-	python3 -I $(HERE)/tools/make_recipes.py $(REPO)/tools/music $(HARNESS) "`$(B)/fms_verify --engine`" $(B)/recipes
+	python3 -I -B $(HERE)/tools/make_recipes.py $(REPO)/tools/music $(HARNESS) "`$(B)/fms_verify --engine`" $(B)/recipes
 	touch $@
 
 # One record from each family the harness plays, the 16 regression goldens (pd, vector,

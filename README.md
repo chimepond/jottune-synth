@@ -1,7 +1,7 @@
 <!-- Copyright (c) 2026 Nenad Micic; SPDX-License-Identifier: Apache-2.0 -->
 # JotTune Synth
 
-JotTune Synth is a deterministic integer synthesizer with a readable song format.
+JotTune Synth 0.1.0 beta is a deterministic integer synthesizer with a readable song format.
 One complete `.tl` file contains the sounds, notes, effects and spatial controls
 needed to reproduce a record. The same engine runs in the command-line tools,
 the browser player and the macOS application.
@@ -17,6 +17,7 @@ Use a C99 compiler, Make and Python 3.10 or later:
 
 ```sh
 make
+build/s12e10p1v1/harness --version
 build/s12e10p1v1/harness --play examples/bell.tl --wav build/bell.wav
 make quick
 ```
@@ -68,13 +69,19 @@ notarization are separate from building the source.
 - [MIDI, WAV and SFZ interchange](docs/INTERCHANGE.md)
 - [Shared native bridge](bindings/native/README.md)
 
-JotTune MCP is distributed separately as `@chimepond/jottune-mcp`. Online song
-publication is provided by the separately operated ChimePond platform.
+The [JotTune MCP repository](https://github.com/chimepond/jottune-mcp) provides
+`@chimepond/jottune-mcp` for agent clients. [Tunes](https://github.com/chimepond/tunes)
+is the separate readable song collection. [ChimePond](https://chimepond.com) is the
+separately operated sharing platform; this player works without that service.
+Repository links become available when the public beta is published.
+
+See [security and rights reporting](SECURITY.md) and [code contributions](CONTRIBUTING.md).
 
 ## Licence
 
 Code and included examples are Apache-2.0 unless a file states otherwise.
-Third-party components retain their own notices, including the Michroma font's
+See [NOTICE](NOTICE) for adapted third-party tables. Third-party components
+retain their own notices, including the Michroma font's
 SIL Open Font License. Separately submitted music retains its declared terms.
 
 JotTune Synth was developed with AI assistance.

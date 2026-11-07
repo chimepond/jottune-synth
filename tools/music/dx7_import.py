@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Nenad Micic
 # SPDX-License-Identifier: Apache-2.0
-"""DX7 voices to recipe blocks, an approximate translation (, ,
-), never emulator-exact. A host tool: standard library only, floats
-allowed .
+# Portions Copyright 2012 Google Inc.
+# Portions Copyright 2013 Google Inc.
+# Adapted lookup tables and LFO constants from Google's music-synthesizer-for-android
+# (msfa), under Apache-2.0. Modified for this host-side translation and its tests.
+# See NOTICE and LICENSE at the repository root.
+"""DX7 voices to recipe blocks, an approximate translation, never
+emulator-exact. A host tool: standard library only, floats allowed.
 
     python3 -B tools/music/dx7_import.py BANK.syx [--voice N] [--ops 4] [--out FILE | --into FILE] [--name PREFIX]
     python3 -B tools/music/dx7_import.py --selftest
@@ -12,21 +16,20 @@ It reads a 32-voice bank (4104 bytes), a single voice (163 bytes) or a
 single voice without its SysEx frame (155 bytes), checks the frame and the
 checksum, and writes one block per voice (or the voice N) in recipes.txt's
 format, which compose.py's loader takes, recipe plays and --expand
-expands . The block is the voice reduced to --ops operators
-(default 4, FM_OPS): a route line (routing, ; the grammar, ), the
+expands. The block is the voice reduced to --ops operators
+(default 4, FM_OPS): a route line (native timeline routing), the
 carrier and modulator lines as engine operators 0 and 1 and an op line
 for each operator from 2 up, with each operator's rate scaling, fixed
-frequency and key sync as rs, fixed and free (operator extension, , ); a voice
+frequency and key sync as rs, fixed and free (operator extensions); a voice
 left with one operator is a pair with a silent modulator. The `# pair:`
 lines hold the voice's 2-operator form, taken from the whole voice so
-that --ops never changes them. A pitch LFO maps to LFO ; amplitude
+that --ops never changes them. A pitch LFO maps to LFO; amplitude
 modulation and the pitch envelope remain `# pending:` lines. The note line names the voice,
 and the comment lines under it every approximation and every dropped
 operator: compose.py writes the notes as the comment on a patch line,
-which the harness takes up to 1022 bytes. algorithms.txt beside this
-file holds the routings and the reduce rule; README.md beside it, DX7
-import, has the mapping table.
---into FILE appends the blocks to an existing recipes file instead :
+which the harness takes up to 1022 bytes. data/algorithms.txt at the repository root holds the routings and reduction
+rule; docs/INSTRUMENT.md documents the authoring interface.
+--into FILE appends the blocks to an existing recipes file instead:
 a name the file already holds, or one given earlier in the same import,
 takes the first free suffix, -2, -3 and so on, in bank order; the file with
 the import appended is loaded through compose.py's loader before anything
@@ -91,7 +94,7 @@ PEG_TABLE = (-128, -116, -104, -95, -85, -76, -68, -61, -56, -52, -49, -46, -43,
              28, 29, 30, 31, 32, 33, 34, 35, 38, 40, 43, 46, 49, 53, 58, 65, 73,
              82, 92, 103, 115, 127)
 PEG_CENTS = 4800 / 128
-# The LFO's pitch modulation by msfa's scaling (; README's pinned source trace):
+# LFO pitch modulation uses msfa's scaling:
 # the peak deviation is (depth * 165 >> 6) * PMS_TABLE[sensitivity] / 65536
 # octave, so depth 99 at sensitivity 7 is about an octave (1190.6 cents).
 PMS_TABLE = (0, 10, 20, 33, 55, 92, 153, 255)
@@ -544,7 +547,7 @@ def translate(number, voice, algs, source, prefix, limit, single):
     route = route_words(order, cars, edges) if not lone else None
     vname = voice['name'].strip() or 'unnamed'
 
-    notes = ['DX7 voice "%s", translated approximately by dx7_import.py (, ); untested by a piece' % vname]
+    notes = ['DX7 voice "%s", translated approximately by dx7_import.py; untested by a piece' % vname]
     text = 'routing: algorithm %d' % n_alg
     text += ' as route %s' % ' '.join(route) if route else ', one operator, so no route'
     text += '; kept %s' % ops_list(kept)
@@ -595,14 +598,14 @@ def translate(number, voice, algs, source, prefix, limit, single):
     text = 'pitch: coarse and fine to Q16.16, detune as %g cent a step from 7' % DETUNE_CENTS
     fixed = [(o, ratio_of(vo[o])[1]) for o in shown if vo[o]['mode']]
     if fixed:
-        text += '; %s as fixed to the millihertz, its ratio the detune alone ()' % ', '.join(
+        text += '; %s as fixed to the millihertz, its ratio the detune alone' % ', '.join(
             'OP%d fixed at %.3f Hz' % f for f in fixed)
     if voice['transpose'] != 24:
         text += '; transpose %+d semitones not kept: move the notes' % (voice['transpose'] - 24)
     notes.append(text)
     if free:
         notes.append("oscillators: key sync off as free=2 on every operator, advancing across rendered idle "
-                     "samples (); voice-local phase, not a shared DX7 clock")
+                     "samples; voice-local phase, not a shared DX7 clock")
     ks = []
     for o in shown:
         p, a = vo[o], info[o]['args']
@@ -660,12 +663,12 @@ def translate(number, voice, algs, source, prefix, limit, single):
                         voice['pmd'], voice['pms'], lfo_cents(voice['pmd'], voice['pms']),
                         lfo[4] if lfo else 0, ('off', 'on')[voice['sync']]))
     if voice['amd'] or ams:
-        lines.append('# pending: amplitude modulation (): amplitude depth %d at sensitivity %s; '
+        lines.append('# pending: amplitude modulation: amplitude depth %d at sensitivity %s; '
                      'DX7 units, no synthetic AMD mapping' %
                      (voice['amd'], ', '.join('OP%d %d' % x for x in ams) or '0'))
     peg = [voice['pl%d' % i] for i in (1, 2, 3, 4)]
     if any(p != 50 for p in peg):
-        lines.append("# pending: peg (envelope, ): levels %s cents by the DX7's pitch EG level table (50 = 0 cents), "
+        lines.append("# pending: peg (envelope): levels %s cents by the DX7's pitch EG level table (50 = 0 cents), "
                      "rates %s in DX7 units until envelope lands"
                      % (' '.join('%d' % round(PEG_TABLE[p] * PEG_CENTS) for p in peg),
                         ' '.join('%d' % voice['pr%d' % i] for i in (1, 2, 3, 4))))
@@ -675,9 +678,9 @@ def translate(number, voice, algs, source, prefix, limit, single):
 
 
 def header(source, count):
-    return ('# %d recipe block%s from %s by dx7_import.py (, , ): approximate translations of\n'
-            '# DX7 voices, never emulator-exact. compose.py loads them (recipe(), --expand); README.md in\n'
-            '# music, DX7 import, explains the route, operator, note, pair and pending lines.\n'
+    return ('# %d recipe block%s from %s by dx7_import.py: approximate translations of\n'
+            '# DX7 voices, never emulator-exact. compose.py loads them (recipe(), --expand).\n'
+            '# See docs/INSTRUMENT.md for the native timeline and recipe interfaces.\n'
             % (count, '' if count == 1 else 's', one_line(source)))
 
 
@@ -708,7 +711,7 @@ def convert(data, source, voice=None, limit=FM_OPS, prefix='dx7', algs=None):
 # compose.py's loader before a byte is appended, and the existing text is never
 # rewritten. Every importer shares these helpers .
 
-SUFFIX = '-%d'          # the collision suffix, -2, -3, ...: provisional (; regression's P row)
+SUFFIX = '-%d'          # collision suffix: -2, -3, ... in import order
 
 
 def free_names(taken, names):

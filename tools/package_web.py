@@ -101,7 +101,7 @@ def stage_agent_references(root):
                 (web / 'native-reference.txt').write_text(hosted_text(native, source, available, native=True))
             elif (web / 'native-reference.txt').exists():
                 (web / 'native-reference.txt').unlink()
-    for source,target in [('LICENSE','LICENSE')]:
+    for source,target in [('LICENSE','LICENSE'), ('NOTICE','NOTICE')]:
         if (root / source).is_file():
             shutil.copyfile(root / source, web / target)
 
@@ -253,6 +253,8 @@ def package(root=ROOT, *, release_id=None, source=None, notices_dir=None):
         if version_file.exists() else 'unrecorded development toolchain')
     revision = None
     notices = {}
+    if notices_dir is None and (build / 'notices').is_dir():
+        notices_dir = build / 'notices'
     if notices_dir:
         for name in NOTICES:
             path = Path(notices_dir) / name
@@ -283,6 +285,11 @@ def package(root=ROOT, *, release_id=None, source=None, notices_dir=None):
             raise ValueError('Native, harness-Wasm and browser-Wasm engine identities must match.')
     elif source:
         raise ValueError('--source-commit requires --release-id.')
+
+    if notices:
+        (web / 'notices').mkdir(exist_ok=True)
+        for name, content in notices.items():
+            (web / 'notices' / name).write_bytes(content)
 
     runtime_files = [web / 'runtime.mjs'] + sorted(p for p in
         (web / 'vendor/browser_wasi_shim').rglob('*') if p.is_file())
@@ -321,6 +328,7 @@ def package(root=ROOT, *, release_id=None, source=None, notices_dir=None):
                 raise ValueError('Refusing to replace immutable renderer package: ' + engine_id)
         else:
             shutil.copytree(staged, output)
+            output.chmod(0o755)
     entry = {
         'id': engine_id, 'release_id': release_id, 'development': not bool(release_id),
         'identity': identity, 'source_commit': revision, 'toolchain': toolchain,

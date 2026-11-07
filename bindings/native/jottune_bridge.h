@@ -152,7 +152,7 @@ typedef struct fms_player fms_player_t;
  * file, then one file per stream; or one file). NULL with a message in err
  * (the harness's own diagnostics) on a refused timeline. */
 /* Full-record memory interface (host side). API uses POSIX memory streams,
- * GCC/Clang atomics/TLS: iOS 11+, Android API 23+, macOS and Linux. */
+ * GCC/Clang atomics/TLS: iOS 15+, Android API 23+, macOS and Linux. */
 typedef struct fms_cancel fms_cancel_t;
 enum { FMS_OK = 0, FMS_INVALID = 1, FMS_HASH_MISMATCH = 3,
        FMS_NO_MEMORY = 5, FMS_CANCELLED = 6, FMS_RENDER_ERROR = 7 };

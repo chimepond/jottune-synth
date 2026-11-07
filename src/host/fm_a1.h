@@ -5,12 +5,12 @@
  * fm_a1.h — integer FM voice API. Supports the fixed two-operator path
  * or up to FM_OPS operators through an explicit patch routing table.
  *
- * Tiers : Q16.48 fp_math.h at note events and at a voice's
+ * Arithmetic: Q16.48 fp_math.h at note events and at a voice's
  * control ticks (every FM_CTL sounding samples, only for a patch
  * with an LFO, pitch envelope, filter envelope or an active modulation slot).
  * The per-sample path uses 32- and 64-bit adds, shifts,
  * table lookups and 32x32->64 multiplies; no division, no 64x64 multiply,
- * no floating point , no heap, no mutable globals.
+ * no floating point, no heap, no mutable globals.
  */
 #ifndef FM_A1_H
 #define FM_A1_H
@@ -37,13 +37,13 @@ extern "C" {
 #define FM_FB_AVG 1            /* 1: feedback from the average of the last two outputs ; 0: from the last one */
 #endif
 #ifndef FM_OPS
-#define FM_OPS 4               /* operators per voice (; 's v1 maximum is 4) */
+#define FM_OPS 4               /* operators per voice; supported maximum is 4 */
 #endif
 #if FM_OPS < 2 || FM_OPS > 4
 #error "FM_OPS must be 2 to 4: the fixed path needs two operators and the library supports at most four"
 #endif
 #ifndef FM_CTL
-#define FM_CTL 64              /* : sounding samples per control tick, where 's LFO moves increments, levels and indices */
+#define FM_CTL 64              /* sounding samples per control tick; LFO updates increments, levels and indices */
 #endif
 #if FM_CTL < 1 || FM_CTL > 4096
 #error "FM_CTL must be 1 to 4096 samples"
@@ -53,13 +53,13 @@ extern "C" {
 #define FM_ATT_END_OCT 20u     /* release ends, and the operator idles, at 2^-20 (-120.4 dB) */
 #define FM_SEG_MAX     ((1u << 27) - 1u)  /* longest attack, decay or release, in samples */
 
-/* Human-unit operator . Without a route (route.ops 0, the fixed
+/* Human-unit operator. Without a route (route.ops 0, the fixed
  * 2-operator path) op[0] is the carrier and op[1] the modulator: the
  * carrier's index, feedback and key scaling, the modulator's output level
  * and every operator above op[1] are unused. With a route, the level is
  * used where the operator is a carrier, the index on each of its edges and
- * the feedback on the operator itself. The last four fields, 's rate
- * scaling and 's fixed frequency, start phase and free run, apply to
+ * the feedback on the operator itself. The last four fields, the rate
+ * scaling and the fixed frequency, start phase and free run, apply to
  * every operator the voice steps; all four 0, the operator renders what it
  * rendered before they existed. */
 typedef struct {
@@ -86,20 +86,20 @@ typedef struct {
  * fm_voice_filter until the next note-on. All zero: no filter, and the
  * voice renders what it rendered without one. */
 typedef struct {
-    uint32_t cutoff_millihz; /* clamped to fs/2400 .. 0.45 fs (fs * 5/12 .. fs * 450 mHz, the lower rounded up) */
-    uint16_t q_milli;        /* resonance Q in thousandths, clamped to 500 .. 16000 */
+    uint32_t cutoff_millihz; /* clamped to fs/2400.. 0.45 fs (fs * 5/12.. fs * 450 mHz, the lower rounded up) */
+    uint16_t q_milli;        /* resonance Q in thousandths, clamped to 500.. 16000 */
     uint16_t mode;           /* 0 off, 1 low-pass, 2 band-pass, 3 high-pass, 4 notch; others play as 0 */
     uint16_t stages;         /* 0/1: one stage; 2 or above: two identical stages */
 } fm_filter_patch_t;
 
-/* 's routing table (provisional under ). ops 0 keeps the fixed
+/* Per-patch routing table. ops 0 keeps the fixed
  * 2-operator path, byte for byte the output it had before routes existed.
  * Otherwise op ops-1 down to op 0 are evaluated each sample. Op i's phase
- * modulation is its own feedback_q10 through 's average, as on the
+ * modulation is its own feedback_q10 through the average, as on the
  * fixed path's modulator, plus one term per nonzero w[j][i]: op j's output
  * times op j's index times w[j][i] / 256, with the index fixed at note-on
  * (velocity and key scaling applied) and the output this sample's when
- * j > i, 's average of its last two when j < i (a back edge, one
+ * j > i, the average of its last two when j < i (a back edge, one
  * sample late). The output is the sum of the carriers' outputs at their
  * levels, in int64, saturated to +-(2^31 - 1) in Q2.30 ( (a)). Every
  * value is defined : ops above FM_OPS play as FM_OPS and 1 as a lone
@@ -110,7 +110,7 @@ typedef struct {
  * Their weights clamp to 256 and their sources to +-1 in Q2.30. Incoming
  * amplitude edges apply in ascending source index after the target's
  * waveform/envelope; its history retains that final sample. Kind 3 is
- * hard sync (, design- section 3.3): a nonzero weight plays as 256
+ * hard sync: a nonzero weight plays as 256
  * and 0 disables the edge. A source's natural wrap (its phase after its
  * add below its phase before) resets the target to its PHASE_U16 before
  * the target's own add, in the same sample for a source above the target
@@ -124,14 +124,14 @@ typedef struct {
     uint8_t kind[FM_OPS][FM_OPS]; /* 0 PM, 1 AM, 2 ring, 3 sync; others play as PM */
 } fm_route_t;
 
-/* 's LFO, one per voice (provisional under  and ). rate 0
+/* LFO, one per voice. rate 0
  * is no LFO: its work is skipped even when another control source arms
  * the clock. Otherwise the LFO's 32-bit phase starts
  * at phase_u16 at every note-on by default (key sync, a retrigger included) and steps
  * once per control tick by round(rate * FM_CTL * 2^32 / (1000 fs)), rate
- * clamped to 10 .. 50000 mHz, modulo 2^32 (where rate * FM_CTL >= 1000 fs
+ * clamped to 10.. 50000 mHz, modulo 2^32 (where rate * FM_CTL >= 1000 fs
  * a tick spans whole turns, and waves 5 and 6 miss those wraps). Its
- * value l, Q1.15 (-32768 .. 32767), comes
+ * value l, Q1.15 (-32768.. 32767), comes
  * from the wave: 0 sine (the sine table), 1 triangle (0 at phase 0, rising
  * first), 2 saw up, 3 saw down, 4 square (32767 in the first half turn,
  * -32768 in the second), 5 sample and hold, 6 smoothed random (5 and 6
@@ -155,7 +155,7 @@ typedef struct {
  * edges from it set again. Envelopes, segment lengths and feedback never
  * move at control rate. */
 typedef struct {
-    uint32_t rate_millihz;   /* 0 no LFO; else clamped to 10 .. 50000 */
+    uint32_t rate_millihz;   /* 0 no LFO; else clamped to 10.. 50000 */
     uint16_t wave;           /* 0 sine, 1 triangle, 2 saw up, 3 saw down, 4 square, 5 sample and hold, 6 smoothed random */
     uint16_t delay_ms;       /* no modulation for round(ms * fs / 1000) sounding samples after the note-on */
     uint16_t fade_ms;        /* then the depths rise linearly over round(ms * fs / 1000) sounding samples */
@@ -169,7 +169,7 @@ typedef struct {
     uint8_t  free_run;       /* : 2 continuous from voice init; other values key sync. Text accepts only 0 or 2. */
 } fm_lfo_patch_t;
 
-/* 's four-stage pitch envelope, provisional under . All-zero
+/* Four-stage pitch envelope. All-zero
  * levels disable it regardless of times and mask. From silence it starts
  * at L4, glides to L1, L2 and L3, holds L3, then releases to L4. A
  * retrigger starts the full T1 from the current position. Times round
@@ -183,7 +183,7 @@ typedef struct {
     uint16_t mask;           /* bit i follows; 0 all; absent/fixed operator bits ignored */
 } fm_peg_patch_t;
 
-/* : envelope and static key tracking for 's voice filter.
+/* : envelope and static key tracking for the voice filter.
  * Enabled when depth or tracking is nonzero and the filter is enabled.
  * The envelope is linear in Q1.15 gain, not decibels; its cents offset
  * adds to key tracking before the cutoff factor and  clamps.
@@ -197,7 +197,7 @@ typedef struct {
     uint16_t track_permille;    /* clamped to 0..2000, 1000 one octave per octave */
 } fm_fenv_patch_t;
 
-/* 's exact integer glide: after j ticks start + sign(d)*floor(j*|d|/n).
+/* the exact integer glide: after j ticks start + sign(d)*floor(j*|d|/n).
  * Shared control-envelope state; q is truncated toward zero and the
  * remainder is carried, so the final tick lands exactly on its target. */
 typedef struct {
@@ -209,8 +209,7 @@ typedef struct {
 
 /*  operator extension. A second decay is enabled by either its time or
  * target, before the target is raised to sustain1. Left scaling attenuates
- * only index below the existing key break, selected at note-on ('s
- * fm_op_ext_t can move either side to the level or make it a boost). */
+ * only index below the existing key break, selected at note-on (the * fm_op_ext_t can move either side to the level or make it a boost). */
 typedef struct {
     uint16_t delay_ms;       /* absolute delay on a silent start, clamped to 60000; 0 bypasses */
     uint16_t decay2_ms;      /* rate-scaled, clamped to 60000; enabled zero time jumps to sustain2 */
@@ -274,17 +273,17 @@ typedef struct {
 } fm_ks_patch_t;
 
 /* : an operator's key-scaling target and curve signs and its feedback
- * type; all zero plays ,  and  as before. Key scaling stays
- * linear in octaves (no exp curves, ); a "+" side forms its
+ * type; all zero plays,  and  as before. Key scaling stays
+ * linear in octaves (no exp curves); a "+" side forms its
  * attenuation as a boost instead. */
 typedef struct {
     uint8_t loop;           /*  : nonzero repeats attack, decay and decay2 while held */
-    uint8_t ks_target;      /* 0 index , 1 level, 2 both; above 2 plays as 0 */
+    uint8_t ks_target;      /* 0 index, 1 level, 2 both; above 2 plays as 0 */
     uint8_t ks_curve;       /* bit 0: the right side boosts ("+"), bit 1: the left side; other bits ignored */
     uint8_t fb_type;        /* bit 0: own feedback from the pre-envelope history, bit 1: the  source squared; other bits ignored */
 } fm_op_ext_t;
 
-/*  : a voice amp envelope after the shaper, 's units and
+/*  : a voice amp envelope after the shaper, the units and
  * arithmetic without delay, decay2, velocity or rate scaling. enabled 0 is
  * an exact bypass; any other value applies it, and the voice ends (every
  * operator idle, the filter and formant states cleared) when it reaches
@@ -451,7 +450,7 @@ typedef struct {
     uint32_t loop_count;    /* its attack length in samples; zero: no loop */
 } fm_op_t;
 
-/* 's filter state. Coefficients from g = tan(pi fc / fs) and k = 1/Q:
+/* the filter state. Coefficients from g = tan(pi fc / fs) and k = 1/Q:
  * a1 = 1 / (1 + g (g + k)), a2 = g a1, a3 = g a2, Q2.30, rounded; k Q3.29.
  * The two integrator states are Q2.30, saturated at +-(2^31 - 1). */
 typedef struct {
@@ -492,7 +491,7 @@ typedef struct {
     uint32_t   ops;          /* : 0 the fixed path, else the operators stepped, 1 to FM_OPS */
     uint32_t   carriers;     /* the carrier bits below ops; bit 0 on the fixed path */
     int32_t    edge[FM_OPS][FM_OPS]; /* edge[from][to]: op from's index times w[from][to] / 256, Q8.24 turns, set at note-on and at a tick with an index mask */
-    /* 's clock, armed by 's LFO, 's peg or 's fenv. */
+    /* the clock, armed by the LFO, the peg or the fenv. */
     uint32_t   ctl;          /* samples left to next tick; FREE 2 accounts for idle samples on catch-up */
     uint32_t   lfo_phase;    /* turns * 2^32: FREE 2's current grid phase, otherwise next tick's */
     uint32_t   lfo_step;     /* per tick, set at note-on and at FREE 2 voice init */
@@ -582,10 +581,10 @@ int      fm_wt_additive(int16_t *data, uint32_t capacity, uint32_t frames, uint3
                         const fm_wt_harmonic_t *h, uint32_t count);
 /* velocity_q15 is a linear gain, 32767 = full, larger values clamp. On a
  * sounding voice this retriggers and phases continue: an operator still in
- * its attack keeps it running , any other restarts its attack from the
- * current gain at the full attack's slope . On a silent voice it starts
+ * its attack keeps it running, any other restarts its attack from the
+ * current gain at the full attack's slope. On a silent voice it starts
  * from silence, each operator at its phase_u16 or, with free_run, at the
- * phase and noise word it kept . FREE 2 first advances the phase
+ * phase and noise word it kept. FREE 2 first advances the phase
  * across skipped samples using the last instantaneous increment; its
  * noise word follows the number of half-turn crossings. Pink reconstructs
  * its rows in bounded work; coloured noise holds its one-pole memory
@@ -593,25 +592,25 @@ int      fm_wt_additive(int16_t *data, uint32_t capacity, uint32_t frames, uint3
  * (op[0] on the fixed path, any carrier of a route); filter/formant ring-out
  * does not count. Every operator the voice steps takes the note, a fixed
  * one keeping its frequency ; its attack, decay and release lengths
- * are rate-scaled from this note , a running attack's excepted
+ * are rate-scaled from this note, a running attack's excepted
  * ; a route's edge indices are set from the operators' indices here.
  * The filter's coefficients are set again from the patch; its state
- * carries on . Formant integrators also carry on, with each ring
+ * carries on. Formant integrators also carry on, with each ring
  * counter reset; effective centers/gains refresh only when changed. A key-synced LFO restarts phase and control grid at
  * every note-on. A FREE 2 LFO applies its current grid phase without an
  * extra step or grid reset; the peg and fenv share its remaining interval.
  * Both LFO modes restart delay/fade and apply their current value at once.
  * Last, each bound Karplus-Strong buffer refills with xorshift32 draws, the
  * word seeded from the patch seed xor the operator's  salt on a silent
- * voice and continued on a sounding one; FREE keeps no buffer . */
+ * voice and continued on a sounding one; FREE keeps no buffer. */
 void     fm_voice_note_on(fm_voice_t *v, uint32_t freq_millihz, uint16_t velocity_q15);
 /* Sets the voice's frequency and nothing else : phases, envelopes,
  * levels, the index as its note-on scaled it, the segment lengths as its
- * note-on rate-scaled them , and feedback carry on, so a sounding
+ * note-on rate-scaled them, and feedback carry on, so a sounding
  * note bends without a retrigger; an operator with a fixed frequency keeps
- * it . An LFO carries on, its last pitch factor applied to the new
- * frequency at once . A Karplus-Strong source retunes its delay
- * without a refill . A silent voice stays silent; its next note-on
+ * it. An LFO carries on, its last pitch factor applied to the new
+ * frequency at once. A Karplus-Strong source retunes its delay
+ * without a refill. A silent voice stays silent; its next note-on
  * sets the frequency again. FREE 2 catches up with its old increment
  * before the pitch event changes it. */
 void     fm_voice_pitch(fm_voice_t *v, uint32_t freq_millihz);
@@ -620,7 +619,7 @@ void     fm_voice_note_off(fm_voice_t *v);
  * patch's units and clamps; nothing on a voice whose patch has no filter. */
 void     fm_voice_filter(fm_voice_t *v, uint32_t cutoff_millihz, uint16_t q_milli);
 /* Nonzero while a carrier sounds, a formant/final filter rings out, or an
- * enabled amp envelope is not idle . An active amp must keep consuming
+ * enabled amp envelope is not idle. An active amp must keep consuming
  * frames even with silent carriers; this query does not prove audibility.
  * Each formant slot rings until both states lie within +-2048 (Q2.30,
  * 1/16 of an output LSB) or for 2^18 samples, then clears its states.
@@ -637,7 +636,7 @@ void     fm_voice_ctl(fm_voice_t *v, uint32_t n, int32_t value_q15);
  * The host publishes its bank values; this setter never ticks the voice. */
 void     fm_voice_gen(fm_voice_t *v, uint32_t n, int32_t value_q15);
 void     fm_render_i16(fm_voice_t *v, int16_t *out, uint32_t frames);
-/* One voice's output in Q2.30 for mixers outside the library (,
+/* One voice's output in Q2.30 for mixers outside the library (
  * space/): at most 1 << 30 in magnitude for one carrier without a filter,
  * at most 2^31 - 1 with several (: the carriers' sum, saturated) or
  * with a filter (: a resonant filter's gain, saturated);
@@ -659,7 +658,7 @@ uint64_t fm_table_hash(void);
  * FM_SEG_MAX) for a note of freq_millihz at rate scaling rs (above 7 as 7),
  * the value the harness compares with the reference's. */
 uint32_t fm_rate_scaled(uint32_t n, uint32_t freq_millihz, uint32_t rs);
-/* : 2^x for x in Q16.48, clamped to -16 .. 14, as Q16.48: a 17-entry
+/* : 2^x for x in Q16.48, clamped to -16.. 14, as Q16.48: a 17-entry
  * table of 2^(k/16) in Q16.48 times a seven-term series (degree 6) on the
  * remainder within 1/32, in Q2.62, rounded once. Relative error under
  * 2^-47 on [-1, 14) as sampled; below -1 the result's half unit of 2^-48

@@ -22,7 +22,7 @@ def main():
     # Rebuilding both inputs proves parser AND spatial ABI compatibility. The
     # display companion is never selected by the coarser engine identity text.
     subprocess.run([sys.executable, ROOT / 'tools/build_wasm.py'], cwd=ROOT, check=True)
-    flags = ['-std=c99', '-O2', '-Wall', '-Wextra', '-Wshadow',
+    flags = ['-std=c99', '-ffp-contract=off', '-O2', '-Wall', '-Wextra', '-Wshadow',
              '-DFM_SINE_BITS=12', '-DFM_EXP_BITS=10', '-DFM_PHASE64=1', '-DFM_ENV64=1',
              '-Isrc/host', '-Ibuild/s12e10p1v1', '-I.',
              '-DSP_BINAURAL_H="build/s12e10p1v1/sp_binaural_tables.h"']

@@ -6,6 +6,9 @@
  * rendered by tl_apply and tl_mix, the harness's own functions. Host side
  * only: the library objects are linked unmodified.
  */
+#if !defined(__APPLE__) && !defined(_XOPEN_SOURCE)
+#define _XOPEN_SOURCE 700
+#endif
 #if !defined(__APPLE__) && !defined(_POSIX_C_SOURCE)
 #define _POSIX_C_SOURCE 200809L
 #endif
@@ -44,6 +47,15 @@ static int fms_cancelled(const fms_cancel_t *token)
 #undef main
 
 #include <unistd.h>
+
+/* POSIX.1-2008 keeps nanosleep; usleep is obsolete and hidden on Linux. */
+static void fms_sleep_us(unsigned micros)
+{
+    struct timespec delay;
+    delay.tv_sec = micros / 1000000u;
+    delay.tv_nsec = (long)(micros % 1000000u) * 1000L;
+    while (nanosleep(&delay, &delay) && errno == EINTR) {}
+}
 
 fms_cancel_t *fms_cancel_create(void) { return (fms_cancel_t *)calloc(1, sizeof(fms_cancel_t)); }
 void fms_cancel_request(fms_cancel_t *token)
@@ -1277,7 +1289,7 @@ fms_player_t *fms_host_swap(fms_host_t *h, fms_player_t *p)
             prepared = fms_take_change(h, TAKE_PENDING, TAKE_PREPARING);
             if (!prepared) continue; /* recheck the state that won the CAS */
         } else if (state == TAKE_CLAIMED) {
-            usleep(1);
+            fms_sleep_us(1);
             continue;
         }
         break;
@@ -1530,8 +1542,12 @@ void fms_host_render_f32(fms_host_t *h, float *const *out, uint32_t nout, uint32
             uint32_t want = frames - done < SCRATCH ? frames - done : SCRATCH;
             uint32_t got = fms_player_render(p, h->scratch, want), w = h->scope_w;
             if (got < want) memset(h->scratch + (size_t)got * ch, 0, sizeof(int16_t) * (want - got) * ch);
+            /* A reader can overlap a ring wrap. Atomic samples avoid a C data
+             * race; the display remains an approximate recent-frame snapshot. */
             for (i = 0; i < got; i++, w++)
-                memcpy(&h->scope[(w & (SCOPE_FRAMES - 1)) * FMS_MAX_CH], &h->scratch[(size_t)i * ch], sizeof(int16_t) * ch);
+                for (c = 0; c < ch; c++)
+                    __atomic_store_n(&h->scope[(w & (SCOPE_FRAMES - 1)) * FMS_MAX_CH + c],
+                                     h->scratch[(size_t)i * ch + c], __ATOMIC_RELAXED);
             ST(h->scope_w, w);
             for (c = 0; c < ch && c < FMS_MAX_CH; c++) {
                 uint32_t pk = 0;
@@ -1603,7 +1619,7 @@ void fms_host_record_stop(fms_host_t *h)
 {
     int k;
     fms_host_record_request_stop(h);
-    for (k = 0; k < 250 && LD(h->take_state) == TAKE_STOPPING; k++) usleep(1000);
+    for (k = 0; k < 250 && LD(h->take_state) == TAKE_STOPPING; k++) fms_sleep_us(1000);
 }
 
 int fms_host_take_full(const fms_host_t *h)
@@ -1659,14 +1675,16 @@ uint32_t fms_host_clipped(const fms_host_t *h)  { return LD(h->clipped); }
 
 uint32_t fms_host_scope(const fms_host_t *h, int16_t *out, uint32_t frames, uint32_t *channels)
 {
-    uint32_t w = LD(h->scope_w), ch = LD(h->channels), n, i, start;
+    uint32_t w = LD(h->scope_w), ch = LD(h->channels), n, i, c, start;
     if (!ch) ch = 1;
     if (channels) *channels = ch;
     n = frames < SCOPE_FRAMES ? frames : SCOPE_FRAMES;
     if (n > w) n = w;
     start = w - n;
     for (i = 0; i < n; i++)
-        memcpy(out + (size_t)i * ch, &h->scope[((start + i) & (SCOPE_FRAMES - 1)) * FMS_MAX_CH], sizeof(int16_t) * ch);
+        for (c = 0; c < ch; c++)
+            out[(size_t)i * ch + c] = __atomic_load_n(
+                &h->scope[((start + i) & (SCOPE_FRAMES - 1)) * FMS_MAX_CH + c], __ATOMIC_RELAXED);
     return n;
 }
 

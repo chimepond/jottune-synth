@@ -11,7 +11,7 @@
  *   harness --gen-params
  *   harness --gen-events [--] FILE...
  *   harness --gen-soak [--merged PATH] [--] FILE...
- *   harness --play [--wav PATH] [--merged PATH] [--stems WAV] [--metrics] [--ref] [--chunk N|random] [--] FILE...
+ *   harness --play [--pcm-limit BYTES] [--wav PATH] [--merged PATH] [--stems WAV] [--metrics] [--ref] [--chunk N|random] [--] FILE...
  *   harness --play-once [--wav PATH] [--merged PATH] [--stems WAV] [--metrics] [--] FILE...
  *   harness --engine | --inspect [--] FILE... | --events [--] FILE...
  *   harness --play --wav-fd N --pcm-limit BYTES [--merged PATH] [--metrics] [--chunk N|random] [--] FILE...
@@ -42,9 +42,9 @@
  * ends CHECK NAME ok or CHECK NAME FAIL; only the full gate ends GATE ok.
  * Without these modes
  * the metrics never change the exit status
- * (the measurement sweep). --retrig prints the retrigger evidence of  and  instead of the
+ * (the measurement sweep). --retrig prints the retrigger measurements instead of the
  * cases (probe_retrig), --fb the high-depth feedback evidence of
- * (probe_fb), --filter the measurements of 's filter (probe_filter).
+ * (probe_fb), --filter the measurements of the filter (probe_filter).
  * The cases' and --retrig's lines are stable for cross-machine
  * diffs. So are --fb's hashes, block_indep, a1_end and a1_idle. Its other
  * values can follow the host libm's rounding: offharm below about -120 dB
@@ -52,16 +52,16 @@
  * loop's stability edge, in the last digits or entirely where the loop is
  * chaotic.
  *
- * --play renders timelines, the one integer text format of , in the
+ * --play renders timelines, the integer text format in the
  * draft grammar described at tl_read, and --emit writes the cases as
  * timelines at --fs, each with its hash from fm_render_i16. --fxref
  * measures a timeline with effects against their double model (fx_diff).
  * --play --metrics adds a METRICS line, integer peak, RMS and crest, and
- * --play --ref 's comparison with the double reference (play_ref) or,
- * with effects, --fxref's (PLAN  step 1, ).
+ * --play --ref adds the comparison with the double reference (play_ref) or,
+ * with effects, --fxref's comparison.
  * --stems renders a WAV's channels, one per voice, in place of the voices
  * on a field route; --field-test and --field-cost run field_ref.c's test
- * and cost of the field routes (space/SPEC.md sections 11 to 16), exit 0 or 1.
+ * and cost of the field routes (docs/INSTRUMENT.md, spatial routes), exit 0 or 1.
  */
 #if !defined(__APPLE__) && !defined(_XOPEN_SOURCE)
 #define _XOPEN_SOURCE 700
@@ -83,6 +83,7 @@
 #include <math.h>
 #include <float.h>
 #include "fm_a1.h"
+#include "version.h"
 #include "ref_double.h"
 #include "../gen/gen.h"
 #include "../space/space.h"
@@ -104,8 +105,8 @@
 #error "the harness's routed cases need FM_OPS 4 or more"
 #endif
 
-enum { EV_END = 0, EV_ON, EV_OFF, EV_PITCH, EV_POS, EV_MOVE, EV_FILTER, EV_CTL };   /* EV_POS, EV_MOVE: timelines only (space/SPEC.md); EV_FILTER:  */
-enum { EV_SEND = 16, EV_CRUSH };                               /* timelines only (fx/SPEC.md) */
+enum { EV_END = 0, EV_ON, EV_OFF, EV_PITCH, EV_POS, EV_MOVE, EV_FILTER, EV_CTL };   /* EV_POS, EV_MOVE: timelines only (docs/INSTRUMENT.md); EV_FILTER:  */
+enum { EV_SEND = 16, EV_CRUSH };                               /* timelines only (docs/INSTRUMENT.md) */
 
 typedef struct {
     uint32_t t_ms;           /* sample index t_ms * fs / 1000, truncated; lists are in time order */
@@ -126,12 +127,12 @@ typedef struct {
 
 /* Per operator: ratio_q16, level_db10, index_q10, feedback_q10, vel_sens_q8,
  *               attack_ms, decay_ms, sustain_db10, release_ms,
- *               ks_break_millihz, ks_slope_db10, wave ,
- *               rate_scale , fixed_millihz, phase_u16, free_run ;
+ *               ks_break_millihz, ks_slope_db10, wave,
+ *               rate_scale, fixed_millihz, phase_u16, free_run ;
  * then the filter : cutoff_millihz, q_milli, mode;
  * then the route : ops, carriers, w[from][to] in Q8.8,
  *               256 unity, and kind[from][to]: 0 PM, 1 AM, 2 ring, 3 sync;
- * then the LFO (, fm_lfo_patch_t): rate_millihz, wave, delay_ms,
+ * then the LFO (fm_lfo_patch_t): rate_millihz, wave, delay_ms,
  *               fade_ms, pitch_cents, level_db10, index_q10, phase_u16,
  *               mask_pitch, mask_level, mask_index, free_run; { 0 } for none.
  * Then  peg: level_cents[4], time_ms[4], mask; zero levels disable it.
@@ -145,15 +146,12 @@ typedef struct {
  * operator's level counts where it is a carrier, its index scales each
  * edge from it and its feedback applies to itself. The first five are the
  *  golden patches with their depths carried over from Q8.8 radians
- * (x4); the next four exercise the  model, the next two 's pitch
- * event and 's key scaling, the next five 's waveforms, the next
- * six 's filter, the next five 's routes, the next three 's
- * shapes on a modulated carrier (, item 6), the next two 's
- * summed edges and a carrier that outlives op 0, with noise on op 3 and
- * op 2, the next three 's rate scaling and 's fixed frequency,
- * start phase and free run, then eight  LFO cases on 's
- * control clock, two  pitch-envelope cases, two  filter-envelope
- * cases, then 's two route additions and 's attack/fixed-carrier cases. */
+ * (x4); the next four exercise the  model, the next two the pitch
+ * event and the key scaling, the next five the waveforms, the next
+ * six the filter, the next five the routes, the next three the * shapes on a modulated carrier (item 6), the next two the * summed edges and a carrier that outlives op 0, with noise on op 3 and
+ * op 2, the next three the rate scaling and the fixed frequency,
+ * start phase and free run, then eight  LFO cases on the * control clock, two  pitch-envelope cases, two  filter-envelope
+ * cases, then the two route additions and the attack/fixed-carrier cases. */
 static const spike_case_t CASES[] = {
     { "sine",     { { { 65536,  0,     0,    0, 256,   5,  500, 200,  800, 0, 0, 0, 0, 0, 0, 0 },
                       { 65536,  0,     0,    0,   0,   5,  500, 200,  800, 0, 0, 0, 0, 0, 0, 0 } }, { 0, 0, 0, 0 }, { 0 }, { 0 }, { { 0 }, { 0 }, 0 }, { 0 }, { { 0 } }, { { 0 } }, { 0 }, { { 0 } } , { { 0 } } , { 0 } , { { 0 } } , { { 0 } } , { { 0 } } , { { 0 } } , { 0 } }, 2000,
@@ -212,7 +210,7 @@ static const spike_case_t CASES[] = {
         { 1600, EV_ON, 1318510, 20000, 0 }, { 2000, EV_OFF, 0, 0, 0 },
         { 2400, EV_ON, 698456, 32767, 0 }, { 2700, EV_ON, 1567982, 32767, 0 },
         { 3000, EV_PITCH, 783991, 0, 0 }, { 3300, EV_OFF, 0, 0, 0 } } },
-    /* 's shapes on an unmodulated carrier, where the reference decides
+    /* the shapes on an unmodulated carrier, where the reference decides
      * on the engine's integer phase */
     { "half",     { { { 65536,  0,     0,    0, 256,   5,  500, 200,  800, 0, 0, 1, 0, 0, 0, 0 },
                       { 65536,  0,     0,    0,   0,   5,  500, 200,  800, 0, 0, 0, 0, 0, 0, 0 } }, { 0, 0, 0, 0 }, { 0 }, { 0 }, { { 0 }, { 0 }, 0 }, { 0 }, { { 0 } }, { { 0 } }, { 0 }, { { 0 } } , { { 0 } } , { 0 } , { { 0 } } , { { 0 } } , { { 0 } } , { { 0 } } , { 0 } }, 2000,
@@ -223,7 +221,7 @@ static const spike_case_t CASES[] = {
     { "quarter",  { { { 65536,  0,     0,    0, 256,   5,  500, 200,  800, 0, 0, 3, 0, 0, 0, 0 },
                       { 65536,  0,     0,    0,   0,   5,  500, 200,  800, 0, 0, 0, 0, 0, 0, 0 } }, { 0, 0, 0, 0 }, { 0 }, { 0 }, { { 0 }, { 0 }, 0 }, { 0 }, { { 0 } }, { { 0 } }, { 0 }, { { 0 } } , { { 0 } } , { 0 } , { { 0 } } , { { 0 } } , { { 0 } } , { { 0 } } , { 0 } }, 2000,
       { { 0, EV_ON, 220000, 32767, 0 }, { 1000, EV_OFF, 0, 0, 0 } } },
-    /* 's noise as the carrier at -6 dB: a note, a retrigger that keeps
+    /* the noise as the carrier at -6 dB: a note, a retrigger that keeps
      * the word, and a note from silence that starts the sequence again */
     { "noise",    { { { 65536, 60,     0,    0, 256,   2,  300, 120,  250, 0, 0, 4, 0, 0, 0, 0 },
                       { 65536,  0,     0,    0,   0,   2,  300, 120,  250, 0, 0, 0, 0, 0, 0, 0 } }, { 0, 0, 0, 0 }, { 0 }, { 0 }, { { 0 }, { 0 }, 0 }, { 0 }, { { 0 } }, { { 0 } }, { 0 }, { { 0 } } , { { 0 } } , { 0 } , { { 0 } } , { { 0 } } , { { 0 } } , { { 0 } } , { 0 } }, 2500,
@@ -233,7 +231,7 @@ static const spike_case_t CASES[] = {
     { "noisemod", { { { 65536,  0,     0,    0, 256,   5,  800, 200,  600, 0, 0, 0, 0, 0, 0, 0 },
                       { 196608, 0,  1024,    0,   0,   5,  800, 200,  600, 0, 0, 4, 0, 0, 0, 0 } }, { 0, 0, 0, 0 }, { 0 }, { 0 }, { { 0 }, { 0 }, 0 }, { 0 }, { { 0 } }, { { 0 } }, { 0 }, { { 0 } } , { { 0 } } , { 0 } , { { 0 } } , { { 0 } } , { { 0 } } , { { 0 } } , { 0 } }, 2000,
       { { 0, EV_ON, 220000, 32767, 0 }, { 1200, EV_OFF, 0, 0, 0 } } },
-    /* 's four modes on a bright 1:1 tone at -6 dB; the band-pass voice
+    /* the four modes on a bright 1:1 tone at -6 dB; the band-pass voice
      * releases in 2 ms, so its filter rings out after the carrier idles */
     { "lowpass",  { { { 65536, 60,     0,    0, 256,   5,  900, 150,  500, 0, 0, 0, 0, 0, 0, 0 },
                       { 65536,  0,  4096,    0,   0,   5,  900, 150,  500, 0, 0, 0, 0, 0, 0, 0 } }, { 1200000, 707, 1, 0 }, { 0 }, { 0 }, { { 0 }, { 0 }, 0 }, { 0 }, { { 0 } }, { { 0 } }, { 0 }, { { 0 } } , { { 0 } } , { 0 } , { { 0 } } , { { 0 } } , { { 0 } } , { { 0 } } , { 0 } }, 2000,
@@ -297,7 +295,7 @@ static const spike_case_t CASES[] = {
                       { 131072, 0,  1024,    0, 256,   5,  400,  20,  200, 0, 0, 0, 0, 0, 0, 0 } }, { 0, 0, 0, 0 },
                     { 3, 0x7, { [2] = { [0] = 256 } }, { { 0 } } }, { 0 }, { { 0 }, { 0 }, 0 }, { 0 }, { { 0 } }, { { 0 } }, { 0 }, { { 0 } } , { { 0 } } , { 0 } , { { 0 } } , { { 0 } } , { { 0 } } , { { 0 } } , { 0 } }, 1000,
       { { 0, EV_ON, 110000, 32767, 0 }, { 600, EV_OFF, 0, 0, 0 } } },
-    /* 's shapes on a carrier the modulator, of the same shape, modulates:
+    /* the shapes on a carrier the modulator, of the same shape, modulates:
      * the reference decides them on the real phase */
     { "halfmod",  { { { 65536,  0,     0,    0, 256,   5,  600, 200,  300, 0, 0, 1, 0, 0, 0, 0 },
                       { 131072, 0,  1536,    0,   0,   5,  500, 200,  300, 0, 0, 1, 0, 0, 0, 0 } }, { 0, 0, 0, 0 }, { 0 }, { 0 }, { { 0 }, { 0 }, 0 }, { 0 }, { { 0 } }, { { 0 } }, { 0 }, { { 0 } } , { { 0 } } , { 0 } , { { 0 } } , { { 0 } } , { { 0 } } , { { 0 } } , { 0 } }, 1000,
@@ -310,7 +308,7 @@ static const spike_case_t CASES[] = {
       { { 0, EV_ON, 220000, 32767, 0 }, { 600, EV_OFF, 0, 0, 0 } } },
     /* : three edges summed into the carrier op 0, from op 1 at unity,
      * op 2 at 512 and op 3 at 1024, and op 3 into op 1 at 512; op 3 is
-     * 's noise, so its seed has a hash (noise ignores the phase, so op
+     * the noise, so its seed has a hash (noise ignores the phase, so op
      * 3's feedback does not sound) */
     { "xmsum",    { { { 65536,  0,     0,    0, 256,   5,  700, 150,  300, 0, 0, 0, 0, 0, 0, 0 },
                       { 131072, 0,  1024,    0,   0,   5,  600, 200,  300, 0, 0, 0, 0, 0, 0, 0 },
@@ -319,7 +317,7 @@ static const spike_case_t CASES[] = {
                     { 4, 0x1, { [3] = { [0] = 1024, [1] = 512 }, [2] = { [0] = 512 }, [1] = { [0] = 256 } }, { { 0 } } }, { 0 }, { { 0 }, { 0 }, 0 }, { 0 }, { { 0 } }, { { 0 } }, { 0 }, { { 0 } } , { { 0 } } , { 0 } , { { 0 } } , { { 0 } } , { { 0 } } , { { 0 } } , { 0 } }, 1000,
       { { 0, EV_ON, 220000, 32767, 0 }, { 600, EV_OFF, 0, 0, 0 } } },
     /* carriers 0 and 2, 1 on 0: op 0 idles 57 ms after the note off at
-     * 0.3 s, and op 2, 's noise with an 800 ms release, sounds on alone
+     * 0.3 s, and op 2, the noise with an 800 ms release, sounds on alone
      * until it idles at 1.26 s, where the voice ends; op 2's seed has a
      * hash (its feedback does not sound) */
     { "xcarlong", { { { 65536, 60,     0,    0, 256,   5,  300, 100,   50, 0, 0, 0, 0, 0, 0, 0 },
@@ -347,7 +345,7 @@ static const spike_case_t CASES[] = {
         { 450, EV_PITCH, 369994, 0, 0 }, { 550, EV_ON, 329628, 32767, 0 }, { 700, EV_PITCH, 349228, 0, 0 }, { 750, EV_OFF, 0, 0, 0 } } },
     /*  on a route of four, carriers 0, 2 and 3, 1 on 0: op 0 and op 1
      * start a quarter turn in at both note-ons from silence; op 2 (a sine)
-     * and op 3 ('s noise) run free across the silence between the
+     * and op 3 (the noise) run free across the silence between the
      * notes, keeping their phases and op 3 its noise word */
     { "phase",    { { { 65536, 80,     0,    0, 256,   3,  200,  60,   80, 0, 0, 0, 0, 0, 16384, 0 },
                       { 131072, 0,  1024,    0,   0,   3,  300, 120,   80, 0, 0, 0, 0, 0, 16384, 0 },
@@ -355,7 +353,7 @@ static const spike_case_t CASES[] = {
                       { 65536, 160,    0,    0, 256,   3,  150, 200,   80, 0, 0, 4, 0, 0,     0, 1 } }, { 0, 0, 0, 0 },
                     { 4, 0xD, { [1] = { [0] = 256 } }, { { 0 } } }, { 0 }, { { 0 }, { 0 }, 0 }, { 0 }, { { 0 } }, { { 0 } }, { 0 }, { { 0 } } , { { 0 } } , { 0 } , { { 0 } } , { { 0 } } , { { 0 } } , { { 0 } } , { 0 } }, 1000,
       { { 0, EV_ON, 220000, 32767, 0 }, { 300, EV_OFF, 0, 0, 0 }, { 550, EV_ON, 220000, 32767, 0 }, { 850, EV_OFF, 0, 0, 0 } } },
-    /*  on 's control clock: a 6 Hz sine of 30 cents on both
+    /*  on the control clock: a 6 Hz sine of 30 cents on both
      * operators' pitch after a 300 ms delay and a 500 ms fade, and a pitch
      * event (A4 to A#4) under the running LFO */
     { "vibrato",  { { { 65536,  0,     0,    0, 256,  20,  600, 120,  200, 0, 0, 0, 0, 0, 0, 0 },
@@ -378,8 +376,8 @@ static const spike_case_t CASES[] = {
                     { 3, 0x1, { [1] = { [0] = 256 }, [2] = { [1] = 256 } }, { { 0 } } },
                     { 4000, 4, 100, 200, 0, 0, 2048, 0, 0, 0, 0x2, 0 }, { { 0 }, { 0 }, 0 }, { 0 }, { { 0 } }, { { 0 } }, { 0 }, { { 0 } } , { { 0 } } , { 0 } , { { 0 } } , { { 0 } } , { { 0 } } , { { 0 } } , { 0 } }, 1500,
       { { 0, EV_ON, 98000, 32767, 0 }, { 1200, EV_OFF, 0, 0, 0 } } },
-    /* 's sample and hold: 8 Hz, 1200 cents on every operator of a
-     * route of three, 1 and 2 on 0, op 1 's noise; op 2 is fixed at
+    /* the sample and hold: 8 Hz, 1200 cents on every operator of a
+     * route of three, 1 and 2 on 0, op 1 the noise; op 2 is fixed at
      * 50 Hz  and so takes no pitch offset */
     { "lfosh",    { { { 65536,  0,     0,    0, 256,   5,  700, 100,  200, 0, 0, 0, 0, 0, 0, 0 },
                       { 262144, 0,  1024,    0,   0,   5,  700, 200,  200, 0, 0, 4, 0, 0, 0, 0 },
@@ -387,7 +385,7 @@ static const spike_case_t CASES[] = {
                     { 3, 0x1, { [1] = { [0] = 256 }, [2] = { [0] = 256 } }, { { 0 } } },
                     { 8000, 5, 0, 0, 1200, 0, 0, 0, 0x7, 0, 0, 0 }, { { 0 }, { 0 }, 0 }, { 0 }, { { 0 } }, { { 0 } }, { 0 }, { { 0 } } , { { 0 } } , { 0 } , { { 0 } } , { { 0 } } , { { 0 } } , { { 0 } } , { 0 } }, 1500,
       { { 0, EV_ON, 220000, 32767, 0 }, { 1200, EV_OFF, 0, 0, 0 } } },
-    /* 's Nyquist hold regression: op 1 starts at 24 kHz, at or
+    /* the Nyquist hold regression: op 1 starts at 24 kHz, at or
      * above Nyquist at both gate rates; the sine's negative half must
      * lower it again. The pitch factor is applied before the clamp. */
     { "lfonyq",   { { { 65536,  0,     0,    0, 256,  20,  600, 120,  200, 0, 0, 0, 0, 0, 0, 0 },
@@ -413,7 +411,7 @@ static const spike_case_t CASES[] = {
                     { 10000, 6, 0, 80, 35, 40, 256, 16384, 0x3, 0x1, 0x2, 0 }, { { 0 }, { 0 }, 0 }, { 0 }, { { 0 } }, { { 0 } }, { 0 }, { { 0 } } , { { 0 } } , { 0 } , { { 0 } } , { { 0 } } , { { 0 } } , { { 0 } } , { 0 } }, 800,
       { { 0, EV_ON, 440000, 32767, 0 }, { 300, EV_ON, 493883, 24000, 0 },
         { 450, EV_PITCH, 523251, 0, 0 }, { 650, EV_OFF, 0, 0, 0 } } },
-    /* : pitch-only drop, release and 's noise clock. */
+    /* : pitch-only drop, release and the noise clock. */
     { "pegdrop",  { { { 65536, 60, 0, 0, 256, 1, 220, 120, 900, 0, 0, 0, 0, 0, 0, 0 },
                       { 4194304, 120, 0, 0, 0, 1, 60, 1200, 60, 0, 0, 4, 0, 0, 0, 0 } },
                     { 0 }, { 2, 0x3, { { 0 } }, { { 0 } } }, { 0 },
@@ -701,7 +699,7 @@ static const spike_case_t CASES[] = {
         .formant = { { 500000, 2000, 60, 1 }, { 1500000, 3000, 120, 1 }, { 2500000, 4000, 180, 1 } },
         .mod = { { 300000, 16, 36, 1, 0, { 0, 0, 0 } } } }, 2000,
       { { 0, EV_ON, 220000, 32767, 0 }, { 600, EV_CTL, 0, 0, 32768 }, { 1500, EV_OFF, 0, 0, 0 } } },
-    /* : design-'s sync fixtures, a source above its target (same
+    /* : design-the sync fixtures, a source above its target (same
      * sample) and one below it (the next sounding sample) beside a ring edge. */
     { "syncturn", { .op = {
         { .ratio_q16=180224, .level_db10=120, .attack_ms=2, .decay_ms=100, .release_ms=120, .phase_u16=16384 },
@@ -757,7 +755,7 @@ static const spike_case_t CASES[] = {
       { { 0, EV_ON, 110000, 32767, 0 }, { 0, EV_PITCH, 110000, 0, 0 }, { 200, EV_PITCH, 123471, 0, 0 },
         { 400, EV_PITCH, 138591, 0, 0 }, { 600, EV_PITCH, 155563, 0, 0 }, { 800, EV_PITCH, 174614, 0, 0 },
         { 900, EV_OFF, 0, 0, 0 }, { 1000, EV_PITCH, 195998, 0, 0 }, { 1200, EV_PITCH, 220000, 0, 0 } } },
-    /* : 's shape fixture with the cubic before a resonant low-pass, and
+    /* : the shape fixture with the cubic before a resonant low-pass, and
      * the asymmetric kind 4 after no filter and before that low-pass. The two
      * pre-filter cases drive a -12 dB carrier by +8 dB (0.63 into the shaper)
      * so the resonant low-pass output stays below int16 full scale. */
@@ -1018,7 +1016,9 @@ static FILE *io_open_tmp(const char *path, const char *mode, char **tmp)
     memcpy(*tmp + n, ".tmp", 5u);
     fd = open(*tmp, O_WRONLY | O_CREAT | O_EXCL, 0666);
     if (fd < 0) {
+        const int failure = errno;
         io_fail(path, "write");
+        if (failure == EEXIST) fprintf(stderr, "temporary output already exists: %s; inspect it before retrying\n", *tmp);
         free(*tmp); *tmp = NULL;
         return NULL;
     }
@@ -1047,6 +1047,42 @@ static int io_finish_tmp(FILE *f, const char *path, char *tmp, int bad)
 /* Opt-in stem publication guards. These are observations, not filesystem locks. */
 typedef struct { char *resolved; struct stat st; int exists; } stem_path_t;
 
+#ifdef __wasi__
+/* The browser's preopened directory has no readlink/realpath operation. Resolve
+ * its relative namespace lexically and use available inode metadata as well. */
+static int stem_wasi_path(const char *path, int destination, stem_path_t *id)
+{
+    size_t cursor = 0, end = 2, length = strlen(path);
+    char *normalized;
+    if (path[0] == '/' || length > SIZE_MAX - 3u) { errno = EINVAL; return io_fail(path, "resolve"); }
+    normalized = (char *)malloc(length + 3u);
+    if (!normalized) { errno = ENOMEM; return io_fail(path, "resolve"); }
+    normalized[0] = '.'; normalized[1] = '/';
+    while (cursor < length) {
+        size_t start, part;
+        while (path[cursor] == '/') cursor++;
+        start = cursor;
+        while (path[cursor] && path[cursor] != '/') cursor++;
+        part = cursor - start;
+        if (!part || (part == 1u && path[start] == '.')) continue;
+        if (part == 2u && path[start] == '.' && path[start + 1u] == '.') {
+            if (end == 2u) { free(normalized); errno = EINVAL; return io_fail(path, "resolve"); }
+            while (end > 2u && normalized[end - 1u] != '/') end--;
+            if (end > 2u) end--;
+        } else {
+            if (end > 2u) normalized[end++] = '/';
+            memcpy(normalized + end, path + start, part); end += part;
+        }
+    }
+    normalized[end] = 0;
+    if (stat(path, &id->st)) {
+        if (!destination || errno != ENOENT) { free(normalized); return io_fail(path, "stat"); }
+    } else id->exists = 1;
+    id->resolved = normalized;
+    return 0;
+}
+#endif
+
 static int stem_path_get(const char *path, int destination, stem_path_t *id)
 {
     char *parent = NULL, *base;
@@ -1059,6 +1095,9 @@ static int stem_path_get(const char *path, int destination, stem_path_t *id)
         id->exists = 1;
         return 0;
     }
+#ifdef __wasi__
+    if (errno == ENOTSUP || errno == ENOSYS) return stem_wasi_path(path, destination, id);
+#endif
     if (!destination || errno != ENOENT) return io_fail(path, "resolve");
     slash = strrchr(path, '/');
     parent_len = slash ? (size_t)(slash - path) : 1u;
@@ -1089,30 +1128,36 @@ static int stem_path_get(const char *path, int destination, stem_path_t *id)
 
 static int stem_paths_same(const stem_path_t *a, const stem_path_t *b)
 {
+#ifdef __wasi__
+    if (!a->st.st_ino || !b->st.st_ino) return !strcmp(a->resolved, b->resolved);
+#endif
     return !strcmp(a->resolved, b->resolved)
         || (a->exists && b->exists && a->st.st_dev == b->st.st_dev && a->st.st_ino == b->st.st_ino);
 }
 
-static int stem_paths_check(const char *stem, const char *merged, char **files, int nf)
+static int output_paths_check(const char *wav, const char *merged, const char *stem,
+                              char **files, int nf, const char *source_stems)
 {
-    stem_path_t destinations[2], input;
-    const char *names[2] = { stem, merged };
+    stem_path_t destinations[3], input;
+    const char *names[3] = { wav, merged, stem };
     int i, j, rc = 0;
     memset(destinations, 0, sizeof destinations);
-    for (i = 0; i < 2 && !rc; ++i) if (names[i]) rc = stem_path_get(names[i], 1, &destinations[i]);
-    if (!rc && stem && merged && stem_paths_same(&destinations[0], &destinations[1])) {
-        fprintf(stderr, "--stems-out and --merged destinations identify the same file\n"); rc = 2;
-    }
-    for (j = 0; j < nf && !rc; ++j) {
-        rc = stem_path_get(files[j], 0, &input);
+    for (i = 0; i < 3 && !rc; ++i) if (names[i]) rc = stem_path_get(names[i], 1, &destinations[i]);
+    for (i = 0; i < 3 && !rc; ++i) for (j = i + 1; j < 3 && !rc; ++j)
+        if (names[i] && names[j] && stem_paths_same(&destinations[i], &destinations[j])) {
+            fprintf(stderr, "output destinations identify the same file\n"); rc = 2;
+        }
+    for (j = 0; j < nf + !!source_stems && !rc; ++j) {
+        const char *name = j < nf ? files[j] : source_stems;
+        rc = stem_path_get(name, 0, &input);
         if (!rc) {
-            for (i = 0; i < 2 && !rc; ++i) if (names[i] && stem_paths_same(&destinations[i], &input)) {
-                fprintf(stderr, "stem/canonical output destination identifies an input: %s\n", files[j]); rc = 2;
+            for (i = 0; i < 3 && !rc; ++i) if (names[i] && stem_paths_same(&destinations[i], &input)) {
+                fprintf(stderr, "output destination identifies an input: %s\n", name); rc = 2;
             }
             free(input.resolved);
         }
     }
-    for (i = 0; i < 2; ++i) free(destinations[i].resolved);
+    for (i = 0; i < 3; ++i) free(destinations[i].resolved);
     return rc;
 }
 
@@ -1264,11 +1309,11 @@ static uint32_t segment_samples(uint32_t ms, uint32_t fs)
  * After the same note-on on both voices, an attack count computed from a
  * gain outside the attack (a retrigger in decay, sustain or release) can
  * differ by one between the engine and the reference, each flooring its own
- * g0 * n . The reference then adopts the engine's count when it lies
+ * g0 * n. The reference then adopts the engine's count when it lies
  * in [n - floor(x + tau), n - floor(x - tau)], at least 1, where x is the
  * reference's g0 * n and tau = n * 2^-18, and re-derives its step from its
  * own g0. Any other difference fails, an attack left running included.
- * n is the full attack's length as the note-on rate-scaled it (; the
+ * n is the full attack's length as the note-on rate-scaled it (the
  * reference's count_a, which render_ref checks against the engine's).
  * stage_before is the reference operator's stage before the note-on. */
 enum { COUNT_EQUAL = 0, COUNT_ADOPTED, COUNT_FAIL };
@@ -1293,7 +1338,7 @@ static int adopt_count(const fm_voice_t *v, ref_voice_t *r, int i, int stage_bef
     return COUNT_ADOPTED;
 }
 
-/* 's window for a count the two sides form from their own g0 on the
+/* the window for a count the two sides form from their own g0 on the
  * full length n: the engine's ce is allowed in [n - floor(x + tau),
  * n - floor(x - tau)], at least 1, with x = g0 * n and tau = n * 2^-18. */
 static int adopt_window(uint32_t ce, double g0, uint32_t n)
@@ -1339,7 +1384,7 @@ static int adopt_loop_count(const fm_voice_t *v, ref_voice_t *r, int i)
  * rule can compare attack counts after every note-on. Prints an ADOPT line
  * per adoption and a COUNT-FAIL line per other difference and returns their
  * numbers. After every note-on each operator's three rate-scaled segment
- * lengths are checked against 's precision-derived rounding window.
+ * lengths are checked against the precision-derived rounding window.
  * Each permitted difference prints ADOPT and updates the reference before
  *  checks its shortened attack; every other difference fails. */
 static const char *const SEG_NAME[3] = { "attack", "decay", "release" };
@@ -1502,7 +1547,7 @@ static unsigned check_track(const char *name, const fm_voice_t *a, ref_voice_t *
 }
 
 /* Samples pos to pos + frames - 1 of both voices; with an LFO  in
- * pieces that end at the engine's control ticks , after each of
+ * pieces that end at the engine's control ticks, after each of
  * which the reference, ticking at the same sample, takes the engine's new
  * increments (an INC-FAIL line per difference past the bound, returned
  * counted) and st gathers the LFO-pitched operators' differences. */
@@ -1546,7 +1591,7 @@ static unsigned render_stretch(const char *name, const fm_patch_t *patch, ref_vo
  * initialised with the same patch and binding, through ne events in time
  * order: event e applies at sample at[e] (at most n); its t_ms only labels
  * the diagnostic lines, which name name. A case (render_ref) and a
- * timeline's voice (play_ref, ) share it. */
+ * timeline's voice (play_ref) share it. */
 static void ref_lockstep(const char *name, const fm_patch_t *patch, ref_voice_t *v, fm_voice_t *a, uint32_t fs,
                          const spike_event_t *evs, const uint32_t *at, int ne, double *out, uint32_t n,
                          unsigned *adopted, unsigned *failed, lfo_stat_t *st)
@@ -1673,7 +1718,7 @@ static void render_ref(const spike_case_t *c, uint32_t fs, double *out, uint32_t
 /* : guard band of the end-sample test, in LSB. */
 #define END_EPS (1.0 / 1024.0)
 
-/* The gate's absolute SNR floors , on the five patches they were set
+/* The gate's absolute SNR floors, on the five patches they were set
  * from : 75 dB at half-scale velocity, 82 dB at full scale. */
 static const struct { const char *name; double snr_db; } SNR_FLOOR[] = {
     { "sine", 82.0 }, { "bell", 82.0 }, { "quiet", 75.0 }, { "feedback", 82.0 }, { "highidx", 82.0 },
@@ -1685,9 +1730,9 @@ static const struct { const char *name; double snr_db; } SNR_FLOOR[] = {
 #define GATE_BUILD (FM_SINE_BITS == 12 && FM_EXP_BITS == 10 && FM_PHASE64 == 1 && FM_ENV64 == 1 && FM_FB_AVG == 1 && FM_CTL == 64)
 #endif
 
-/* 's named diagnostic subset, with  phase/FREE2,  waves, 's vectorxy and 's wavetable and Karplus-Strong cases.
+/* the named diagnostic subset, with  phase/FREE2,  waves, the vectorxy and the wavetable and Karplus-Strong cases.
  * Earlier LFO cases stay in the full gate; their PHASE64=0 precision
- * does not meet . */
+ * does not meet. */
 static int lfo_check_case(const spike_case_t *c)
 {
     return !strcmp(c->name, "vectorxy") || !strcmp(c->name, "lfonyq") || !strcmp(c->name, "lfosawup")
@@ -1724,7 +1769,7 @@ static void exp2_point(int64_t x, unsigned *points, unsigned *fails, double *max
     if (bad) ++*fails;
 }
 
-/* 's unit test of fm_exp2_q48: the whole numbers -16 to 14, the
+/* the unit test of fm_exp2_q48: the whole numbers -16 to 14, the
  * sixteenths of [-2, 2] and a sweep of [-2, 2) in steps of 2^-16 + 7 *
  * 2^-48 (the LFO's pitch takes [-1, 1]). Prints an EXP2 line and returns
  * the number of failed points. */
@@ -1785,11 +1830,11 @@ static unsigned check_route_saturation(const spike_case_t *c, uint32_t fs)
     return failed || !positive || !negative || (!strcmp(c->name, "routeclp") && clips);
 }
 
-/* 's measures of an output pcm against the reference ref, both n
+/* the measures of an output pcm against the reference ref, both n
  * samples in int16 units (run_case's RESULT line, play_ref's REF line):
  * the SNR, the ceiling of rounding the reference, their difference (loss),
- * the peak error against the reference clipped , the same over the
- * last quarter, and 's end-sample test. dif, when not NULL, gets the
+ * the peak error against the reference clipped, the same over the
+ * last quarter, and the end-sample test. dif, when not NULL, gets the
  * error times 1024. */
 typedef struct {
     double sig, err, qerr, peak, tsig, terr, tpeak, snr, ceiling, loss;
@@ -1830,13 +1875,13 @@ static void d14_measure(const int16_t *pcm, const double *ref, uint32_t n, int16
  * out of memory or when a WAV file cannot be written. With gate, checks the
  * case against the acceptance criteria, prints a GATE line per failure and
  * adds their number to *gate; without it the metrics never change anything.
- * The end-sample test ( with 's band): a1_end,
+ * The end-sample test ( with the band): a1_end,
  * one past the engine's last non-zero sample, lies in end_range, from one
  * past the last reference sample with abs(r) >= 0.5 + END_EPS to one past
  * the last with abs(r) >= 0.5 - END_EPS; from the range's start on, band_n
  * samples have abs(r) >= 0.5 - END_EPS, and spurious counts the non-zero
  * engine samples among the others. ref_end is the exact test's bound. The
- * peak error is measured against the reference clipped to int16 , the
+ * peak error is measured against the reference clipped to int16, the
  * SNR against the reference itself. */
 static int run_case(const spike_case_t *c, uint32_t fs, const char *outdir, unsigned *gate)
 {
@@ -1868,12 +1913,12 @@ static int run_case(const spike_case_t *c, uint32_t fs, const char *outdir, unsi
            c->name, (unsigned long long)h, h == h1 ? "yes" : "NO", m.snr, m.ceiling, m.loss,
            sqrt(m.err / n), m.peak, m.peak_i, db(m.tsig, m.terr), m.tpeak, m.a1_end, m.ref_end, m.end_lo, m.end_hi, m.band_n, m.spurious,
            end_ok ? "yes" : "NO", a1_idle, adopted, count_fail);
-    if (c->patch.lfo.rate_millihz && c->patch.lfo.pitch_cents && c->patch.lfo.mask_pitch)   /* , after each tick */
+    if (c->patch.lfo.rate_millihz && c->patch.lfo.pitch_cents && c->patch.lfo.mask_pitch)   /*, after each tick */
         printf("LFOREF %-8s inc_rel_max=%.2e phase_drift_max=%.2e turns\n", c->name, st.inc_rel, st.drift);
     if (c->patch.peg.level_cents[0] || c->patch.peg.level_cents[1] || c->patch.peg.level_cents[2] || c->patch.peg.level_cents[3])
         printf("PEGREF %-8s inc_rel_max=%.2e phase_drift_max=%.2e turns\n", c->name, st.inc_rel, st.drift);
 
-    /* 's criteria as amended by ,  and ; the golden hashes
+    /* the criteria as amended by,  and ; the golden hashes
      * are the committed timelines' (check.sh). The values are compared
      * unrounded, so a printed 0.10 can fail, and a NaN fails. */
     if ((!strcmp(c->name, "routesat") || !strcmp(c->name, "routeclp")) && check_route_saturation(c, fs) && gate)
@@ -2173,8 +2218,8 @@ static unsigned free_bounds(uint32_t fs)
                         BOUND_CHECK(&bounds, !(tail >= fs || fm_voice_active(&v)));
                     }
                 }
-    /* Operator FREE2 alone leaves 's key-synced grid unchanged.
-     * Only an enabled FREE2 LFO shares its init-anchored grid with . */
+    /* Operator FREE2 alone leaves the key-synced grid unchanged.
+     * Only an enabled FREE2 LFO shares its init-anchored grid with. */
     for (mode = 0; mode < 3; mode++) {
         unsigned peg, fenv;
         for (peg = 0; peg <= 1; peg++)
@@ -3184,7 +3229,7 @@ static int sync_check_sounding(const fm_voice_t *v)
 }
 
 /* An event on both voices and the model; returns 1 when the reference
- * took the engine's increments within 's bound. */
+ * took the engine's increments within the bound. */
 static int sync_check_event(fm_voice_t *a, ref_voice_t *r, sync_model_t *m, unsigned type, uint32_t freq)
 {
     const spike_event_t e = { 0, type, freq, 32767, 0 };
@@ -3230,7 +3275,7 @@ static int sync_check_ref_sounding(const ref_voice_t *r)
 }
 
 /* The double envelope may end a sample before or after the engine's, as
- * 's end range allows; sync is not under test on such a sample, so the
+ * the end range allows; sync is not under test on such a sample, so the
  * reference then takes the engine's phases, noise, wrap mask and idle count.
  * Returns 1 when it did. */
 static unsigned sync_check_end(const fm_voice_t *a, ref_voice_t *r, int a_sounding, int r_sounding)
@@ -3476,7 +3521,7 @@ static unsigned bind_bounds(uint32_t fs)
     return bounds.bad;
 }
 
-/* ---- WTBOUND: 's wavetable operator and fm_wt_additive ----
+/* ---- WTBOUND: the wavetable operator and fm_wt_additive ----
  * design-hybrid.md sections 2 and 7, at one rate:
  *   generator  each bank against a double reference of ideal sines and
  *              10^(-db10/200) gains under its own bank-wide denominator
@@ -4502,7 +4547,7 @@ static unsigned shape_bounds(uint32_t fs)
             got = shape_check_read(&v, x);
             BOUND_CHECK(&bounds, got == shape_check_exact(kind, (uint32_t)v.shape_gain_q24, x));
             /* Kinds 0 to 3 are odd; kind 4 is checked at -x against its model
-             * and counted where it differs from the mirrored output . */
+             * and counted where it differs from the mirrored output. */
             if (kind == 4) {
                 const int32_t mirrored = shape_check_read(&v, -x);
                 BOUND_CHECK(&bounds, mirrored == shape_check_exact(4, (uint32_t)v.shape_gain_q24, -x));
@@ -4596,7 +4641,7 @@ static unsigned shape_bounds(uint32_t fs)
         }
     }
     BOUND_CHECK(&bounds, ring > 0);
-    /* , pos 1: the filter hears the shaped carrier sum. The oracle reads
+    /*, pos 1: the filter hears the shaped carrier sum. The oracle reads
      * the unshaped, unfiltered sum from a twin, shapes it with the exact model
      * and feeds that into a third voice's filter (shape_check_feed); once the
      * carriers go idle the oracle idles too, so both ring out the same filter
@@ -6846,8 +6891,7 @@ static unsigned ksfb_bounds(uint32_t fs)
         }
     /* The typed source against its exact model: histories a and b with
      * type 1, 2 or 3 give the modulator the sample a classic voice gives
-     * with both post-envelope histories set to the model's source ('s
-     * average of a and b, squared after the average for bit 1), so the
+     * with both post-envelope histories set to the model's source (the * average of a and b, squared after the average for bit 1), so the
      * square taken before the average, or a pre type that reads the post-
      * envelope history, fails here. Seeded pairs and the extremes. */
     {
@@ -7506,10 +7550,10 @@ typedef struct {
     uint32_t freq_millihz;   /* EV_ON and EV_PITCH; EV_FILTER: the cutoff in mHz */
     uint16_t velocity_q15;   /* EV_ON; EV_FILTER: Q in thousandths; EV_CTL: input index */
     int32_t ctl_value;       /* EV_CTL: signed Q15, both endpoints included */
-    int32_t  x, y, z;        /* EV_POS: the voice's position in mm; EV_MOVE: where the move ends (space/SPEC.md) */
+    int32_t  x, y, z;        /* EV_POS: the voice's position in mm; EV_MOVE: where the move ends (docs/INSTRUMENT.md) */
     uint64_t dur_ns;         /* EV_MOVE: the move's duration, 1 or more */
     uint32_t end;            /* EV_MOVE: the sample at t_ns + dur_ns, below 2^32; the move ends at the first boundary at or after it */
-    /* The effects (fx/SPEC.md): EV_SEND's bus and level. */
+    /* The effects (docs/INSTRUMENT.md): EV_SEND's bus and level. */
     uint32_t bus;            /* FX_CHORUS, FX_DELAY, FX_REVERB */
     uint32_t level_q15;      /* 0 to 32768 */
     uint32_t crush_bits, crush_div; /* EV_CRUSH: 1..24, 1..64 */
@@ -7562,7 +7606,7 @@ typedef struct {
 typedef struct {
     int         have_timeline, have_engine, have_hash, have_space;
     int         decodable;                        /*  reader profile, not an effect bit */
-    int         draft;                            /* 1, or 2 with the spatial statements (space/SPEC.md) */
+    int         draft;                            /* 1, or 2 with the spatial statements (docs/INSTRUMENT.md) */
     int         space;                            /* draft2: 1 stereo, 0 the mono path */
     uint32_t    block, near;                      /* draft2: the block and the near-field radius; 0 until defaulted */
     uint32_t    fs, n, nstreams, npatches, nvoices, nev, cap;
@@ -7575,19 +7619,19 @@ typedef struct {
     gen_program_t gen;
     uint32_t gen_clock, gen_sources, gen_lanes, gen_axioms;
     int render_error;
-    /* The effects (fx/SPEC.md, section 7): the configuration the effects'
+    /* The effects (docs/INSTRUMENT.md, section 7): the configuration the effects'
      * statements build, fx.on 0 without them; tl_check_header sets its
      * channels and block. */
     fx_cfg_t    fx;
-    /* The engine's statements . */
+    /* The engine's statements. */
     uint32_t    shapes;                           /* bit p: a present shape, including zero drive */
     uint32_t    filters;                          /* bit p: patch p has a filter statement (TL_MAX_PATCHES is 32) */
     uint32_t    routes;                           /* bit p: patch p has a route statement  */
-    uint32_t    lfos, lfo_masks;                  /* bit p: patch p has an lfo statement , and gave its masks */
+    uint32_t    lfos, lfo_masks;                  /* bit p: patch p has an lfo statement, and gave its masks */
     uint32_t    pegs;                            /* bit p: patch p has a peg statement  */
     uint32_t    fenvs;                           /* bit p: patch p has a fenv statement  */
     uint32_t    amps;                            /* bit p: patch p has an amp statement  */
-    /* The field routes (space/SPEC.md sections 11 to 16), draft2 only. */
+    /* The field routes (docs/INSTRUMENT.md, spatial routes), draft2 only. */
     int         route;                            /* 0, or SP_FIELD_*: space amb1, amb3, binaural, or stereo with panlaw */
     int         have_order, have_pinna, have_yaw, have_panlaw;
     uint32_t    order;                            /* space binaural: 1 or 3; absent: 3 */
@@ -7901,7 +7945,7 @@ static int tl_find_patch(const tl_t *tl, const char *name)
 /* Bus names and FX_BUS_BIT in fx/fx.h have the same row order. */
 static const char *const FX_BUS_NAME[FX_BUSES] = { "chorus", "delay", "reverb", "duck", "flanger" };
 
-/* One effects statement (fx/SPEC.md, section 7): 0 when read, 1 on an
+/* One effects statement (docs/INSTRUMENT.md, section 7): 0 when read, 1 on an
  * error, -1 when tok[0] names none. */
 static int tl_header_fx(tl_t *tl, const char *path, unsigned ln, char **tok, int nt)
 {
@@ -8094,9 +8138,12 @@ static int tl_header_gen(tl_t *tl, const char *path, unsigned ln, char **tok, in
         if ((unsigned)nt != 6u + fields + (kind == GEN_EUCLID)) return tl_err(path, ln, "gen %u: wrong number of fields for %s", (unsigned)id, tok[2]);
         s = &tl->gen.source[id];
         memset(s, 0, sizeof *s); s->id = (uint8_t)id; s->kind = (uint8_t)kind; s->parent = -1;
-        if (TL_GEN_READ(gen_seed, tl_gen_param(kind, "seed"), tok[3], &x)) return 1; s->seed = (uint32_t)x;
-        if (TL_GEN_READ(gen_div, tl_gen_param(kind, "div"), tok[4], &x)) return 1; s->div = (uint16_t)x;
-        if (TL_GEN_READ(gen_slew, tl_gen_param(kind, "slew"), tok[5], &x)) return 1; s->slew = (uint16_t)x;
+        if (TL_GEN_READ(gen_seed, tl_gen_param(kind, "seed"), tok[3], &x)) return 1;
+        s->seed = (uint32_t)x;
+        if (TL_GEN_READ(gen_div, tl_gen_param(kind, "div"), tok[4], &x)) return 1;
+        s->div = (uint16_t)x;
+        if (TL_GEN_READ(gen_slew, tl_gen_param(kind, "slew"), tok[5], &x)) return 1;
+        s->slew = (uint16_t)x;
         j = 6;
         for (i = 0; i < sizeof TL_GEN_PARAMS / sizeof *TL_GEN_PARAMS; ++i) {
             const tl_gen_param_t *p = &TL_GEN_PARAMS[i];
@@ -8141,7 +8188,8 @@ static int tl_header_gen(tl_t *tl, const char *path, unsigned ln, char **tok, in
         if (TL_GEN_READ(gen_lane_id, tl_gen_param(0, "lane_id"), tok[1], &id)) return 1;
         if ((tl->gen_lanes >> id) & 1u) return tl_err(path, ln, "second gen_lane ID %u", (unsigned)id);
         l = &tl->gen.lane[id]; memset(l, 0, sizeof *l); l->id = (uint8_t)id;
-        if (TL_GEN_READ(gen_lane_voice, tl_gen_param(0, "voice"), tok[2], &x)) return 1; l->voice = (uint16_t)x;
+        if (TL_GEN_READ(gen_lane_voice, tl_gen_param(0, "voice"), tok[2], &x)) return 1;
+        l->voice = (uint16_t)x;
         if (tl_gen_ref(tok[3], &l->gate) || tl_gen_ref(tok[4], &l->pitch) || tl_gen_ref(tok[5], &l->accent)) return tl_err(path, ln, "gen_lane source must be '-' or an ID");
         for (j = 0; j < 6; ++j)
             if (tl_gen_read(path, ln, tok, tl_param_at(TS_gen_lane, j + 6u, "all"), tl_gen_param(0, names[j]), tok[j + 6], &v[j])) return 1;
@@ -8268,7 +8316,7 @@ static int tl_gen_params(void)
 
 /* : route PATCH OPS CARRIERS FROM>TO:WEIGHT[:pm|am|ring|sync]..., 0 or 1 as
  * tl_header returns; PM weights 1 to 1024, AM and ring 1 to 256, sync exactly
- * 256 . tl_check_header then holds the patch to operators 0 to OPS - 1. */
+ * 256. tl_check_header then holds the patch to operators 0 to OPS - 1. */
 static int tl_header_route(tl_t *tl, const char *path, unsigned ln, char **tok, int nt)
 {
     fm_route_t r;
@@ -8527,7 +8575,7 @@ static int tl_check_wt(tl_t *tl)
     return 0;
 }
 
-/* fm_voice_init with the timeline's banks bound , and the voice's
+/* fm_voice_init with the timeline's banks bound, and the voice's
  * Karplus-Strong buffers of set 0 or 1; 0 ok. */
 static int tl_voice_init_set(const tl_t *tl, fm_voice_t *v, uint32_t i, unsigned set)
 {
@@ -8613,7 +8661,7 @@ static int tl_header_ks(tl_t *tl, const char *path, unsigned ln, char **tok, int
     return 0;
 }
 
-/*  (, provisional grammar): kstype PATCH OP TARGET RIGHT LEFT
+/*  (provisional grammar): kstype PATCH OP TARGET RIGHT LEFT
  * with TARGET index, level or both and each side - or +; fbtype PATCH OP
  * TYPE with TYPE classic, pre, square or presquare. The defaults (index
  * - -, classic) normalize away; presence is resolved after the headers. */
@@ -8668,7 +8716,7 @@ static int tl_header_fbtype(tl_t *tl, const char *path, unsigned ln, char **tok,
     return 0;
 }
 
-/*  (, provisional grammar): egloop PATCH OP loops the
+/*  (provisional grammar): egloop PATCH OP loops the
  * operator's attack, decay and decay2 while the key is held. Absent, the
  * operator does not loop; presence is resolved after the headers. */
 static int tl_header_egloop(tl_t *tl, const char *path, unsigned ln, char **tok, int nt)
@@ -8716,7 +8764,7 @@ static int tl_header_eg(tl_t *tl, const char *path, unsigned ln, char **tok, int
     return 0;
 }
 
-/* 's lfo statement, once per patch (fm_lfo_patch_t), 9, 13 or 14 tokens;
+/* the lfo statement, once per patch (fm_lfo_patch_t), 9, 13 or 14 tokens;
  * tl_check_header gives absent masks every operator of the patch. */
 static int tl_header_lfo(tl_t *tl, const char *path, unsigned ln, char **tok, int nt)
 {
@@ -8830,7 +8878,7 @@ static int tl_header_fenv(tl_t *tl, const char *path, unsigned ln, char **tok, i
     return 0;
 }
 
-/*  (, provisional grammar): amp PATCH ATTACK_MS DECAY_MS
+/*  (provisional grammar): amp PATCH ATTACK_MS DECAY_MS
  * SUSTAIN_DB10 RELEASE_MS enables the voice amp envelope in
  * fm_op_patch_t's units; absent, it is bypassed. */
 static int tl_header_amp(tl_t *tl, const char *path, unsigned ln, char **tok, int nt)
@@ -8887,7 +8935,7 @@ static int tl_header_shape(tl_t *tl, const char *path, unsigned ln, char **tok, 
     return 0;
 }
 
-/* The engine's header statements , in draft1 and
+/* The engine's header statements, in draft1 and
  * draft2: -1 when tok is not one of them, else 0 or 1 as tl_header
  * returns. A filter, shape, route, lfo, peg or fenv statement may come before its patch's
  * operators. */
@@ -9069,7 +9117,7 @@ static int tl_header_engine(tl_t *tl, const char *path, unsigned ln, char **tok,
     return 0;
 }
 
-/* The field routes (space/SPEC.md sections 11 to 16): their statements,
+/* The field routes (docs/INSTRUMENT.md, spatial routes): their statements,
  * the yaw event, the renders and --stems. The binaural route's table
  * header comes from the build (make BINAURAL_H=PATH); without one a
  * space binaural record is refused. */
@@ -9342,7 +9390,7 @@ static int tl_load_stems(tl_t *tl, const char *path)
 {
     FILE *f;
     unsigned char h[12], b[2 * TL_MAX_VOICES];
-    uint32_t size, ch = 0, rate = 0, bits = 0, fmt = 0, t, i, nf;
+    uint32_t size = 0, ch = 0, rate = 0, bits = 0, fmt = 0, t, i, nf;
     int data = 0;
     if (!tl->route) return tl_err(NULL, 0, "--stems needs space amb1, amb3, binaural, or stereo with panlaw");
     f = fopen(path, "rb");
@@ -9492,7 +9540,7 @@ static int tl_header(tl_t *tl, const char *path, unsigned ln, char **tok, int nt
 
 /* After pass 1: every statement present, the length in samples, voices
  * 0..N-1 each on a patch with both operators, or with operators 0 to
- * OPS - 1 under its route . */
+ * OPS - 1 under its route. */
 static int tl_check_header(tl_t *tl)
 {
     uint64_t n;
@@ -9507,7 +9555,7 @@ static int tl_check_header(tl_t *tl)
     if (tl->draft == 1 && (tl->have_space || tl->block || tl->near)) return tl_err(NULL, 0, "space, block and near need timeline draft2");
     if (!tl->block) tl->block = 64;
     if (!tl->near)  tl->near = 100;
-    tl->fx.channels = tl->space ? 2u : 1u;           /* the effects (fx/SPEC.md, section 7) */
+    tl->fx.channels = tl->space ? 2u : 1u;           /* the effects (docs/INSTRUMENT.md, section 7) */
     tl->fx.block    = tl->block;
     if (tl->fx.on && (tl->fs < 8000 || tl->fs > 192000)) return tl_err(NULL, 0, "the effects need fs 8000 to 192000 Hz");
     if (tl->length_ns > UINT64_MAX / tl->fs) return tl_err(NULL, 0, "length_ns too large");
@@ -9706,7 +9754,7 @@ static int tl_send_err(const char *path, unsigned ln, const char *bus)
     }
 }
 
-/* A send event (fx/SPEC.md, section 7), T_NS STREAM VOICE send BUS
+/* A send event (docs/INSTRUMENT.md, section 7), T_NS STREAM VOICE send BUS
  * LEVEL_Q15, to a bus whose effect the header turns on. */
 static int tl_event_fx(const tl_t *tl, const char *path, unsigned ln, char **tok, int nt, tl_event_t *e)
 {
@@ -9852,7 +9900,7 @@ append_event:
 }
 
 /* Draft grammar of the  timeline; the tools SPEC fixes the final one
- * . One statement per line, tokens separated by blanks, '#' starts a
+ *. One statement per line, tokens separated by blanks, '#' starts a
  * comment. Header statements, each once in the pool of files (a patch's
  * operator and a voice each once):
  *   timeline draft1
@@ -9894,7 +9942,7 @@ append_event:
  * each followed by its axiom/rules; lanes follow voices. Runtime event ties
  * retain time, stream and insertion order. --gen-events uses this same bank
  * and emits version1 rows with checked exact nanosecond event timestamps.
- * Draft2 (space/SPEC.md, section 5) adds, each once:
+ * Draft2 (docs/INSTRUMENT.md, section 5) adds, each once:
  *   timeline draft2
  *   space stereo|off        the spatial module's stereo layout, or the mono path; absent: off
  *   block K                 32, 64 or 128; absent: 64
@@ -9906,7 +9954,7 @@ append_event:
  *                           sample of T_NS + DUR_NS ; DUR_NS 1 or more, that sample below 2^32
  * In a draft1 pool those are errors. The hash of a stereo render covers
  * the interleaved int16 stream, 2 * n samples.
- * The effects (fx/SPEC.md, section 7; reader tl_header_fx), in draft1 and
+ * The effects (docs/INSTRUMENT.md, section 7; reader tl_header_fx), in draft1 and
  * draft2, each once; an absent part is off, and none keeps the plain mix:
  *   dcblock FC_MILLIHZ      the DC blocker's corner, 1 to 100000
  *   chorus BASE_US DEPTH_US RATE_MILLIHZ    7000 to 25000, 1000 to 5000, 100 to 3000
@@ -9931,13 +9979,13 @@ append_event:
  *                           its sample; the bus's effect must be on (duck needs compressor).
  *                           Every send starts at 0; duck has no audible return.
  * They need fs 8000 to 192000; a draft1 pool's block is 64.
- * The engine's statements , in draft1 and draft2:
- *   patch ... KS_BREAK_MILLIHZ KS_SLOPE_DB10 WAVE    a 12th value, the operator's
+ * The engine's statements, in draft1 and draft2:
+ *   patch... KS_BREAK_MILLIHZ KS_SLOPE_DB10 WAVE    a 12th value, the operator's
  *                           waveform: 0 sine, 1 half, 2 absolute, 3 quarter, 4 noise,
  *                           5 alternating sine, 6 camel, 7 square, 8 log-saw,
  *                           9 pink, 10 low-pass noise, 11 high-pass noise;
  *                           left out 0, written only when not 0, key scaling then as 0 0
- *   patch ... WAVE RS FIXED_MILLIHZ PHASE_U16 FREE    the 13th to 16th values (,
+ *   patch... WAVE RS FIXED_MILLIHZ PHASE_U16 FREE    the 13th to 16th values (
  *                           ), each left out 0; the record writes the values up
  *                           to the last nonzero one, those before it as 0 (key scaling
  *                           always as a pair). RS, 0 to 7: at a note-on each segment's
@@ -9949,7 +9997,7 @@ append_event:
  *                           65535: the phase in 1/65536 turns at a note-on from silence;
  *                           FREE, 0, 1 or 2: 1 keeps phase/noise, frozen while idle;
  *                           2 advances through rendered idle samples in closed form
- *   route PATCH OPS CARRIERS FROM>TO:WEIGHT[:pm|am|ring|sync]...    once per patch (, fm_route_t):
+ *   route PATCH OPS CARRIERS FROM>TO:WEIGHT[:pm|am|ring|sync]...    once per patch (fm_route_t):
  *                           the patch has operators 0 to OPS - 1, each present once,
  *                           OPS 2 to FM_OPS (4); CARRIERS a bit mask, 1 to 2^OPS - 1,
  *                           bit i summing operator i into the output; zero or more
@@ -9965,24 +10013,23 @@ append_event:
  *                           operators 0 and 1 (the carrier's feedback unused).
  *                           A suffix sets the kind, :pm the default: :am and :ring
  *                            multiply TO's output, WEIGHT 1 to 256; :sync
- *                           , WEIGHT exactly 256, restarts TO at its PHASE_U16
+ *                          , WEIGHT exactly 256, restarts TO at its PHASE_U16
  *                           when FROM wraps, adding no PM and no gain.
  *                           Written after the patches, the edges by FROM, then TO
  *   filter PATCH lp|bp|hp|notch CUTOFF_MILLIHZ Q_MILLI [x2]    once per patch: the voice
  *                           filter of fm_filter_patch_t, written after the routes;
  *                           x2 selects two identical stages in series, Q per stage
  *   shape PATCH DRIVE_DB10 hard|cubic|fold|asym [pre]
- *                           , one per patch; drive 0..240, present zero shapes.
+ *                          , one per patch; drive 0..240, present zero shapes.
  *                           Written after all filters and before the LFOs. :
  *                           asym clips at +1 and -1/2; pre puts the shaper before
  *                           the formant bank and the filter (absent: after them).
  *   amp PATCH ATTACK_MS DECAY_MS SUSTAIN_DB10 RELEASE_MS
- *                           , one per patch: the voice amp envelope after the
- *                           shaper (fm_amp_patch_t, each value 0..65535, 's
- *                           units); absent, bypassed. Written after the shapes.
+ *                          , one per patch: the voice amp envelope after the
+ *                           shaper (fm_amp_patch_t, each value 0..65535, the *                           units); absent, bypassed. Written after the shapes.
  *   lfo PATCH WAVE RATE_MILLIHZ DELAY_MS FADE_MS PITCH_CENTS LEVEL_DB10 INDEX_Q10
- *       [PHASE_U16 MASK_PITCH MASK_LEVEL MASK_INDEX [FREE]]    once per patch (,
- *                           fm_lfo_patch_t): the voice's LFO, moving at 's control
+ *       [PHASE_U16 MASK_PITCH MASK_LEVEL MASK_INDEX [FREE]]    once per patch (
+ *                           fm_lfo_patch_t): the voice's LFO, moving at the control
  *                           ticks (every FM_CTL samples; FREE 0 restarts at note-on)
  *                           the masked operators' increments, levels and indices. WAVE 0
  *                           sine, 1 triangle, 2 saw up, 3 saw down, 4 square, 5 sample and
@@ -10008,12 +10055,12 @@ append_event:
  *                           Fixed operators ignore the envelope; zero levels
  *                           disable it. Written after lfo, mask always present.
  *   fenv PATCH ATTACK_MS DECAY_MS SUSTAIN_PERMILLE RELEASE_MS DEPTH_CENTS
- *        TRACK_PERMILLE [REF_MILLIHZ]          once per patch , needs a filter:
+ *        TRACK_PERMILLE [REF_MILLIHZ]          once per patch, needs a filter:
  *                           times 0..60000 ms, sustain 0..1000, depth -9600..9600,
  *                           track 0..2000, reference 1..UINT32_MAX (default261626).
  *                           Written after peg, reference always present.
- *                           lfo, peg and fenv statements require FM_CTL=64 .
- *   mod PATCH SLOT SOURCE TARGET AMOUNT [SHIFT]   , FM_CTL=64:
+ *                           lfo, peg and fenv statements require FM_CTL=64.
+ *   mod PATCH SLOT SOURCE TARGET AMOUNT [SHIFT]  , FM_CTL=64:
  *                           SLOT0..7, SHIFT0..15/default3; canonical after fenv.
  *                           Smoothed slots start at 0 on a note-on from silence;
  *                           a full-scale constant source takes about 67 ticks at
@@ -10041,11 +10088,11 @@ append_event:
  *                           Headers may precede patch/route; written after eg by OP,
  *                           zero omitted. The existing right slope is unchanged.
  *   kstype PATCH OP index|level|both RIGHT LEFT    OP 0 to OPS-1, each side - or +;
- *                           , tl_header_kstype; once per operator;
+ *                          , tl_header_kstype; once per operator;
  *                           default index - - omitted when written.
- *   fbtype PATCH OP classic|pre|square|presquare  , tl_header_fbtype;
+ *   fbtype PATCH OP classic|pre|square|presquare , tl_header_fbtype;
  *                           once per operator; classic omitted when written.
- *   egloop PATCH OP         , tl_header_egloop; presence enables the
+ *   egloop PATCH OP        , tl_header_egloop; presence enables the
  *                           attack/decay/decay2 loop. These three headers are
  *                           written after eg/ks, grouped by patch/operator.
  *   noise PATCH OP SHIFT    once per present wave-10/11 operator, 1..15;
@@ -10077,7 +10124,7 @@ append_event:
  *                           wtuse and before voices; each voice owns its buffers.
  *   T_NS STREAM VOICE filter CUTOFF_MILLIHZ Q_MILLI    fm_voice_filter, on a voice
  *                           whose patch has a filter statement; until its next note-on
- * The field routes (space/SPEC.md sections 11 to 16) add, draft2 only, each once:
+ * The field routes (docs/INSTRUMENT.md, spatial routes) add, draft2 only, each once:
  *   space amb1|amb3|binaural   the ambisonic field at order 1 or 3 (4 or 16 interleaved channels,
  *                           AmbiX), or its binaural decode (2 channels; needs a table in the build)
  *   order 1|3               space binaural: the field's order; absent: 3
@@ -10342,7 +10389,7 @@ static int tl_write_f(FILE *f, const tl_t *tl, uint64_t hash)
             tl_write_stmt(f, TS_amp, " %s %u %u %u %u\n", tl->patch[i].name, (unsigned)a->attack_ms, (unsigned)a->decay_ms,
                     (unsigned)a->sustain_db10, (unsigned)a->release_ms);
         }
-    for (i = 0; i < tl->npatches; i++)   /* , every value */
+    for (i = 0; i < tl->npatches; i++)   /*, every value */
         if (tl->lfos & (1u << i)) {
             const fm_lfo_patch_t *l = &tl->patch[i].p.lfo;
             tl_write_stmt(f, TS_lfo, " %s %u %u %u %u %u %u %u %u %u %u %u", tl->patch[i].name, (unsigned)l->wave,
@@ -10743,7 +10790,7 @@ static int tl_write(const tl_t *tl, const char *path, uint64_t hash)
 }
 
 /* sp is the stereo module's state, or NULL on the mono path, where a pos or
- * move event is carried and not applied (space/SPEC.md, section 5). fx is
+ * move event is carried and not applied (docs/INSTRUMENT.md, section 5). fx is
  * the effects' state, NULL without them. */
 static void tl_apply(fm_voice_t *vs, sp_stereo_t *sp, fx_t *fx, const tl_event_t *e)
 {
@@ -11273,7 +11320,7 @@ static unsigned gen_adapter_bounds(uint32_t fs)
     tl_event_t ev[10];
     unsigned i, j, n, k;
     uint32_t ei = 0;
-    uint64_t timestamp;
+    uint64_t timestamp = 0;
     gen_status_t status;
     if (!tl || !oracle) { free(tl); free(oracle); return BOUNDS_HOST_ERROR; }
     tl->fs = fs; tl->n = 4097; tl->length_ns = ((uint64_t)tl->n * 1000000000u + fs - 1u) / fs;
@@ -11528,7 +11575,7 @@ static int gen_soak(char **files, int nf, const char *merged)
     free(vs); free(tl->ev); free(tl->ks_pool); free(tl); free(a); return rc;
 }
 
-/* ---- --play --metrics and --ref (PLAN  step 1, ) ---- */
+/* ---- --play --metrics and --ref (PLAN  step 1) ---- */
 
 /* floor(sqrt(x)) for any uint64_t x, digit by digit. */
 static uint64_t isqrt_u64(uint64_t x)
@@ -11604,18 +11651,18 @@ static void pm_print(const int16_t *pcm, uint32_t ns, uint32_t ch)
     putchar('\n');
 }
 
-/* --ref: 's comparison of a mono record's output pcm with the double
+/* --ref: the comparison of a mono record's output pcm with the double
  * reference (ref_double.c). Each voice runs the cases' lockstep
  * (ref_lockstep: an engine twin of voice set 1 beside the reference voice,
- * for 's and 's count rules and the increments' synchronisation)
+ * for the and the count rules and the increments' synchronisation)
  * through its own on, off, pitch, filter and ctl events in the record's
  * order; pos and move events, carried and not applied on the mono path,
  * are skipped. The voices' reference outputs add up, as fm_mix_i16 adds
  * their Q2.30 samples before its one rounding, and pcm is measured against
  * the sum (d14_measure). Prints the REF line, RESULT's names and the
- * verdict on 's criteria as --check applies them (loss <= 0.10 dB,
+ * verdict on the criteria as --check applies them (loss <= 0.10 dB,
  * peak error <= 1 LSB, the end test, no count failure; the SNR floors are
- * five named cases' own, ), and returns the number of criteria that
+ * five named cases' own), and returns the number of criteria that
  * fail, or -1 when out of memory. Diagnostic lines (ADOPT, COUNT-FAIL and
  * the like) name the patch, with /vN on a record of more voices. */
 static int play_ref(const tl_t *tl, const int16_t *pcm)
@@ -11690,7 +11737,7 @@ static int fx_diff_input(char **files, int nf, const char *stems);
  * first render and reports block_indep=unchecked. Exit 0,
  * 1 on a bad timeline or a block-size dependence, 3 when the output's hash
  * is not the timeline's hash statement. With metrics, a METRICS line
- * follows the PLAY line (pm_print). With ref, 's comparison: a REF
+ * follows the PLAY line (pm_print). With ref, the comparison: a REF
  * line (play_ref) on a mono record, --fxref's FXREF lines (fx_diff) on a
  * record with effects, exit 4 when a criterion fails and nothing else
  * does; a stereo record, a field route or a generator session without
@@ -11718,7 +11765,7 @@ static int play(char **files, int nf, const char *wav, const char *merged, const
                 tl->route ? "a field route" : tl->space ? "a stereo record" : "a generator session");
         rc = 2;
     }
-    if (!rc && (wav_fd >= 0 || stems_out || stems_fd >= 0)) {
+    if (!rc && (pcm_limit || wav_fd >= 0 || stems_out || stems_fd >= 0)) {
         const uint32_t channels = tl->route ? tl_field_ch(tl) : tl->space ? 2u : 1u;
         /* Header validation already bounds n*channels by UINT32_MAX.
          * Widen before multiplication; admission precedes both PCM arrays. */
@@ -11741,7 +11788,6 @@ static int play(char **files, int nf, const char *wav, const char *merged, const
                     (unsigned long long)bytes, (unsigned long long)pcm_limit);
             rc = 2;
         }
-        if (!rc) rc = stem_paths_check(stems_out, merged, files, nf);
     }
     if (!rc) {
         if (tl->nev) qsort(tl->ev, tl->nev, sizeof *tl->ev, tl_cmp);
@@ -12112,9 +12158,9 @@ done:
     return rc;
 }
 
-/* ---- --fxref: the effects against their double model (fx/SPEC.md, section 8) ---- */
+/* ---- --fxref: the effects against their double model (docs/INSTRUMENT.md, section 8) ---- */
 
-/* 's loss bound, which every effect meets, the buses' too (fx/SPEC.md,
+/* the loss bound, which every effect meets, the buses' too (docs/INSTRUMENT.md,
  * section 8, gives the measured losses). */
 #define FX_TOL_LOSS_DB 0.10
 
@@ -12290,7 +12336,7 @@ done:
 /* --fxref: renders the pool as --play does, and again through fx_ref's
  * double model fed the same voices: each sounding voice's Q2.30 sample
  * from a copy of the voices, the sends' integer ramps (the SPEC's
- * definition, as space/'s gains) and, in stereo, the spatial module's
+ * definition, as space/the gains) and, in stereo, the spatial module's
  * wide sums from a copy without effects. Prints an FXREF line: the SNR
  * against the model, the ceiling of rounding the model, their difference
  * (loss) and the peak error against the model clipped. On a mono record
@@ -12506,7 +12552,7 @@ static int emit(uint32_t fs, const char *dir)
     return 0;
 }
 
-/* ---- --filter: 's filter, engine against the reference ----
+/* ---- --filter: the filter, engine against the reference ----
  * On the grid FILT_HZ x FILT_Q (cutoff 0 and UINT32_MAX give the clamps,
  * fs / 2400 and 0.45 fs), with the case lowpass's patch:
  *   COEF  the cutoff the engine's rounded coefficients give, fs / pi *
@@ -12685,16 +12731,17 @@ cleanup:
     return rc;
 }
 
-static int usage(void)
+static int usage(FILE *stream, int status)
 {
-    fprintf(stderr, "usage: harness [--fs HZ] [--out DIR] [--check [lfo|peg-bounds|fenv-bounds] | --retrig | --fb | --filter]\n"
+    fprintf(stream, "usage: harness --help | --version\n"
+                    "       harness [--fs HZ] [--out DIR] [--check [lfo|peg-bounds|fenv-bounds] | --retrig | --fb | --filter]\n"
                     "       harness [--fs HZ] --emit DIR\n"
                     "       harness --gen-params | --params | --params-check\n"
                     "       harness --engine | --inspect [--] FILE... | --events [--] FILE...\n"
                     "       harness --gen-events [--] FILE...\n"
                     "       harness --keys-profile 30|45|60|75|90 [--keys-mirror] [--keys-carrier-bound] --merged PATH [--] FILE...\n"
                     "       harness --gen-soak [--merged PATH] [--] FILE...\n"
-                    "       harness --play [--wav PATH] [--merged PATH] [--stems WAV] [--metrics] [--ref] [--chunk N|random] [--] FILE...   (at most %d files)\n"
+                    "       harness --play [--pcm-limit BYTES] [--wav PATH] [--merged PATH] [--stems WAV] [--metrics] [--ref] [--chunk N|random] [--] FILE...   (at most %d files)\n"
                     "       harness --play-once [--wav PATH] [--merged PATH] [--stems WAV] [--metrics] [--] FILE...\n"
                     "         one render; block_indep=unchecked; no --ref, --chunk or stems output\n"
                     "       harness --play --wav-fd N --pcm-limit BYTES [--merged PATH] [--metrics] [--chunk N|random] [--] FILE...\n"
@@ -12703,7 +12750,7 @@ static int usage(void)
                     "         a piece: its session.tl and its stream files\n"
                     "       harness --fxref [--] FILE...\n"
                     "       harness --field-test | --field-cost\n", TL_MAX_FILES);
-    return 2;
+    return status;
 }
 
 static int harness_run(int argc, char **argv)
@@ -12722,6 +12769,12 @@ static int harness_run(int argc, char **argv)
     uint64_t v;
     size_t ci;
 
+    if (argc == 1 || (argc == 2 && (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h"))))
+        return usage(stdout, 0);
+    if (argc == 2 && !strcmp(argv[1], "--version")) {
+        printf("JotTune Synth %s\n", JOTTUNE_VERSION);
+        return 0;
+    }
     for (a = 1; a < argc; a++) {
         if (!strcmp(argv[a], "--fs") && a + 1 < argc) {
             if (tl_num(argv[++a], UINT32_MAX, &v) || v == 0) {
@@ -12737,7 +12790,7 @@ static int harness_run(int argc, char **argv)
             else if (!strcmp(argv[++a], "lfo")) lcheck = 1;
             else if (!strcmp(argv[a], "peg-bounds")) pbounds = 1;
             else if (!strcmp(argv[a], "fenv-bounds")) ebounds = 1;
-            else return usage();
+            else return usage(stderr, 2);
         }
         else if (!strcmp(argv[a], "--retrig")) retrig = 1;
         else if (!strcmp(argv[a], "--fb")) fb = 1;
@@ -12746,7 +12799,7 @@ static int harness_run(int argc, char **argv)
         else if (!strcmp(argv[a], "--gen-soak") && !playing) playing = soak = 1;
         else if (!strcmp(argv[a], "--gen-events") && !playing) playing = manifest = 1;
         else if (!strcmp(argv[a], "--keys-profile") && !playing && a + 1 < argc) {
-            if (tl_num(argv[++a], 90, &v) || (v != 30 && v != 45 && v != 60 && v != 75 && v != 90)) return usage();
+            if (tl_num(argv[++a], 90, &v) || (v != 30 && v != 45 && v != 60 && v != 75 && v != 90)) return usage(stderr, 2);
             keys_width = (int)v; playing = 1;
         }
         else if (!strcmp(argv[a], "--keys-mirror") && !keys_mirror) keys_mirror = 1;
@@ -12769,7 +12822,7 @@ static int harness_run(int argc, char **argv)
             wav_fd = (int)v;
         }
         else if (!strcmp(argv[a], "--stems-out") && a + 1 < argc) {
-            if (stems_out) return usage();
+            if (stems_out) return usage(stderr, 2);
             stems_out = argv[++a];
         }
         else if (!strcmp(argv[a], "--stems-fd") && a + 1 < argc) {
@@ -12803,26 +12856,29 @@ static int harness_run(int argc, char **argv)
         else if (!strcmp(argv[a], "--field-cost")) fcost = 1;
         else if (!strcmp(argv[a], "--") && playing) {
             while (++a < argc) {
-                if (nf == TL_MAX_FILES) return usage();
+                if (nf == TL_MAX_FILES) return usage(stderr, 2);
                 files[nf++] = argv[a];
             }
             break;
         }
         else if (playing && argv[a][0] != '-' && nf < TL_MAX_FILES) files[nf++] = argv[a];
-        else return usage();
+        else {
+            fprintf(stderr, "Unknown or incomplete argument: %s\n", argv[a]);
+            return usage(stderr, 2);
+        }
     }
-    if (check + lcheck + pbounds + ebounds + retrig + fb + filt + !!emitdir + playing + params + allparams + paramscheck + ftest + fcost + engine_info > 1) return usage();
-    if ((keys_mirror || keys_bounded) && !keys_width) return usage();
-    if (keys_width && (!merged || wav || stems || pref || pmetrics || have_chunk || have_pcm_limit || wav_fd >= 0 || stems_out || stems_fd >= 0)) return usage();
-    if ((fs_given || outdir) && (playing || params || allparams || paramscheck || ftest || fcost || engine_info)) return usage();
-    if ((pmetrics || pref || have_chunk) && (!playing || soak || manifest || fxref || inspecting)) return usage();
+    if (check + lcheck + pbounds + ebounds + retrig + fb + filt + !!emitdir + playing + params + allparams + paramscheck + ftest + fcost + engine_info > 1) return usage(stderr, 2);
+    if ((keys_mirror || keys_bounded) && !keys_width) return usage(stderr, 2);
+    if (keys_width && (!merged || wav || stems || pref || pmetrics || have_chunk || have_pcm_limit || wav_fd >= 0 || stems_out || stems_fd >= 0)) return usage(stderr, 2);
+    if ((fs_given || outdir) && (playing || params || allparams || paramscheck || ftest || fcost || engine_info)) return usage(stderr, 2);
+    if ((pmetrics || pref || have_chunk) && (!playing || soak || manifest || fxref || inspecting)) return usage(stderr, 2);
     if (once && (pref || have_chunk || stems_out || stems_fd >= 0)) {
         fprintf(stderr, "--play-once refuses --ref, --chunk and stems output; use --play for those verification paths\n");
         return 2;
     }
     if (stems_out || stems_fd >= 0) {
         if ((stems_out && stems_fd >= 0) || !have_pcm_limit || !playing || soak || manifest || fxref || inspecting
-            || wav || wav_fd >= 0 || stems || pref) return usage();
+            || wav || wav_fd >= 0 || stems || pref) return usage(stderr, 2);
         if (stems_fd >= 0) {
             struct stat st;
             const int mode = fcntl(stems_fd, F_GETFL);
@@ -12832,11 +12888,12 @@ static int harness_run(int argc, char **argv)
             }
         }
     }
-    if ((wav_fd >= 0 || have_pcm_limit) && !stems_out && stems_fd < 0) {
+    if (have_pcm_limit && (!playing || soak || manifest || fxref || inspecting || keys_width)) return usage(stderr, 2);
+    if (wav_fd >= 0 && !stems_out && stems_fd < 0) {
         struct stat st;
         int mode;
-        if (wav_fd < 0 || !have_pcm_limit || !playing || soak || manifest || fxref || inspecting || wav || stems || pref)
-            return usage();
+        if (!have_pcm_limit || !playing || soak || manifest || fxref || inspecting || wav || stems || pref)
+            return usage(stderr, 2);
         mode = fcntl(wav_fd, F_GETFL);
         if (mode < 0 || fstat(wav_fd, &st) || !S_ISFIFO(st.st_mode) || (mode & O_ACCMODE) == O_RDONLY) {
             fprintf(stderr, "--wav-fd requires an inherited writable pipe descriptor\n");
@@ -12869,26 +12926,30 @@ static int harness_run(int argc, char **argv)
     if (fcost) return field_cost();
     if (engine_info) {
         char engine[160];
-        if (wav || merged || stems) return usage();
+        if (wav || merged || stems) return usage(stderr, 2);
         tl_engine(engine, sizeof engine);
         printf("ENGINE %s\n", engine);
         return 0;
     }
-    if (params) return wav || merged || stems ? usage() : tl_gen_params();
-    if (allparams) return wav || merged || stems ? usage() : tl_params();
+    if (params) return wav || merged || stems ? usage(stderr, 2) : tl_gen_params();
+    if (allparams) return wav || merged || stems ? usage(stderr, 2) : tl_params();
     if (paramscheck) {
         int rc;
-        if (wav || merged || stems) return usage();
+        if (wav || merged || stems) return usage(stderr, 2);
         rc = tl_params_schema_check();
         return rc ? rc : tl_params_writer_check();
     }
     if (playing) {
-        if (keys_width) return !nf ? usage() : keys_profile(files, nf, merged, keys_width, keys_mirror, keys_bounded);
-        if (inspecting) return !nf || wav || merged || stems ? usage() : inspect_record(files, nf, events);
-        if (soak) return !nf || wav || stems ? usage() : gen_soak(files, nf, merged);
-        if (manifest) return !nf || wav || merged || stems ? usage() : gen_events(files, nf);
+        if (wav || merged || stems_out) {
+            int path_rc = output_paths_check(wav, merged, stems_out, files, nf, stems);
+            if (path_rc) return path_rc;
+        }
+        if (keys_width) return !nf ? usage(stderr, 2) : keys_profile(files, nf, merged, keys_width, keys_mirror, keys_bounded);
+        if (inspecting) return !nf || wav || merged || stems ? usage(stderr, 2) : inspect_record(files, nf, events);
+        if (soak) return !nf || wav || stems ? usage(stderr, 2) : gen_soak(files, nf, merged);
+        if (manifest) return !nf || wav || merged || stems ? usage(stderr, 2) : gen_events(files, nf);
         if (!nf) { fprintf(stderr, "--play needs at least one file\n"); if (stems_fd >= 0) close(stems_fd); return 2; }
-        if (fxref) return wav || merged || stems ? usage() : fx_diff(files, nf);
+        if (fxref) return wav || merged || stems ? usage(stderr, 2) : fx_diff(files, nf);
         if (wav_fd >= 0 || stems_fd >= 0) {
             const int pipe_fd = stems_fd >= 0 ? stems_fd : wav_fd;
             const char *pipe_name = stems_fd >= 0 ? "--stems-fd" : "--wav-fd";

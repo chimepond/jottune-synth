@@ -2,9 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # algorithms.txt: the 32 DX7 algorithms and the 8 OPM/OPN connections
-# (CON 0 to 7) as routing tables, data by 's rule. They feed the
-# engine's route statement (routing, ) through dx7_import.py ;
-# README.md beside this file, DX7 import, is the guide.
+# (CON 0 to 7) as routing tables. They feed the engine's route statement
+# through tools/music/dx7_import.py. See docs/INSTRUMENT.md for authoring.
 #
 # The format: one block per algorithm, a line per field, blank lines and
 # lines starting with # ignored.
@@ -42,8 +41,8 @@
 # every kept edge has weight 256 (unity), since an operator's output level
 # becomes its INDEX_Q10.
 #
-# The reduce rule , for an algorithm with more operators than
-# the engine has (FM_OPS = 4, ) or than --ops asks for: keep the
+# The reduction rule, for an algorithm with more operators than
+# the engine has (FM_OPS = 4) or than --ops asks for: keep the
 # carriers (at most 4), keep the modulators by depth order, drop the
 # deepest modulators first, and name every dropped operator in the
 # generated block's comment. In detail, as dx7_import.py applies it:

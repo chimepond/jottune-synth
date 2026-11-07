@@ -2,7 +2,7 @@
 # JotTune Synth for macOS
 
 The native player requires Apple Silicon, macOS 14 or later, Xcode command-line
-tools and Python 3 for build-time recipe expansion. Run from the repository root:
+tools, GNU Make and Python 3.10+ for build-time recipe expansion. Run from the repository root:
 
 ```sh
 make -C apps/macos all
@@ -40,6 +40,8 @@ make -C apps/macos verify
 make -C apps/macos uitest
 ```
 
+The UI checks launch the built app in offline mode; macOS may register its bundle
+and create preferences. Build/test outputs are written below apps/macos/build.
 The automated checks compare native output, canonical records, recipes and model
 behavior. Device acceptance additionally covers audible playback, import/export,
 MIDI, route changes, interruptions and VoiceOver. The app is a local file player;

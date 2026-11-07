@@ -998,7 +998,6 @@ assumes setup is already complete. See [the README](../README.md) for backend an
 These discovery commands neither build nor render:
 
 ```sh
-python3 -B "$REPO/tools/music/compose.py" --list > "$WORK/pieces.txt"
 python3 -B "$REPO/tools/music/compose.py" --recipes > "$WORK/recipes.txt"
 python3 -B "$REPO/tools/music/analyze.py" search --tag piano
 "$HARNESS" --gen-params > "$WORK/generator-parameters.txt"
@@ -1009,8 +1008,8 @@ There are currently 63 recipes, all covered by the committed descriptor
 search. Descriptors measure the default single note and controls; they
 do not describe every expressive performance or parameter combination.
 `--gen-params` is a generator-specific descriptor
-table, not a complete synth schema. Harness `--help` currently prints usage
-to stderr and exits 2; do not mistake that convention for a failed build.
+table, not a complete synth schema. Harness `--help` prints usage to stdout and exits successfully;
+`--version` reports the public synth version.
 
 ## Shared CLI and MCP
 
@@ -1164,7 +1163,7 @@ import sys
 repo = pathlib.Path(os.environ['REPO'])
 out = pathlib.Path(os.environ['WORK'])
 harness = os.environ['HARNESS']
-sys.path.insert(0, str(repo / 'music'))
+sys.path.insert(0, str(repo / 'tools' / 'music'))
 import compose as c
 
 for name, attenuation_delta in [('base', 0), ('quieter', 6)]:
@@ -1176,10 +1175,10 @@ for name, attenuation_delta in [('base', 0), ('quieter', 6)]:
     p.on('notes', 0, voice, 'A4', 32767)
     p.off('notes', 400_000_000, voice)
     p.length_ns = 800_000_000
-    p.write                    # Text only: no build, render or automatic levelling.
+    p.write()                  # Text only: no build, render or automatic levelling.
     record = out / (name + '.record.tl')
     commands = [
-        [harness, '--play', *p.files, '--metrics', '--wav',
+        [harness, '--play', *p.files(), '--metrics', '--wav',
          str(out / (name + '.wav')), '--merged', str(record)],
         [harness, '--play', str(record), '--chunk', 'random', '--metrics'],
     ]
@@ -1236,7 +1235,7 @@ will be replaced on the next write.
 
 Native events are resolved by timestamp, stream declaration order and
 input order. Supply the session first, then stream files in declared
-order; `p.files` does this. On a voice at the same time, off then on
+order; `p.files()` does this. On a voice at the same time, off then on
 releases the old note and starts the new one; on then off can silence it.
 A pitch event changes a sounding note without retriggering. On an idle
 voice it produces no immediate sound, but can affect later phase with
@@ -1275,7 +1274,7 @@ Immediately assign `p.dir` to a fresh external directory.
    `voices = p.add_voices(patch, count, comment)`.
 4. Author events in chronological order for each allocator.
 5. Set `p.length_ns`, including releases and desired effect tails.
-6. Call `p.write` and render `p.files` through the explicit harness.
+6. Call `p.write()` and render `p.files()` through the explicit harness.
 
 `write` does not level the music or hash it; the renderer does not
 silently choose a musical balance. Start carriers well below 0 dB, measure
@@ -1284,7 +1283,7 @@ provides explicit carrier-level overrides; for routed patches operator
 zero remains the reference used for relative carrier levels. Compensation
 and MIDI crossfade paths additionally validate the final written levels.
 Writing does not delete obsolete stream files, so use a fresh directory
-for a renamed score or stream set and pass `p.files`, not a broad glob.
+for a renamed score or stream set and pass `p.files()`, not a broad glob.
 
 Basic event calls are:
 
@@ -1683,7 +1682,7 @@ slot binds its own cache, so multiple slots can read one source. The
 bank is session-owned even when the mod row comes from a recipe.
 
 ```python
-p.gen_clock
+p.gen_clock(64)
 p.gen(0, 'euclid', 17, k=3, n=8)
 p.gen(1, 'brown', 23, step=128, slew=4)
 p.mod('sound', 0, 'gen.1.x', 'index1', 1024)
@@ -1843,12 +1842,12 @@ uses the same `$REPO`, `$WORK` and `$HARNESS` environment as the quickstart:
 python3 -B - <<'PY'
 import os, pathlib, subprocess, sys
 out = pathlib.Path(os.environ['WORK'])
-sys.path.insert(0, str(pathlib.Path(os.environ['REPO']) / 'music'))
+sys.path.insert(0, str(pathlib.Path(os.environ['REPO']) / 'tools' / 'music'))
 import compose as c
 p = c.Piece('drawing', 120, 4, ['A rising stroke, then a circle'], space='stereo')
 p.dir = str(out / 'drawing')
 p.stream('pen', 'one spatial pen')
-p.patch('ink', *c.pen_sound)
+p.patch('ink', *c.pen_sound())
 v = p.add_voices('ink', 1, 'pen')[0]
 p.stroke('pen', v, 0, [c.line((-0.2, -0.2), (0.2, 0.2))], 1_000_000_000)
 p.path('pen', v, c.circle_points(1_200_000_000, 2_000_000_000,
@@ -1856,10 +1855,10 @@ p.path('pen', v, c.circle_points(1_200_000_000, 2_000_000_000,
 p.on('pen', 1_200_000_000, v, 'A4', 20000)
 p.off('pen', 3_200_000_000, v)
 p.length_ns = 3_600_000_000
-p.write
+p.write()
 h = os.environ['HARNESS']
 record = str(out / 'drawing.record.tl')
-subprocess.run([h, '--play', *p.files, '--metrics', '--merged', record,
+subprocess.run([h, '--play', *p.files(), '--metrics', '--merged', record,
                 '--wav', str(out / 'drawing.wav')], check=True)
 subprocess.run([h, '--play', record, '--chunk', 'random'], check=True)
 PY
@@ -1970,8 +1969,8 @@ Give each master a plain `--map 1=RECIPE` or `--map 16=RECIPE`; member
 channels cannot have separate maps/kits. A master cannot have key zones,
 mono/unison/choke/random modes. Member pressure and slide reserve ctl1
 and ctl4, so master `--ctl` must not map either (including `default`).
-These are current parsing contracts; 's held expression/lifecycle
-corrections remain, and this guide does not claim full MPE conformance.
+These are the current parsing contracts. Expression and lifecycle limitations
+remain; this guide does not claim full MPE conformance.
 
 | Area | Accepted options |
 |---|---|
@@ -2662,6 +2661,7 @@ actual input files in your external working directory:
 "$HARNESS" --params
 "$HARNESS" --params-check
 "$HARNESS" --gen-params
+mkdir -p "$WORK/engine-examples"
 "$HARNESS" --emit "$WORK/engine-examples"
 "$HARNESS" --play --metrics --wav "$WORK/out.wav" --merged "$WORK/replay.tl" \
   -- "$WORK/session.tl" "$WORK/lead.tl" "$WORK/drums.tl"

@@ -14,6 +14,18 @@ const library=await WebAssembly.compile(await fs.readFile(path.join(root,'build/
 assert.equal(WebAssembly.Module.imports(library).length,0);
 const exports=new Set(WebAssembly.Module.exports(library).map(item=>item.name));
 for(const name of ['memory','fm_voice_init','fm_render_i16','fm_golden_hash','__heap_base','__data_end'])assert(exports.has(name),name);
+// Canonical export must also work in the browser's preopened filesystem, where
+// realpath is unavailable and stat reports synthetic zero inode identities.
+const pathFixture=await fs.readFile(path.join(root,'examples/bell.tl'),'utf8');
+for(const binary of ['harness.wasm','browser.wasm']) {
+  const pathModule=binary==='browser.wasm'?module:await WebAssembly.compile(await fs.readFile(path.join(root,'build/wasm',binary)));
+  const result=await runCLI(pathModule,['--play','record.tl','--merged','canonical.tl'],{'record.tl':pathFixture});
+  assert.equal(result.code,0,result.stderr);assert.ok(result.canonical.length);
+  for(const output of ['record.tl','./record.tl','sub/../record.tl']) {
+    const refused=await runCLI(pathModule,['--play','record.tl','--merged',output],{'record.tl':pathFixture});
+    assert.equal(refused.code,2,refused.stderr);
+  }
+}
 const files=['tests/golden/fx/chain.tl','tests/golden/space/pan.tl','tests/golden/space/amb3-yaw.tl','tests/golden/gen/genambient-48000.tl'];
 const temporary=await fs.mkdtemp(path.join(os.tmpdir(),'fm-browser-pcm-'));
 try {

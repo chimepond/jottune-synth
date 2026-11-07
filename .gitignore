@@ -26,3 +26,6 @@ __pycache__/
 *.pyc
 *.wav
 .DS_Store
+
+/web/notices/
+/web/NOTICE
