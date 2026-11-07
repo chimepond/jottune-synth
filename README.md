@@ -27,11 +27,12 @@ may use floating point; the five synthesis modules use integer arithmetic.
 
 ## Browser
 
-Install Zig with a WASI toolchain, then build and serve the static player:
+Install Zig with a WASI toolchain, then build and serve the static player.
+The local preview command uses Python 3.11 or later:
 
 ```sh
 make web
-python3 -m http.server 8080 --directory web
+python3 -m http.server 8080 --bind 127.0.0.1 --protocol HTTP/1.1 --directory web
 ```
 
 Open `http://localhost:8080/`. Loading is silent; press Play to listen. The player

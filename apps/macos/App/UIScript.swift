@@ -650,7 +650,9 @@ private struct Probe {
         require(browser.category == .songs && browser.diagnostic == nil && !browser.songs.isEmpty, "published catalog available with Songs default")
         let publishedCount = browser.songs.count
         var callbackFrames = 0
-        for title in ["Sodium Afterimage", "Root and Branches"] {
+        let sampleTitles = browser.songs.filter { $0.variant(.keys) != nil }.prefix(2).map(\.title)
+        require(!sampleTitles.isEmpty, "catalog contains a Keys example")
+        for title in sampleTitles {
             browser.search = title
             require(browser.filteredSongs.contains { $0.title == title }, "published title discoverable: \(title)")
             if let song = browser.filteredSongs.first(where: { $0.title == title }) {
@@ -2355,16 +2357,24 @@ private struct Probe {
                 var entry = first; entry.space.field = field
                 require(memory.add(entry) == nil && memory.entries[0].space.field == field, "field metadata \(field)")
             }
-            if let pool = engine.listRecords().first(where: { $0.paths.count > 1 }) {
-                let beforeFiles = try pool.paths.map { try Data(contentsOf: URL(fileURLWithPath: $0)) }
-                engine.open(pool); let want = engine.loadID
-                for _ in 0..<6000 where engine.installedSerial < want { try? await Task.sleep(for: .milliseconds(5)) }
-                m.snapshotRecord(); m.pick(.record(0))
-                let list = m.favorites
-                require(m.origin?.paths.count == pool.paths.count && m.addFavorite()?.contains("one saved file") == true && m.favorites == list,
-                        "multi-file origin requires standalone Save As")
-                require(try pool.paths.map { try Data(contentsOf: URL(fileURLWithPath: $0)) } == beforeFiles, "pool files unchanged")
-            } else { fail("FAVORITES multi-file fixture missing") }
+            let splitHeader = dir.appendingPathComponent("header.tl"), splitEvents = dir.appendingPathComponent("events.tl")
+            let golden = try Data(contentsOf: engine.recordsRoot.appendingPathComponent("tests/golden/48000/bell.tl"))
+            var headerBytes = Data(), eventBytes = Data()
+            for line in PatchWriteback.lines(golden) {
+                if let first = line.tokens.first, first == "hash" || UInt64(first) != nil { eventBytes.append(line.bytes) }
+                else { headerBytes.append(line.bytes) }
+            }
+            try headerBytes.write(to: splitHeader); try eventBytes.write(to: splitEvents)
+            let splitPaths = [splitHeader.path, splitEvents.path]
+            let beforeFiles = try splitPaths.map { try Data(contentsOf: URL(fileURLWithPath: $0)) }
+            engine.open(paths: splitPaths, title: "Split Favorites fixture"); let want = engine.loadID
+            for _ in 0..<6000 where engine.installedSerial < want { try? await Task.sleep(for: .milliseconds(5)) }
+            require(engine.installedSerial == want && engine.info != nil && engine.errorText == nil, "split fixture accepted")
+            m.snapshotRecord(); m.pick(.record(0))
+            let list = m.favorites
+            require(m.origin?.paths.count == splitPaths.count && m.addFavorite()?.contains("one saved file") == true && m.favorites == list,
+                    "multi-file origin requires standalone Save As")
+            require(try splitPaths.map { try Data(contentsOf: URL(fileURLWithPath: $0)) } == beforeFiles, "pool files unchanged")
             say("FAVORITES \(failures == before ? "ok" : "FAIL") checks=\(checks) current=validated identity=path_index_name disabled=unsaved space=exact fx=retained armed=no failures=atomic persistence=version1")
         } catch { fail("FAVORITES \(error)") }
     }

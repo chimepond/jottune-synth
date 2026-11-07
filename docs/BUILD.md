@@ -24,12 +24,14 @@ for corpus replay. A missing optional collection is reported explicitly.
 
 ```sh
 make web
-python3 -m http.server 8080 --directory web
+python3 -m http.server 8080 --bind 127.0.0.1 --protocol HTTP/1.1 --directory web
 ```
 
 All player assets are relative, so the generated `web/` tree can be served from
 an origin root or a directory. It needs no account, database or remote rendering
-service. Use localhost for development and HTTPS for service-worker offline use.
+service. The local preview command uses Python 3.11 or later and persistent
+HTTP connections. See [Python's server options](https://docs.python.org/3/library/http.server.html#command-line-interface).
+Use localhost for development and HTTPS for service-worker offline use.
 
 The browser and Node client use a renderer registry. Development builds receive
 development identities. Kept renderer archives preserve their original bytes,

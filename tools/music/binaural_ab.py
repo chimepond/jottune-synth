@@ -938,8 +938,9 @@ def main():
     missing = [nm for nm, _ in items if nm not in MADE and not all(
         os.path.exists(os.path.join(RENDERS, nm + ext)) for ext in ('.tl', '.wav'))]
     if missing:
-        sys.exit('binaural_ab.py: no render of %s in out/music; render it first: tools/music/play.sh -n '
-                 'PIECE, or python3 -B tools/music/compose.py --profile=NAME PIECE-keys for PIECE-keys-NAME'
+        sys.exit('binaural_ab.py: no render of %s in out/music; create that directory, then render '
+                 'a complete song with build/s12e10p1v1/harness --play song.tl '
+                 '--merged out/music/NAME.tl --wav out/music/NAME.wav (NAME is the requested item)'
                  % ', '.join(missing))
     if (a.integer or any(nm not in MADE for nm, _ in items)) and subprocess.run(
             ['make', '-C', SPIKE, '-s', 'SINE_BITS=12', 'EXP_BITS=10', 'PHASE64=1', 'ENV64=1']).returncode:
