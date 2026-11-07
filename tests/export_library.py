@@ -216,34 +216,60 @@ class Exports(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Duplicate editorial order'):
             exporter.catalog_entries(self.catalog, self.root)
 
-    def test_recovered_declarations_keep_unknowns_clocks_and_profile_scope(self):
-        value, _ = exporter.catalog_entries(ROOT / 'music/library.json', ROOT)
-        songs = [song for song in value['songs'] if song['id'].startswith('songbook/')]
-        self.assertEqual(len(songs), 47)
-        standards = {song['id']:next(v for v in song['variants'] if v['kind'] == 'standard') for song in songs}
-        self.assertEqual(sum('genre' in v['discovery']['metadata'] for v in standards.values()), 46)
-        self.assertEqual(sum('tempo' in v['discovery']['metadata'] for v in standards.values()), 46)
+    def test_declared_metadata_keeps_unknowns_tempo_ranges_and_profile_scope(self):
+        declarations = {
+            'steady': {'genre':{'value':'pulse-study','source':'creator-declared'},
+                       'tempo':{'min_bpm':80,'max_bpm':80,'source':'retained-score'}},
+            'changing': {'genre':{'value':'rhythm-study','source':'creator-declared'},
+                         'tempo':{'min_bpm':90,'max_bpm':140,'source':'retained-score'}},
+            'slow-clock': {'genre':{'value':'clock-study','source':'retained-score'},
+                           'tempo':{'min_bpm':60,'max_bpm':100,'source':'retained-score'}},
+            'unknown-tempo': {'genre':{'value':'ambient-study','source':'creator-declared'}},
+            'unknown-genre': {'tempo':{'min_bpm':72,'max_bpm':72,'source':'creator-declared'}},
+        }
+        (self.root / 'declarations.json').write_text(json.dumps(declarations))
+        records = {'standard':self.sine.encode(), 'keys':(self.root / 'bell.tl').read_bytes(),
+                   'mirror':(ROOT / 'tests/golden/48000/bandpass.tl').read_bytes()}
+        self.assertEqual(len({hashlib.sha256(data).hexdigest() for data in records.values()}), 3)
+        self.value['songs'] = []
+        for name, metadata in declarations.items():
+            variants = []
+            for kind, data in records.items():
+                path = name + '-' + kind + '.tl'
+                (self.root / path).write_bytes(data)
+                discovery = {'record_sha256':hashlib.sha256(data).hexdigest(), 'source':'declarations.json'}
+                if kind == 'standard':
+                    discovery['metadata'] = copy.deepcopy(metadata)
+                variants.append({'kind':kind, 'id':name + '/' + kind, 'paths':[path], 'discovery':discovery})
+            self.value['songs'].append({'id':name, 'title':name, 'collection':'Declarations', 'variants':variants})
+        self.save()
+        value, _ = exporter.catalog_entries(self.catalog, self.root)
+        self.assertEqual(len(value['songs']), 5)
+        standards = {song['id']:next(v for v in song['variants'] if v['kind'] == 'standard') for song in value['songs']}
+        self.assertEqual(sum('genre' in v['discovery']['metadata'] for v in standards.values()), 4)
+        self.assertEqual(sum('tempo' in v['discovery']['metadata'] for v in standards.values()), 4)
         self.assertEqual(sum(v['discovery']['metadata'].get('genre', {}).get('source') == 'creator-declared'
-                             for v in standards.values()), 45)
-        for song in songs:
+                             for v in standards.values()), 3)
+        manifest = self.export()
+        self.assertEqual(len(manifest['songs']), len(declarations))
+        for song in manifest['songs']:
+            self.assertEqual({v['kind'] for v in song['variants']}, {'standard', 'keys', 'mirror'})
             for variant in song['variants']:
-                discovery = variant.get('discovery', {})
-                self.assertNotIn('provenance', discovery, 'A composing model cannot be inferred from its coordinator.')
-                if variant['kind'] != 'standard':
-                    self.assertNotIn('metadata', discovery, 'Recovery does not describe derived profiles.')
+                discovery = variant['discovery']
+                self.assertNotIn('provenance', discovery, 'Absent model attribution must remain unknown.')
+                self.assertEqual(discovery['record_sha256'], variant['record_sha256'])
+                self.assertEqual(hashlib.sha256((self.output / variant['path']).read_bytes()).hexdigest(),
+                                 discovery['record_sha256'])
+                if variant['kind'] == 'standard':
+                    self.assertEqual(discovery['metadata'], declarations[song['id']])
                 else:
-                    self.assertEqual(len(variant['paths']), 1)
-                    self.assertEqual(hashlib.sha256((ROOT / variant['paths'][0]).read_bytes()).hexdigest(),
-                                     discovery['record_sha256'])
-        metadata = lambda suffix:next(v['discovery']['metadata'] for key, v in standards.items() if key.endswith('/' + suffix))
-        self.assertEqual(metadata('sidewalk-meridian')['tempo'],
-                         {'min_bpm':80, 'max_bpm':80, 'source':'retained-score'})
-        self.assertEqual(metadata('faultline-atlas')['tempo'],
-                         {'min_bpm':90, 'max_bpm':132, 'source':'retained-score'})
-        self.assertEqual(metadata('clockmakers-garden')['tempo'],
-                         {'min_bpm':60, 'max_bpm':100, 'source':'retained-score'})
-        self.assertNotIn('tempo', metadata('lattice-breathing'))
-        self.assertNotIn('genre', metadata('paper-lanterns'))
+                    self.assertNotIn('metadata', discovery, 'Labels must not transfer to another saved profile.')
+        metadata = lambda name:standards[name]['discovery']['metadata']
+        self.assertEqual(metadata('steady')['tempo'], {'min_bpm':80,'max_bpm':80,'source':'retained-score'})
+        self.assertEqual(metadata('changing')['tempo'], {'min_bpm':90,'max_bpm':140,'source':'retained-score'})
+        self.assertEqual(metadata('slow-clock')['tempo'], {'min_bpm':60,'max_bpm':100,'source':'retained-score'})
+        self.assertNotIn('tempo', metadata('unknown-tempo'))
+        self.assertNotIn('genre', metadata('unknown-genre'))
 
     def test_metadata_refresh_preserves_canonical_bytes_measurements_and_unrelated_assets(self):
         before = self.export()
@@ -414,29 +440,36 @@ class Exports(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, 'positive native durations'):
                     exporter.catalog_documents(manifest)
 
-    def test_current_source_catalog_keeps_legacy_records_and_eight_favorites(self):
+    def test_current_demo_catalog_keeps_eight_favorites_and_profile_identities(self):
         value, _ = exporter.catalog_entries(ROOT / 'music/library.json', ROOT)
+        self.assertEqual(len(value['songs']), 8)
         selections = [(song['id'], variant) for song in value['songs'] for variant in song['variants']
                       if 'featured' in variant.get('discovery', {})]
         self.assertEqual(len(selections), 8)
         featured = sorted(selections, key=lambda row:row[1]['discovery']['featured']['order'])
-        self.assertEqual(featured[0][0], 'music/foundry')
-        self.assertTrue(any('discovery' not in variant for song in value['songs'] for variant in song['variants']))
+        self.assertEqual([(song_id, variant['kind']) for song_id, variant in featured], [
+            ('foundry', 'keys'), ('power-up', 'keys'), ('hurry-up', 'keys'), ('dubplate', 'standard'),
+            ('root-and-branches', 'standard'), ('quench', 'keys'), ('rivet-line', 'keys'), ('wind-rose', 'keys')])
+        self.assertEqual([variant['discovery']['featured']['order'] for _, variant in featured], list(range(1, 9)))
+        self.assertTrue(any('metadata' not in variant['discovery'] for song in value['songs'] for variant in song['variants']))
         by_song = dict(selections)
         self.assertNotIn('preview-lantern', by_song)
-        self.assertTrue(any(song['id'] == 'preview-lantern' for song in value['songs']))
-        for song_id in ('music/quench', 'music/rivet-line', 'music/wind-rose'):
-            self.assertEqual(by_song[song_id]['kind'], 'keys')
-        self.assertEqual(by_song['music/dubplate']['kind'], 'standard')
-        self.assertEqual(by_song['songbook/recursive-exploration/root-and-branches']['kind'], 'standard')
-        self.assertEqual(by_song['music/hurry-up']['discovery']['metadata']['tempo'],
+        self.assertEqual(by_song['hurry-up']['discovery']['metadata']['tempo'],
                          {'min_bpm':110,'max_bpm':174,'source':'retained-score'})
+        identities = set()
+        for song in value['songs']:
+            self.assertEqual({v['kind'] for v in song['variants']}, {'standard', 'keys', 'mirror'})
+            for variant in song['variants']:
+                self.assertEqual(len(variant['paths']), 1)
+                path = Path(variant['paths'][0])
+                self.assertEqual(path.parts[0], 'examples')
+                self.assertEqual(hashlib.sha256((ROOT / path).read_bytes()).hexdigest(), variant['discovery']['record_sha256'])
+                self.assertNotIn('provenance', variant['discovery'], 'Absent model attribution must remain unknown.')
+                identities.add(variant['discovery']['record_sha256'])
+        self.assertEqual(len(identities), 24, 'Every demo profile remains a distinct complete TL.')
 
-        # Recovered labels belong to exact profiles independently of curation;
-        # an unknown composing model is not attributed to the coordinator.
-        recovered = {'music/rivet-line': ('warehouse-techno', 125),
-                     'music/quench': ('industrial-broken-beat', 160),
-                     'music/night-press': ('industrial-dub', 120)}
+        # Explicit labels stay bound to each retained profile independently of curation.
+        recovered = {'rivet-line': ('warehouse-techno', 125), 'quench': ('industrial-broken-beat', 160)}
         labelled = [song for song in value['songs'] if song['id'] in recovered]
         self.assertEqual(len(labelled), len(recovered))
         hashes = set()
@@ -449,12 +482,12 @@ class Exports(unittest.TestCase):
                 if song['id'] in by_song and variant is by_song[song['id']]:
                     expected_fields.add('featured')
                 self.assertEqual(set(discovery), expected_fields)
-                self.assertEqual(discovery['source'], song['id'] + '/session.tl')
+                self.assertEqual(discovery['source'], 'music/library.json')
                 self.assertEqual(discovery['metadata'], {
                     'genre': {'value': genre, 'source': 'retained-score'},
                     'tempo': {'min_bpm': bpm, 'max_bpm': bpm, 'source': 'retained-score'}})
                 hashes.add(discovery['record_sha256'])
-        self.assertEqual(len(hashes), 9, 'Each saved profile retains its own canonical identity.')
+        self.assertEqual(len(hashes), 6, 'Each saved profile retains its own canonical identity.')
 
     def test_hash_failure_or_missing_hash_preserves_previous_export(self):
         self.export()

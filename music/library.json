@@ -2,9 +2,302 @@
   "version": 1,
   "songs": [
     {
+      "id": "foundry",
+      "title": "Foundry",
+      "collection": "Original repertoire",
+      "revision": "Original mix",
+      "variants": [
+        {
+          "kind": "standard",
+          "id": "examples/foundry-standard.tl",
+          "paths": [
+            "examples/foundry-standard.tl"
+          ],
+          "discovery": {
+            "record_sha256": "f1a9106b06d946c4b23d5c973389ec36aa0d03140ef92b22762785862506e02e",
+            "source": "music/library.json"
+          }
+        },
+        {
+          "kind": "keys",
+          "id": "examples/foundry-keys.tl",
+          "paths": [
+            "examples/foundry-keys.tl"
+          ],
+          "discovery": {
+            "record_sha256": "844ad9f52cf6a7da65ea938775a20c7b8513368aa68c8926c179681d8bf09f87",
+            "source": "music/library.json",
+            "metadata": {
+              "genre": {
+                "value": "industrial-techno",
+                "source": "retained-score"
+              },
+              "tempo": {
+                "min_bpm": 128,
+                "max_bpm": 128,
+                "source": "retained-score"
+              }
+            },
+            "featured": {
+              "order": 1,
+              "note": "An industrial techno arrangement built around a repeated riff."
+            },
+            "showcase": {
+              "order": 1,
+              "note": "The authored riff visits eight feedback settings from 0 to 12 radians, four bars per setting. Keys supplies pitch-based stereo placement."
+            }
+          }
+        },
+        {
+          "kind": "mirror",
+          "id": "examples/foundry-mirror.tl",
+          "paths": [
+            "examples/foundry-mirror.tl"
+          ],
+          "discovery": {
+            "record_sha256": "49cd1a8af97893adcf001c8f8ff41c23394fc96b24b25b6ff7501524704d3852",
+            "source": "music/library.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": "power-up",
+      "title": "Power Up",
+      "collection": "Original repertoire",
+      "revision": "Original mix",
+      "variants": [
+        {
+          "kind": "standard",
+          "id": "examples/power-up-standard.tl",
+          "paths": [
+            "examples/power-up-standard.tl"
+          ],
+          "discovery": {
+            "record_sha256": "4f95de8438d8e58ef51a652bb776f88b56796272df127fb790c725d5243e0bab",
+            "source": "music/library.json"
+          }
+        },
+        {
+          "kind": "keys",
+          "id": "examples/power-up-keys.tl",
+          "paths": [
+            "examples/power-up-keys.tl"
+          ],
+          "discovery": {
+            "record_sha256": "47908606472df887d0767fc0c879b89684e574723786a40dcc76d5277c70e175",
+            "source": "music/library.json",
+            "metadata": {
+              "tempo": {
+                "min_bpm": 150,
+                "max_bpm": 150,
+                "source": "retained-score"
+              }
+            },
+            "featured": {
+              "order": 2,
+              "note": "A game-level arrangement with a recurring hook and stage-clear ending."
+            },
+            "showcase": {
+              "order": 2,
+              "note": "The hook visits eight modulation-index settings from 0 to 6 radians, four bars per setting. Keys supplies pitch-based stereo placement."
+            }
+          }
+        },
+        {
+          "kind": "mirror",
+          "id": "examples/power-up-mirror.tl",
+          "paths": [
+            "examples/power-up-mirror.tl"
+          ],
+          "discovery": {
+            "record_sha256": "b6b2e0da06ba103efa43d02fa64c2ae4a86db1b44a775deab4b3b699fcdf45e9",
+            "source": "music/library.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": "hurry-up",
+      "title": "Hurry Up",
+      "collection": "Original repertoire",
+      "revision": "Original mix",
+      "variants": [
+        {
+          "kind": "standard",
+          "id": "examples/hurry-up-standard.tl",
+          "paths": [
+            "examples/hurry-up-standard.tl"
+          ],
+          "discovery": {
+            "record_sha256": "c1d847e94449401bbcd4c55e6f18b5ef2e1bef0233bc171d543b577192b6204b",
+            "source": "music/library.json"
+          }
+        },
+        {
+          "kind": "keys",
+          "id": "examples/hurry-up-keys.tl",
+          "paths": [
+            "examples/hurry-up-keys.tl"
+          ],
+          "discovery": {
+            "record_sha256": "b2fb498118a7491153c78f53fcb045b5e6b03b5caf2b4aed05e745d4d4eac652",
+            "source": "music/library.json",
+            "metadata": {
+              "tempo": {
+                "min_bpm": 110,
+                "max_bpm": 174,
+                "source": "retained-score"
+              }
+            },
+            "featured": {
+              "order": 3,
+              "note": "A game-level arrangement that accelerates through eight written tempos."
+            },
+            "showcase": {
+              "order": 3,
+              "note": "The retained tempo map steps through 110, 117, 125, 134, 143, 153, 163 and 174 BPM every four bars; this range is not a constant clock."
+            }
+          }
+        },
+        {
+          "kind": "mirror",
+          "id": "examples/hurry-up-mirror.tl",
+          "paths": [
+            "examples/hurry-up-mirror.tl"
+          ],
+          "discovery": {
+            "record_sha256": "bdcd63f160658ca345c03b38fa69b83ac6ae8e7f5191d7c6cc1f5f7b09ad7f8a",
+            "source": "music/library.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": "dubplate",
+      "title": "Dubplate",
+      "collection": "Original repertoire",
+      "revision": "Original mix",
+      "variants": [
+        {
+          "kind": "standard",
+          "id": "examples/dubplate-standard.tl",
+          "paths": [
+            "examples/dubplate-standard.tl"
+          ],
+          "discovery": {
+            "record_sha256": "5082e836a530b6452c3cce0b2baf4c9be6e05a57ff688aa252f6131672fcbd0c",
+            "source": "music/library.json",
+            "metadata": {
+              "genre": {
+                "value": "dub-reggae",
+                "source": "retained-score"
+              },
+              "tempo": {
+                "min_bpm": 75,
+                "max_bpm": 75,
+                "source": "retained-score"
+              }
+            },
+            "featured": {
+              "order": 4,
+              "note": "A dub reggae arrangement presented with its authored stereo layout."
+            },
+            "showcase": {
+              "order": 4,
+              "note": "Echo phrases are written as later notes in darker, quieter patches on alternating sides. The Standard version preserves the authored moving melodica commands."
+            }
+          }
+        },
+        {
+          "kind": "keys",
+          "id": "examples/dubplate-keys.tl",
+          "paths": [
+            "examples/dubplate-keys.tl"
+          ],
+          "discovery": {
+            "record_sha256": "460193801cabccc25a5ea0ad3df8c1ce418670bf9987ae14f9a4e648e2137879",
+            "source": "music/library.json"
+          }
+        },
+        {
+          "kind": "mirror",
+          "id": "examples/dubplate-mirror.tl",
+          "paths": [
+            "examples/dubplate-mirror.tl"
+          ],
+          "discovery": {
+            "record_sha256": "f7d4d3e40e07a174a88a2b200b27cbe9684b853aea5f392f306a4fd3c82e47ac",
+            "source": "music/library.json"
+          }
+        }
+      ]
+    },
+    {
+      "id": "root-and-branches",
+      "title": "Root and Branches",
+      "collection": "Recursive exploration",
+      "revision": "Final mix",
+      "variants": [
+        {
+          "kind": "standard",
+          "id": "examples/root-and-branches-standard.tl",
+          "paths": [
+            "examples/root-and-branches-standard.tl"
+          ],
+          "discovery": {
+            "record_sha256": "c59c45f68c8abbec0ef5444b24dcf55d7e68cc4aa58347c39b848c9f74a28618",
+            "source": "music/library.json",
+            "metadata": {
+              "tempo": {
+                "min_bpm": 125,
+                "max_bpm": 125,
+                "source": "retained-score"
+              },
+              "genre": {
+                "value": "subtractive/generative/recursive-loop-exploration",
+                "source": "retained-score"
+              }
+            },
+            "featured": {
+              "order": 5,
+              "note": "A long-form recursive motif arrangement in six written chapters."
+            },
+            "showcase": {
+              "order": 5,
+              "note": "Native generator lanes combine Thue-Morse, Cantor, Fibonacci and Euclidean gates with pitch and cutoff controls. Harmonic-bank sources feed low-pass filters; configured controls are not an audibility measurement."
+            }
+          }
+        },
+        {
+          "kind": "keys",
+          "id": "examples/root-and-branches-keys.tl",
+          "paths": [
+            "examples/root-and-branches-keys.tl"
+          ],
+          "discovery": {
+            "record_sha256": "957f0dbb387b30eb03d2e1e3bec95c92ed2cacb44362e97cfae1ea35fd6cb88a",
+            "source": "music/library.json"
+          }
+        },
+        {
+          "kind": "mirror",
+          "id": "examples/root-and-branches-mirror.tl",
+          "paths": [
+            "examples/root-and-branches-mirror.tl"
+          ],
+          "discovery": {
+            "record_sha256": "90e5bf405c7458c61e59465ff02825916949670bb0a9d09dd3166ea9313f0c22",
+            "source": "music/library.json"
+          }
+        }
+      ]
+    },
+    {
       "id": "quench",
       "title": "Quench",
-      "collection": "Listening examples",
+      "collection": "Original repertoire",
+      "revision": "Original mix",
       "variants": [
         {
           "kind": "standard",
@@ -15,9 +308,16 @@
           "discovery": {
             "record_sha256": "14434130ababa4e577d3efca74437944e1ee8b8972370aa41bb28b2765dffa3f",
             "source": "music/library.json",
-            "featured": {
-              "order": 1,
-              "note": "Listening selection."
+            "metadata": {
+              "genre": {
+                "value": "industrial-broken-beat",
+                "source": "retained-score"
+              },
+              "tempo": {
+                "min_bpm": 160,
+                "max_bpm": 160,
+                "source": "retained-score"
+              }
             }
           }
         },
@@ -26,21 +326,56 @@
           "id": "examples/quench-keys.tl",
           "paths": [
             "examples/quench-keys.tl"
-          ]
+          ],
+          "discovery": {
+            "record_sha256": "c206640864e76bf3c0d6dd0088527446be74a9b74ce8769d81085df0e9541e7c",
+            "source": "music/library.json",
+            "metadata": {
+              "genre": {
+                "value": "industrial-broken-beat",
+                "source": "retained-score"
+              },
+              "tempo": {
+                "min_bpm": 160,
+                "max_bpm": 160,
+                "source": "retained-score"
+              }
+            },
+            "featured": {
+              "order": 6,
+              "note": "An industrial broken-beat arrangement at 160 BPM. Keys supplies pitch-based stereo placement."
+            }
+          }
         },
         {
           "kind": "mirror",
           "id": "examples/quench-mirror.tl",
           "paths": [
             "examples/quench-mirror.tl"
-          ]
+          ],
+          "discovery": {
+            "record_sha256": "ce2e6988bae29dc07db1d17510ccbfacb8c88da982f197729f5df4824f219a7f",
+            "source": "music/library.json",
+            "metadata": {
+              "genre": {
+                "value": "industrial-broken-beat",
+                "source": "retained-score"
+              },
+              "tempo": {
+                "min_bpm": 160,
+                "max_bpm": 160,
+                "source": "retained-score"
+              }
+            }
+          }
         }
       ]
     },
     {
       "id": "rivet-line",
       "title": "Rivet Line",
-      "collection": "Listening examples",
+      "collection": "Original repertoire",
+      "revision": "Original mix",
       "variants": [
         {
           "kind": "standard",
@@ -51,9 +386,16 @@
           "discovery": {
             "record_sha256": "593d258955d36f8b83e627a5f00815710e986f9d160fa23c07e995ab2674eeed",
             "source": "music/library.json",
-            "featured": {
-              "order": 2,
-              "note": "Listening selection."
+            "metadata": {
+              "genre": {
+                "value": "warehouse-techno",
+                "source": "retained-score"
+              },
+              "tempo": {
+                "min_bpm": 125,
+                "max_bpm": 125,
+                "source": "retained-score"
+              }
             }
           }
         },
@@ -62,21 +404,56 @@
           "id": "examples/rivet-line-keys.tl",
           "paths": [
             "examples/rivet-line-keys.tl"
-          ]
+          ],
+          "discovery": {
+            "record_sha256": "eb776003a1a7eb87905e34037fc763613d31e824ed1cbb04dfb8b7c1a7e635e4",
+            "source": "music/library.json",
+            "metadata": {
+              "genre": {
+                "value": "warehouse-techno",
+                "source": "retained-score"
+              },
+              "tempo": {
+                "min_bpm": 125,
+                "max_bpm": 125,
+                "source": "retained-score"
+              }
+            },
+            "featured": {
+              "order": 7,
+              "note": "A warehouse techno arrangement at 125 BPM. Keys supplies pitch-based stereo placement."
+            }
+          }
         },
         {
           "kind": "mirror",
           "id": "examples/rivet-line-mirror.tl",
           "paths": [
             "examples/rivet-line-mirror.tl"
-          ]
+          ],
+          "discovery": {
+            "record_sha256": "3e05a519aa4bd4a095771c1aacb4dcf9bbeb76b055251dd5b7cc85efebc3ce7f",
+            "source": "music/library.json",
+            "metadata": {
+              "genre": {
+                "value": "warehouse-techno",
+                "source": "retained-score"
+              },
+              "tempo": {
+                "min_bpm": 125,
+                "max_bpm": 125,
+                "source": "retained-score"
+              }
+            }
+          }
         }
       ]
     },
     {
       "id": "wind-rose",
       "title": "Wind Rose",
-      "collection": "Listening examples",
+      "collection": "Original repertoire",
+      "revision": "Original mix",
       "variants": [
         {
           "kind": "standard",
@@ -86,11 +463,7 @@
           ],
           "discovery": {
             "record_sha256": "a1dc87b11440f145a63411336613172bbebc70e2600da0674304d8739fc9bd4c",
-            "source": "music/library.json",
-            "featured": {
-              "order": 3,
-              "note": "Listening selection."
-            }
+            "source": "music/library.json"
           }
         },
         {
@@ -98,14 +471,26 @@
           "id": "examples/wind-rose-keys.tl",
           "paths": [
             "examples/wind-rose-keys.tl"
-          ]
+          ],
+          "discovery": {
+            "record_sha256": "d3247cfd108030841e61d3c583b97bcc56688891bddbe08499cf5c60dfe5d7c0",
+            "source": "music/library.json",
+            "featured": {
+              "order": 8,
+              "note": "Glass arpeggios and deep chimes in F Lydian. Keys supplies pitch-based stereo placement."
+            }
+          }
         },
         {
           "kind": "mirror",
           "id": "examples/wind-rose-mirror.tl",
           "paths": [
             "examples/wind-rose-mirror.tl"
-          ]
+          ],
+          "discovery": {
+            "record_sha256": "9fdc5dd54ff03138418049c48ec440b8cb4f1c629d43e9c3410399379aa6016d",
+            "source": "music/library.json"
+          }
         }
       ]
     }

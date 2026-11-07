@@ -1003,10 +1003,13 @@ function libraryDetails() {
 function libraryVariants(preferred) {
   const song = selectedSong(), select = $('song-variant');
   const variants = librarySelection.find(entry => entry.song === song)?.variants || [];
-  preferred = variants.some(variant => variant.kind === preferred) ? preferred
-    : variants.some(variant => variant.kind === song.defaultKind) ? song.defaultKind : variants[0]?.kind;
+  preferred = variants.some(variant => variant.kind === preferred) ? preferred : preferredLibraryVariant(variants)?.kind;
   select.replaceChildren(...variants.map(variant => libraryOption(variant.kind, variantLabels[variant.kind] || variant.kind)));
   select.disabled = !song; select.value = preferred || ''; libraryDetails();
+}
+function preferredLibraryVariant(variants) {
+  return variants.find(variant => variant.kind === 'keys')
+    || variants.find(variant => variant.kind === 'standard') || variants[0];
 }
 function categoryForFilters() {
   const categories = catalogIndex.categories;
@@ -1051,7 +1054,7 @@ async function librarySongs({cursor = null, reset = true} = {}) {
     selectedSongId = result.items.some(item => item.song.id === previous) ? previous : result.items[0]?.song.id || '';
     songChoices.clear();
     select.replaceChildren(...result.items.map(({song, variants}) => {
-      const variant = variants.find(item => item.kind === song.defaultKind) || variants[0];
+      const variant = preferredLibraryVariant(variants);
       const sameTitle = result.items.filter(other => other.song.id !== song.id && other.song.title === song.title);
       const disambiguation = sameTitle.length ? ` · ${song.collection}`
         + (sameTitle.some(other => other.song.collection === song.collection) ? ` [${song.id}]` : '') : '';

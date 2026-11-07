@@ -39,8 +39,9 @@ Open `http://localhost:8080/`. Loading is silent; press Play to listen. The play
 supports local files, listening profiles, live views, analysis, TL/WAV/SVG export
 and portable song links. Rendering runs on the listener's device.
 
-The included listening examples are small. To build with the separate song
-collection, select its checkout explicitly:
+The included Favorites contain eight completed songs and their saved versions.
+The player defaults to Keys ±30° where available, otherwise Original. To browse
+the full separate song collection, select its checkout explicitly:
 
 ```sh
 make songs TUNES_ROOT=../tunes SONG_CATALOG=../tunes/library.json

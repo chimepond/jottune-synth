@@ -676,14 +676,17 @@ const curatedCatalog = () => {
     featured:{order:1,note:'Start here.'}, provenance:{model:'declared-model',model_source:'user-stated'}};
   return catalog;
 };
-test('Favorites use editorial order and exact saved variants; Browse all retains Keys defaults', () => withPage(async page => {
+test('Favorites retain editorial order and prefer Keys without inheriting Original metadata', () => withPage(async page => {
   assert.deepEqual(songRows(page).map(({radio}) => radio.value), ['songs/second.tl','songs/first.tl']);
   assert.equal(selectedSongId(page), 'songs/second.tl');
   assert.equal(page.get('song-variant').value, 'standard');
   assert.match(page.get('song-discovery').textContent, /Start here.*Genre: Unknown.*90 BPM.*declared-model \(user-stated\)/);
   selectSong(page,'songs/first.tl');
   assert.equal(selectedSongId(page), 'songs/first.tl');
-  assert.equal(page.get('song-variant').value, 'standard');
+  assert.equal(page.get('song-variant').value, 'keys');
+  assert.match(page.get('song-discovery').textContent, /Genre: Unknown\. Tempo: Unknown\. Model: Unknown/);
+  assert.equal(songRows(page)[1].text.textContent, '<First song> · 0:42');
+  page.get('song-variant').value = 'standard'; page.get('song-variant').onchange();
   assert.match(page.get('song-discovery').textContent, /A selected changing-tempo arrangement.*110–174 BPM range.*Model: Unknown/);
   await page.get('library-all').click();
   assert.equal(page.get('song-variant').value, 'standard', 'Same-song explicit version is preserved');

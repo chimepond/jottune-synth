@@ -38,6 +38,32 @@ try{
       prose:getComputedStyle(document.querySelector('#library-summary>.small')).fontFamily}));
     assert.ok(initial.result==null,'Opening the player does not render audio');assert.equal(initial.wide,false);
     assert.match(initial.brand,/Michroma/);assert.doesNotMatch(initial.prose,/Michroma/);
+    await page.waitForFunction(()=>document.querySelector('#song-select input[type=radio]'));
+    const songs=page.locator('#song-select input[type=radio]');
+    const favoriteCount=await songs.count();
+    for(let index=0;index<favoriteCount;index++) {
+      await songs.nth(index).check();
+      const kinds=await page.locator('#song-variant option').evaluateAll(nodes=>nodes.map(node=>node.value));
+      const expected=kinds.includes('keys')?'keys':kinds.includes('standard')?'standard':kinds[0];
+      assert.equal(await page.locator('#song-variant').inputValue(),expected,'New song selects Keys when available');
+    }
+    assert.equal(await page.evaluate(()=>IntFM.result() ?? null),null,'Browsing Favorites remains silent');
+    console.log(`PASS ${type} ${viewport.width}x${viewport.height}: ${favoriteCount} Favorites use the expected saved profile`);
+    if(viewport.width===1440 || viewport.width===390) {
+      await songs.first().check();
+      const saved=await page.evaluate(async()=>{
+        const catalog=await(await fetch(new URL('catalog/featured-1.json',document.baseURI))).json();
+        return catalog.items[0].variants.find(variant=>variant.kind===document.querySelector('#song-variant').value);
+      });
+      await page.locator('#song-load').click();
+      await page.waitForFunction(()=>!document.querySelector('#play').disabled);
+      const loaded=await page.evaluate(()=>({sha:IntFM.result().recordSha256,channels:IntFM.result().channels,
+        action:document.querySelector('#play').textContent}));
+      assert.equal(loaded.sha,saved.record_sha256,'Load prepares the selected saved version');
+      assert.equal(loaded.channels,saved.technical.channels);
+      assert.equal(loaded.action,'Play','Loading a Favorite remains silent');
+      console.log(`PASS ${type} ${viewport.width}x${viewport.height}: Favorite Load matches saved SHA and channels without autoplay`);
+    }
 
     const take=await page.evaluate(async()=>{
       const score=await(await fetch(new URL('starter.score.json',document.baseURI))).json();
