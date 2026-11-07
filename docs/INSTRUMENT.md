@@ -3,10 +3,11 @@
 
 # JotTune Synth: compose, render, inspect, revise
 
-In a source checkout, use the macOS app's **Records → Songs** to browse the 210 compositions and
-582 Standard, Keys stereo and Keys mirror variants in [the library](../music/library.json).
-Keys is the default where available; Standard preserves each original spatial
-route.
+The source checkout includes complete songs in [the example library](../music/library.json).
+Use the macOS app's **Records → Songs** to browse those files. Keys is the default
+where available; Standard preserves each original spatial route. The larger
+ChimePond Tunes collection is maintained separately; the
+[project guide](../README.md#browser) explains how to build its browser catalog.
 `apps/macos/tlplay PATH.tl` opens a standalone TL in the built app.
 
 ## Start from a player URL without MCP
