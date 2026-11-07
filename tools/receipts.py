@@ -94,7 +94,16 @@ def _json(data):
         raise
 
 
+def workspace_path(path):
+    selected = Path(path).resolve()
+    root = os.environ.get("JOTTUNE_MCP_WORKSPACE")
+    require(not root or selected.is_relative_to(Path(root).resolve()),
+            "receipt path leaves the configured workspace")
+    return selected
+
+
 def atomic(path, data):
+    path = workspace_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, pending = tempfile.mkstemp(prefix=".pending-", dir=path.parent)
     try:
@@ -115,19 +124,19 @@ def atomic(path, data):
 
 @contextlib.contextmanager
 def locked(directory, create=False):
-    directory = Path(directory).resolve()
+    directory = workspace_path(directory)
     if create:
         directory.mkdir(parents=True, exist_ok=True)
     else:
         require((directory / "operations.tsv").is_file(), "operation journal does not exist")
-    with (directory / ".operations.lock").open("a+b") as stream:
+    with workspace_path(directory / ".operations.lock").open("a+b") as stream:
         fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
         yield directory
 
 
 def _artifact(directory, data):
     identity = digest(data)
-    path = directory / "receipts" / (identity + ".json")
+    path = workspace_path(directory / "receipts" / (identity + ".json"))
     if path.exists():
         require(path.read_bytes() == data, "existing receipt artifact is corrupt: " + identity)
     else:
@@ -137,7 +146,7 @@ def _artifact(directory, data):
 
 def _document(directory, identity):
     require(isinstance(identity, str) and DIGEST.fullmatch(identity), "invalid receipt artifact identity")
-    data = (directory / "receipts" / (identity + ".json")).read_bytes()
+    data = workspace_path(directory / "receipts" / (identity + ".json")).read_bytes()
     require(digest(data) == identity, "receipt artifact digest mismatch: " + identity)
     return _json(data)
 
@@ -151,7 +160,7 @@ def _index_bytes(rows):
 
 
 def _read(directory, missing=False):
-    path = directory / "operations.tsv"
+    path = workspace_path(directory / "operations.tsv")
     if missing and not path.exists():
         return [], [], _index_bytes([])
     data = path.read_bytes()

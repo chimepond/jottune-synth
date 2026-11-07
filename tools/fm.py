@@ -31,6 +31,19 @@ import wave
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_HARNESS = ROOT / "build/s12e10p1v1/harness"
+WORKSPACE_ROOT = Path(os.environ["JOTTUNE_MCP_WORKSPACE"]).resolve() if os.environ.get("JOTTUNE_MCP_WORKSPACE") else None
+NATIVE_SECONDS = 120
+MAX_RENDER_BYTES = 192 * 1024 * 1024
+MAX_MEMORY_BYTES = 256 * 1024 * 1024
+
+
+def workspace_path(path):
+    """MCP sets an explicit root; ordinary command-line paths stay explicit."""
+    resolved = Path(path).resolve()
+    require(WORKSPACE_ROOT is None or resolved.is_relative_to(WORKSPACE_ROOT),
+            "tool path leaves the configured workspace", 2)
+    return resolved
+
 NUMERIC = re.compile(r"[ui](8|16|32|64)\Z")
 EDGE = re.compile(r"([^>]+)>([^:]+):([^:]+)(?::([^:]+))?\Z")
 PARTS = {"FROM": 0, "TO": 1, "WEIGHT": 2, "KIND": 3}
@@ -369,9 +382,28 @@ class Native:
         if args and str(args[0]) == "--play" and self.budget_hook is not None:
             self.budget_hook()
         require(sha(self.path.read_bytes()) == self.identity["sha256"], "native executable changed during operation", 5)
-        if self.call_hook is not None:
-            self.call_hook(args)
-        result = subprocess.run([str(self.path), *map(str, args)], capture_output=True, text=True)
+        command = [str(self.path), *map(str, args)]
+        try:
+            if WORKSPACE_ROOT is not None and args and str(args[0]) == "--play" and "--" in args:
+                files = args[list(args).index("--") + 1:]
+                for path in files:
+                    workspace_path(path)
+                if self.call_hook is not None:
+                    self.call_hook(["--inspect", "--", *map(str, files)])
+                inspected = subprocess.run([str(self.path), "--inspect", "--", *map(str, files)],
+                    capture_output=True, text=True, timeout=NATIVE_SECONDS)
+                if inspected.returncode == 0:
+                    rows = [line for line in inspected.stdout.splitlines() if line.startswith("INSPECT ")]
+                    require(len(rows) == 1, "native inspection returned no unique cost estimate", 5)
+                    costs = dict(item.split("=", 1) for item in rows[0].split()[1:] if "=" in item)
+                    lower, pcm = int(costs["render_bytes_lower_bound"]), int(costs["pcm_bytes"])
+                    require(lower <= MAX_RENDER_BYTES and lower + pcm * 3 <= MAX_MEMORY_BYTES,
+                            "render exceeds the supported 192MiB render/256MiB memory profile", 2)
+            if self.call_hook is not None:
+                self.call_hook(args)
+            result = subprocess.run(command, capture_output=True, text=True, timeout=NATIVE_SECONDS)
+        except subprocess.TimeoutExpired as error:
+            raise ToolError("native operation exceeded the 120-second execution limit", 5) from error
         require(sha(self.path.read_bytes()) == self.identity["sha256"], "native executable changed during operation", 5)
         return result
 
@@ -477,6 +509,8 @@ def input_files(files=None, text=None):
     supplied_text = text is not None and bool(text.strip())
     require(bool(files) != supplied_text, "provide exactly one nonempty input: files or text", 2)
     if not supplied_text:
+        for path in files:
+            workspace_path(path)
         yield files
         return
     try:
@@ -529,15 +563,16 @@ def native_render(native, files, want_wav=False):
 
 @contextlib.contextmanager
 def locked(directory, create=True):
-    directory = Path(directory).resolve()
+    directory = workspace_path(directory)
     if create:
         directory.mkdir(parents=True, exist_ok=True)
-    with (directory / ".lock").open("a+b") as lock:
+    with workspace_path(directory / ".lock").open("a+b") as lock:
         fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
         yield directory
 
 
 def atomic(path, data):
+    path = workspace_path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".pending-", dir=path.parent)
     try:
@@ -571,6 +606,7 @@ def source_artifact_bytes(directory, digest, filename):
             "score digest must be a lowercase SHA256", 2)
     journal = receipts_module()
     try:
+        workspace_path(Path(directory) / "receipts" / filename)
         document = journal._document(Path(directory), filename[:-5])
     except journal.ReceiptError as error:
         raise ToolError(str(error), error.exit, **error.details) from error
@@ -683,7 +719,7 @@ def text_artifact_page(directory, kind, digest, offset, length, filename, encodi
                 "text view filename must be its parent receipt SHA256 plus .json", 2)
         require(type(offset) is int and offset >= 0, "offset must be a nonnegative integer", 2)
         require(type(length) is int and 1 <= length <= 8192, "text view length must be from1 through8192", 2)
-        fd = os.open(Path(directory) / "receipts" / filename, os.O_RDONLY | os.O_NONBLOCK)
+        fd = os.open(workspace_path(Path(directory) / "receipts" / filename), os.O_RDONLY | os.O_NONBLOCK)
         try:
             stream = os.fdopen(fd, "rb")
         except BaseException:
@@ -843,7 +879,7 @@ def artifact_read(directory, kind, digest, offset=0, length=8192, *, filename=No
     # A page boundary needs only lookahead; all other bytes are hashed and
     # validated incrementally from this same stream, never reopened or cached.
     retain_end = offset + length + (4 if decoder is not None else 0)
-    with path.open("rb") as stream:
+    with workspace_path(path).open("rb") as stream:
         while True:
             block = stream.read(65536)
             if not block:
@@ -1908,7 +1944,7 @@ def resolve_source(source, native, wav=False):
     """Resolve explicit files, a piece directory, or a recipe through C."""
     if isinstance(source, (list, tuple)):
         return native_render(native, source, wav)
-    path = Path(source)
+    path = workspace_path(source)
     if path.is_dir():
         header = path / "session.tl"
         require(header.is_file(), "piece directory has no session.tl", 2)
@@ -1925,7 +1961,7 @@ def resolve_source(source, native, wav=False):
         reply = native_render(native, files, wav)
         reply.update(source_files=list(map(str, files)), absent_sibling_streams=absent)
         return reply
-    if path.is_file() or isinstance(source, Path) or path.suffix == ".tl" or path.parent != Path("."):
+    if path.is_file() or isinstance(source, Path) or path.suffix == ".tl" or Path(source).parent != Path("."):
         return native_render(native, [path], wav)
     reply = recipe_record(native, str(source))
     if wav:
@@ -2704,11 +2740,26 @@ def analyze(wav, *, mode="overview", out=None, detail="compact"):
     args = [ROOT / "tools/music/analyze.py", mode, Path(wav).resolve()]
     if out is not None:
         require(Path(out).suffix.lower() == ".png", "spectro out must have a .png extension", 2)
-        destination = Path(out).resolve()
-        require(not destination.is_dir(), "spectro output is a directory", 5)
+        raw_destination = Path(out).absolute()
+        require(not os.path.lexists(raw_destination), "spectro output already exists; choose a new path", 2)
+        destination = workspace_path(raw_destination)
+        require(destination != workspace_path(wav), "spectro output must differ from its input", 2)
         destination.parent.mkdir(parents=True, exist_ok=True)
-        args.append(destination)
-    result = existing_command(args)
+        with tempfile.TemporaryDirectory(prefix=".spectro-pending-", dir=destination.parent) as staging:
+            staged = Path(staging) / "output.png"
+            result = existing_command([*args, staged])
+            for field in ("stdout", "stderr"):
+                if isinstance(result.get(field), str):
+                    result[field] = result[field].replace(str(staged), str(destination))
+            if not result["ok"]:
+                return result
+            data = staged.read_bytes()
+            require(data.startswith(b"\x89PNG\r\n\x1a\n"), "analyzer output is not a PNG", 5)
+            # Exclusive hard-link publication is atomic and cannot replace a
+            # pre-existing file or follow a destination symlink after validation.
+            os.link(staged, destination)
+    else:
+        result = existing_command(args)
     if result["ok"] and out is not None:
         data = Path(out).read_bytes()
         require(data.startswith(b"\x89PNG\r\n\x1a\n"), "analyzer output is not a PNG", 5)
@@ -3280,7 +3331,19 @@ def transcribe(source, out, *, options=None, harness=None, native_budget=None):
 
 @public
 def catalog_build(**kwargs):
-    return catalog_module().catalog_build(api=sys.modules[__name__], **kwargs)
+    destination = Path(kwargs["out"]).absolute()
+    require(not os.path.lexists(destination), "catalog output already exists; choose a new path", 2)
+    destination = workspace_path(destination)
+    for source in kwargs.get("records") or []:
+        require(workspace_path(source) != destination, "catalog output must differ from its input", 2)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix=".catalog-pending-", dir=destination.parent) as staging:
+        staged = Path(staging) / "catalog.tsv"
+        result = catalog_module().catalog_build(api=sys.modules[__name__], **dict(kwargs, out=staged))
+        if result.get("ok"):
+            os.link(staged, destination)
+            result["out"] = str(destination)
+        return result
 
 
 @public

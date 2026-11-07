@@ -274,7 +274,7 @@ def _snapshots(fm, directory, files, text, inputs):
     sources = [("input.tl", text.encode("utf-8"))] if text is not None else [(str(p), None) for p in files]
     for ordinal, (logical, data) in enumerate(sources):
         if data is None:
-            fd = os.open(logical, os.O_RDONLY | os.O_NONBLOCK)
+            fd = os.open(fm.workspace_path(logical), os.O_RDONLY | os.O_NONBLOCK)
             try:
                 fm.require(stat.S_ISREG(os.fstat(fd).st_mode), "input occurrence is not a regular file", 2)
                 parts, remaining = [], MAX_INPUT - total + 1

@@ -1134,11 +1134,14 @@ m.render([sys.argv[3]],harness=Path(sys.argv[2]),log=Path(sys.argv[4]))
         need(compact["png_base64"] is None and compact["omitted"] == ["png_base64"], "compact plot returned binary text")
         data = output.read_bytes()
         need(compact["png_bytes"] == len(data) and compact["png_sha256"] == digest(output), "PNG receipt differs")
-        full = okay(self.fm.analyze(wav, mode="spectro", out=output, detail="full"))
+        refused = self.fm.analyze(wav, mode="spectro", out=output, detail="full")
+        need(refused["exit"] == 2 and output.read_bytes() == data, "plot reuse overwrote an existing artifact")
+        full_output = output.parent / "full.PNG"
+        full = okay(self.fm.analyze(wav, mode="spectro", out=full_output, detail="full"))
         need(base64.b64decode(full["png_base64"], validate=True) == data, "full PNG payload changed")
         need(set(full) == {"version", "ok", "exit", "stdout", "stderr", "png", "png_sha256", "png_base64", "mime_type"},
              "explicit full gained compact fields")
-        for key in set(full) - {"png_base64"}:
+        for key in set(full) - {"png_base64", "png", "stdout"}:
             need(compact[key] == full[key], "compact plot changed legacy metadata: " + key)
         offset, joined, chunks = 0, bytearray(), 0
         while offset < len(data):
@@ -1182,7 +1185,7 @@ m.render([sys.argv[3]],harness=Path(sys.argv[2]),log=Path(sys.argv[4]))
                 if destination.parent == output.parent:
                     destination.mkdir()
                 bad = self.fm.analyze(wav, mode="spectro", out=destination)
-                need(bad["exit"] == 5, "plot parent/destination failure lost host5")
+                need(bad["exit"] == (2 if destination.is_dir() else 5), "plot parent/destination refusal differs")
             for options in (dict(out=invalid / "bad.jpg"), dict(out=invalid / "plot.png", detail="unknown"),
                             dict(out=invalid / "plot.png", mode="unknown")):
                 arguments = dict(mode="spectro", **{})
@@ -1192,7 +1195,7 @@ m.render([sys.argv[3]],harness=Path(sys.argv[2]),log=Path(sys.argv[4]))
         finally:
             self.fm.existing_command = existing
         need(not attempts and not invalid.exists(), "invalid plot options produced side effects")
-        failure = self.fm.analyze(self.out / "absent.wav", mode="spectro", out=output)
+        failure = self.fm.analyze(self.out / "absent.wav", mode="spectro", out=output.parent / "absent.PNG")
         need(failure["ok"] is False and failure["exit"] == 1 and "artifact" not in failure,
              "unrelated analyzer failure was relabeled or published an artifact")
         return dict(png_bytes=len(data), chunks=chunks, compact_bytes=len(self.document(compact)),

@@ -44,7 +44,7 @@ def invoke(api, function):
 
 def resolve_directory(api, value):
     api.require(isinstance(value, (str, Path)) and bool(str(value)), 'directory must be a nonempty path', 2)
-    return Path(value).resolve()
+    return api.workspace_path(value)
 
 
 def safe_file(api, root, relative, *, directory=False):
