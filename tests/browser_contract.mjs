@@ -413,7 +413,7 @@ test('optional offline installation never blocks first rendering or claims an un
     page.workers[0].reply(validResult());await pending;
     assert.match(page.get('offline-status').textContent,/Used renderers may be cached/);
     await complete(page,'controlled song');
-    assert.match(page.get('offline-status').textContent,/this renderer are ready/);
+    assert.match(page.get('offline-status').textContent,/Used renderers may be cached/);
     const staleReply = page.workers[1].onmessage;
     const next = page.api.listen('refused song');await nextTurn();
     staleReply({data:validResult()});
@@ -455,7 +455,7 @@ for (const reason of ['rejected','redundant','stalled']) test(`offline setup ${r
     assert.equal(page.workers.length,1,'Late installation must not restart or relabel the uncontrolled render');
     assert.match(page.get('offline-status').textContent,/unavailable; online/);
     await complete(page,'later controlled song');
-    assert.match(page.get('offline-status').textContent,/this renderer are ready/);
+    assert.match(page.get('offline-status').textContent,/Used renderers may be cached/);
   }, {serviceWorker:service});
 });
 

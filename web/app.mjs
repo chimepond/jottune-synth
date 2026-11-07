@@ -185,9 +185,8 @@ let offlineSetupPending = true;
 function hasOfflineControl() {
   try {return serviceWorker?.controller?.scriptURL === serviceWorkerURL.href;} catch {return false;}
 }
-function updateOfflineStatus(rendererReady = false) {
-  $('offline-status').textContent = rendererReady ? 'Offline player and this renderer are ready. Save the TL locally.'
-    : hasOfflineControl() ? 'Offline app is ready. Used renderers may be cached; save the TL locally.'
+function updateOfflineStatus() {
+  $('offline-status').textContent = hasOfflineControl() ? 'Offline app is ready. Used renderers may be cached; save the TL locally.'
     : offlineSetupPending ? 'Preparing offline support…' : 'Offline setup is unavailable; online playback remains available.';
 }
 function prepareOfflineSupport() {
@@ -351,7 +350,7 @@ function rawRender(recordText, config) {
         if (requestGeneration !== generation || activeReject !== rejectRequest) return;
         if (data.spatialModule) spatialModules.set(data, data.spatialModule);
         delete data.spatialModule;
-        if (controlled && data.verdict === 'valid') updateOfflineStatus(true);
+        if (controlled && data.verdict === 'valid') updateOfflineStatus();
         finish(); resolve(data);
       };
       worker.onerror = event => rejectRequest(Error(event.message || 'Worker failed.'));
