@@ -1,3 +1,7 @@
 # Copyright (c) 2026 Nenad Micic
 # SPDX-License-Identifier: Apache-2.0
+# Text files check out with LF endings on every platform, so the shell and other
+# shebang scripts run from any checkout. Git leaves binary files as they are.
+# TL files keep their exact bytes, because their SHA-256 is their identity.
+* text=auto eol=lf
 *.tl -text

@@ -487,7 +487,7 @@ struct SpatialMap: View {
                     ctx.draw(Text("\(i)").font(.system(size: 8)).foregroundStyle(.secondary), at: CGPoint(x: q.x + 10, y: q.y - 8))
                 }
             }
-            // listener and yaw arrow, over the voices: space/SPEC.md section 13's
+            // listener and yaw arrow, over the voices: the spatial renderer's
             // yaw turns the listener clockwise, to the right, as seen from above
             let th = Double(yawMdeg) / 1000 * .pi / 180
             let a = CGPoint(x: c.x + CGFloat(sin(th)) * 24, y: c.y - CGFloat(cos(th)) * 24)

@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Nenad Micic
  * SPDX-License-Identifier: Apache-2.0
  *
- * fx_bench.c — host benchmark of the effects module's cost (fx/SPEC.md,
- * section 6): ns per output frame of fx_render_mono at 48 kHz, block 64,
+ * fx_bench.c — host benchmark of the effects module's cost:
+ * ns per output frame of fx_render_mono at 48 kHz, block 64,
  * for each part alone and combined, against fm_mix_i16 and against the
  * module with no part on, with 1 and with 16 sustained voices sending 0.25
  * to every audible bus that is on (duck rows also send to the detector).

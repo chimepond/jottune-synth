@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Nenad Micic
  * SPDX-License-Identifier: Apache-2.0
  *
- * fx_ref.h — host-only double model of the effects module (fx/SPEC.md,
- * section 8): the same configuration, line lengths, send ramps, LFO
+ * fx_ref.h — host-only double model of the effects module:
+ * the same configuration, line lengths, send ramps, LFO
  * phase step and stage order as fx/, with the compressor's specified integer
  * control sequence evaluated from its own signal and other signal work in real
  * arithmetic: 's R

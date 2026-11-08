@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `tools/package_web.py` packages a kept release only with `--repository`, the
+  https URL of the public source repository, and only when the source commit is
+  in a remote-tracking branch (`--public-ref`, default `origin/main`). The entry
+  records the repository. The check reads the local repository only; fetch first.
+- `tools/build_wasm.py` writes the wasi-libc and compiler-rt notices from the
+  Zig distribution that built the module, including the cloudlibc and musl texts.
+- Text files check out with LF endings on every platform; TL files keep their
+  exact bytes. `tests/repo_hygiene.py` checks both.
+- Six source comments no longer cite a design note that is not in the repository.
 - `fm.py tl2wav IN -o OUT.wav` renders a TL file, several TL files or a piece
   directory to a new WAV with the same bytes as `harness --play --wav`. It never
   overwrites, refuses a saved-hash mismatch, and refuses a silent render (such as

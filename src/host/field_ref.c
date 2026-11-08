@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Nenad Micic
  * SPDX-License-Identifier: Apache-2.0
  *
- * field_ref.c — host side only (doubles allowed, ): the double model of
- * the field routes (space/SPEC.md sections 11 to 16), the harness's
+ * field_ref.c — host side only (doubles allowed): the double model of
+ * the spatial field routes, the harness's
  * --field-test and --field-cost.
  *
  * The model takes the module's integer definitions as given: the positions

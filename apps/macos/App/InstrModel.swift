@@ -245,7 +245,7 @@ enum InstrCtl {
 
 extension InstrFx {
     /// The effect toggles and values by script name (fx.EFFECT, fx.EFFECT.VALUE),
-    /// with the ranges of fx/SPEC.md as the harness checks them.
+    /// with the ranges that the harness checks for each value.
     static let toggles: [String: WritableKeyPath<InstrFx, Bool>] = [
         "dcblock": \.dcOn, "chorus": \.chorusOn, "delay": \.delayOn, "reverb": \.reverbOn,
         "limiter": \.limiterOn, "softclip": \.softclip, "gain": \.gainOn, "dither": \.ditherOn,

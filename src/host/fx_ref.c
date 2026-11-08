@@ -2,8 +2,8 @@
  * Copyright (c) 2026 Nenad Micic
  * SPDX-License-Identifier: Apache-2.0
  *
- * fx_ref.c — host-only double model of the effects module (fx_ref.h,
- * fx/SPEC.md section 8). Each stage is the SPEC's definition in real
+ * fx_ref.c — host-only double model of the effects module (fx_ref.h).
+ * Each stage is the effect's definition in real
  * arithmetic; the integer module's rounding, Q formats and saturation are
  * what the differential test (harness --fxref) measures against it.
  */
