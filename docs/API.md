@@ -41,8 +41,12 @@ separately from its unchecked block independence.
 
 The format-1 engine registry distinguishes development entries from kept
 releases. Kept entries use an explicit `YYYY-MM-DD-shortcommit` release
-ID, bind `source_commit` to the public source revision, and keep the matching
-Wasm, runtime module and shim together. A withdrawn entry retains its ID and
+ID, bind `source_commit` to the public source revision, record the public
+`repository` URL, and keep the matching Wasm, runtime module and shim together.
+`tools/package_web.py` packages a kept release only when `--repository` is an
+https URL and the commit is in a remote-tracking branch of that repository
+(`--public-ref`, default `origin/main`). The check reads the local repository
+and does not contact the network, so fetch first. A withdrawn entry retains its ID and
 withdrawal date. Development entries use `dev-<digest>` and cannot claim release
 acceptance. Neither an engine-line match nor a song-supplied URL selects code.
 

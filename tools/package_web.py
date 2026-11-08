@@ -52,6 +52,58 @@ def source_commit(root):
         return None
 
 
+# A kept release names the https URL of its public repository and a commit that a
+# remote-tracking branch of that repository already contains.
+REPOSITORY = re.compile(r'https://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[A-Za-z0-9._~-]+)+/?')
+PUBLIC_REF = re.compile(r'[A-Za-z0-9][A-Za-z0-9._/-]*')
+
+
+def published_commit(root, revision, ref):
+    """True when ref is a remote-tracking branch that contains revision.
+
+    Fetch the public repository first. This reads the local repository only."""
+    try:
+        full = subprocess.run(['git', 'rev-parse', '--symbolic-full-name', ref],
+                              cwd=root, capture_output=True, text=True)
+        if full.returncode or not full.stdout.strip().startswith('refs/remotes/'):
+            return False
+        return subprocess.run(['git', 'merge-base', '--is-ancestor', revision, ref],
+                              cwd=root, capture_output=True).returncode == 0
+    except OSError:
+        return False
+
+
+def toolchain_notices(lib, zig_license):
+    """Notice texts copied from the exact Zig distribution that built the modules.
+
+    wasi-libc-LICENSE holds wasi-libc's pointer file and then every licence or
+    copyright file under libc/wasi, so the BSD-2-Clause cloudlibc licence and the
+    musl copyright that the pointer file names travel with every served module.
+    A missing pointer or cloudlibc licence, or an empty file, is an error."""
+    lib = Path(lib)
+    wasi = lib / 'libc/wasi'
+    found = sorted(p for p in wasi.rglob('*') if p.is_file()
+                   and re.fullmatch(r'(LICENSE|COPYING|COPYRIGHT)(-[A-Z0-9-]+)?', p.name))
+    for required in (wasi / 'LICENSE', wasi / 'libc-bottom-half/cloudlibc/LICENSE'):
+        if required not in found:
+            raise ValueError('Missing toolchain licence: ' + required.relative_to(lib).as_posix())
+    inputs = {
+        'wasi-libc-LICENSE': [wasi / 'LICENSE'] + [p for p in found if p != wasi / 'LICENSE'],
+        'compiler-rt-LICENSE': [Path(zig_license), lib / 'libc/musl/COPYRIGHT', wasi / 'LICENSE-APACHE-LLVM'],
+    }
+    notices = {}
+    for name, paths in inputs.items():
+        blocks = []
+        for path in paths:
+            text = path.read_text()
+            if not text.strip():
+                raise ValueError('Empty toolchain licence: ' + path.name)
+            where = path.relative_to(lib).as_posix() if path.is_relative_to(lib) else 'Zig ' + path.name
+            blocks.append(where + '\n\n' + text.rstrip())
+        notices[name] = ('\n\n' + '=' * 72 + '\n\n').join(blocks) + '\n'
+    return notices
+
+
 def write_json(path, value):
     temporary = path.with_name(path.name + '.tmp')
     temporary.write_text(json.dumps(value, indent=2) + '\n')
@@ -238,7 +290,7 @@ process.stdout.write(JSON.stringify(output));
     return {name: engine_descriptor(value, name) for name, value in rows.items()}
 
 
-def package(root=ROOT, *, release_id=None, source=None, notices_dir=None):
+def package(root=ROOT, *, release_id=None, source=None, notices_dir=None, repository=None, public_ref=None):
     root = Path(root).resolve()
     build, web = root / 'build/wasm', root / 'web'
     harness = root / 'build/s12e10p1v1/harness'
@@ -283,8 +335,18 @@ def package(root=ROOT, *, release_id=None, source=None, notices_dir=None):
                 raise ValueError('A kept release requires the matching toolchain notice: ' + name)
         if any(value != identity for value in wasm_identities(root).values()):
             raise ValueError('Native, harness-Wasm and browser-Wasm engine identities must match.')
+        if not isinstance(repository, str) or not REPOSITORY.fullmatch(repository):
+            raise ValueError('A kept release requires --repository, the https URL of the public source repository.')
+        public_ref = public_ref or 'origin/main'
+        if not PUBLIC_REF.fullmatch(public_ref):
+            raise ValueError('Invalid public ref: ' + public_ref)
+        if not published_commit(root, revision, public_ref):
+            raise ValueError('The source commit is not in ' + public_ref + ', a remote-tracking branch of the '
+                             'public repository. Push it, fetch, and package again.')
     elif source:
         raise ValueError('--source-commit requires --release-id.')
+    elif repository or public_ref:
+        raise ValueError(('--repository' if repository else '--public-ref') + ' requires --release-id.')
 
     if notices:
         (web / 'notices').mkdir(exist_ok=True)
@@ -310,6 +372,8 @@ def package(root=ROOT, *, release_id=None, source=None, notices_dir=None):
         raise ValueError('Refusing to change an existing renderer source binding.')
     if old and release_id and old.get('toolchain') != toolchain:
         raise ValueError('Refusing to change an existing renderer toolchain binding.')
+    if old and release_id and old.get('repository', repository) != repository:
+        raise ValueError('Refusing to change an existing renderer repository binding.')
     with tempfile.TemporaryDirectory(prefix='.package-', dir=parent) as directory:
         staged = Path(directory)
         (staged / 'LICENSE').write_bytes(project_license)
@@ -331,7 +395,7 @@ def package(root=ROOT, *, release_id=None, source=None, notices_dir=None):
             output.chmod(0o755)
     entry = {
         'id': engine_id, 'release_id': release_id, 'development': not bool(release_id),
-        'identity': identity, 'source_commit': revision, 'toolchain': toolchain,
+        'identity': identity, 'source_commit': revision, 'repository': repository, 'toolchain': toolchain,
         'withdrawn': False, 'withdrawn_at': None,
         'wasm': f'engines/{engine_id}/harness.wasm', 'sha256': digest(output / 'harness.wasm'),
         'size': (output / 'harness.wasm').stat().st_size,
@@ -389,25 +453,31 @@ def main():
     parser.add_argument('--release-id', help='release identifier YYYY-MM-DD-shortcommit; omitted means development')
     parser.add_argument('--source-commit', help='full public source commit for the kept release')
     parser.add_argument('--notices-dir', type=Path, help='matching wasi-libc/compiler-rt licence notices')
+    parser.add_argument('--repository', help='https URL of the public source repository (kept releases)')
+    parser.add_argument('--public-ref', help='remote-tracking branch that must contain the source commit '
+                        '(kept releases; default origin/main)')
     parser.add_argument('--withdraw', metavar='ID', help='mark renderer unavailable without deleting its archive')
     parser.add_argument('--withdrawn-at', help='withdrawal date, YYYY-MM-DD')
     parser.add_argument('--refresh-assets', action='store_true', help='refresh precache; keep renderer registry and SW unchanged')
     args = parser.parse_args()
     try:
         if args.refresh_assets:
-            if any((args.withdraw, args.withdrawn_at, args.release_id, args.source_commit, args.notices_dir)):
+            if any((args.withdraw, args.withdrawn_at, args.release_id, args.source_commit, args.notices_dir,
+                    args.repository, args.public_ref)):
                 parser.error('--refresh-assets excludes renderer packaging and withdrawal options')
             refresh_assets()
             print('Refreshed standalone player assets.')
         elif args.withdraw:
-            if not args.withdrawn_at or args.release_id or args.source_commit or args.notices_dir:
+            if (not args.withdrawn_at or args.release_id or args.source_commit or args.notices_dir
+                    or args.repository or args.public_ref):
                 parser.error('--withdraw requires --withdrawn-at and excludes build options')
             withdraw(ROOT, args.withdraw, args.withdrawn_at)
             print('Marked renderer withdrawn:', args.withdraw)
         else:
             if args.withdrawn_at:
                 parser.error('--withdrawn-at requires --withdraw')
-            entry = package(release_id=args.release_id, source=args.source_commit, notices_dir=args.notices_dir)
+            entry = package(release_id=args.release_id, source=args.source_commit, notices_dir=args.notices_dir,
+                            repository=args.repository, public_ref=args.public_ref)
             print('Prepared static workbench engine', entry['id'])
     except (ValueError, OSError, subprocess.CalledProcessError) as error:
         parser.exit(2, str(error) + '\n')

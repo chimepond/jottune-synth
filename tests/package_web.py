@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 spec = importlib.util.spec_from_file_location('package_web', ROOT / 'tools/package_web.py')
 pkg = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pkg)
+REAL_PUBLISHED = pkg.published_commit
+REPO = 'https://example.invalid/jottune-synth'
 
 
 class Packages(unittest.TestCase):
@@ -45,6 +47,9 @@ class Packages(unittest.TestCase):
             'harness.wasm': 'test-engine', 'browser.wasm': 'test-engine'})
         self.identity_mock = self.identities.start()
         self.addCleanup(self.identities.stop)
+        self.published = patch.object(pkg, 'published_commit', return_value=True)
+        self.published.start()
+        self.addCleanup(self.published.stop)
 
     def stamp(self, revision):
         pkg.write_json(self.root / 'build/wasm/build.json', {'source_commit':revision,
@@ -323,37 +328,37 @@ class Packages(unittest.TestCase):
         self.stamp(revision)
         with patch.object(pkg, 'source_commit', return_value=revision):
             with self.assertRaisesRegex(ValueError, 'notice'):
-                pkg.package(self.root, release_id=release)
-            entry = pkg.package(self.root, release_id=release, notices_dir=self.root / 'notices')
+                pkg.package(self.root, release_id=release, repository=REPO)
+            entry = pkg.package(self.root, release_id=release, notices_dir=self.root / 'notices', repository=REPO)
             self.assertFalse(entry['development'])
             self.assertEqual(entry['release_id'], release)
             self.assertEqual(entry['source_commit'], revision)
             self.identity_mock.assert_called_once_with(self.root.resolve())
             before = (self.root / 'web' / entry['browser_wasm']).read_bytes()
             pkg.withdraw(self.root, release, '2026-10-26')
-            again = pkg.package(self.root, release_id=release, notices_dir=self.root / 'notices')
+            again = pkg.package(self.root, release_id=release, notices_dir=self.root / 'notices', repository=REPO)
             self.assertTrue(again['withdrawn'])
             self.assertEqual(again['withdrawn_at'], '2026-10-26')
             self.assertIsNone(json.loads((self.root / 'web/engines.json').read_text())['default'])
             self.assertEqual((self.root / 'web' / entry['browser_wasm']).read_bytes(), before)
             (self.root / 'build/wasm/browser.wasm').write_text('different')
             with self.assertRaisesRegex(ValueError, 'artifacts differ'):
-                pkg.package(self.root, release_id=release, notices_dir=self.root / 'notices')
+                pkg.package(self.root, release_id=release, notices_dir=self.root / 'notices', repository=REPO)
             self.stamp(revision)
             with self.assertRaisesRegex(ValueError, 'immutable'):
-                pkg.package(self.root, release_id=release, notices_dir=self.root / 'notices')
+                pkg.package(self.root, release_id=release, notices_dir=self.root / 'notices', repository=REPO)
 
     def test_kept_toolchain_cannot_be_changed_under_the_same_release(self):
         revision = '1234567' + 'c' * 33
         self.stamp(revision)
         with patch.object(pkg, 'source_commit', return_value=revision):
-            pkg.package(self.root, release_id='2026-10-25-1234567', notices_dir=self.root / 'notices')
+            pkg.package(self.root, release_id='2026-10-25-1234567', notices_dir=self.root / 'notices', repository=REPO)
             before = (self.root / 'web/engines.json').read_bytes()
             stamp = json.loads((self.root / 'build/wasm/build.json').read_text())
             stamp['toolchain'] = 'different compiler'
             pkg.write_json(self.root / 'build/wasm/build.json', stamp)
             with self.assertRaisesRegex(ValueError, 'toolchain binding'):
-                pkg.package(self.root, release_id='2026-10-25-1234567', notices_dir=self.root / 'notices')
+                pkg.package(self.root, release_id='2026-10-25-1234567', notices_dir=self.root / 'notices', repository=REPO)
             self.assertEqual((self.root / 'web/engines.json').read_bytes(), before)
 
     def test_kept_identity_preflight_refuses_either_wasm_mismatch_before_writes(self):
@@ -363,7 +368,7 @@ class Packages(unittest.TestCase):
             for name in ('harness.wasm', 'browser.wasm'):
                 self.identity_mock.return_value = {'harness.wasm': 'test-engine', 'browser.wasm': 'test-engine', name: 'other-engine'}
                 with self.assertRaisesRegex(ValueError, 'engine identities must match'):
-                    pkg.package(self.root, release_id='2026-10-25-1234567', notices_dir=self.root / 'notices')
+                    pkg.package(self.root, release_id='2026-10-25-1234567', notices_dir=self.root / 'notices', repository=REPO)
                 self.assertFalse((self.root / 'web/engines').exists())
                 self.assertFalse((self.root / 'web/engines.json').exists())
 
@@ -375,7 +380,7 @@ class Packages(unittest.TestCase):
         pkg.write_json(self.root / 'build/wasm/build.json', stamp)
         with patch.object(pkg, 'source_commit', return_value=revision):
             with self.assertRaisesRegex(ValueError, 'recorded build toolchain'):
-                pkg.package(self.root, release_id='2026-10-25-1234567', notices_dir=self.root / 'notices')
+                pkg.package(self.root, release_id='2026-10-25-1234567', notices_dir=self.root / 'notices', repository=REPO)
         self.assertFalse((self.root / 'web/engines').exists())
         for text in ('ENGINE ', 'ENGINE a\nENGINE b', 'invalid', None):
             with self.assertRaisesRegex(ValueError, 'one ENGINE descriptor'):
@@ -385,16 +390,91 @@ class Packages(unittest.TestCase):
         revision = '1234567' + 'b' * 33
         with patch.object(pkg, 'source_commit', return_value=None):
             with self.assertRaisesRegex(ValueError, 'source commit'):
-                pkg.package(self.root, release_id='2026-10-25-1234567')
+                pkg.package(self.root, release_id='2026-10-25-1234567', repository=REPO)
         with patch.object(pkg, 'source_commit', return_value=revision):
             with self.assertRaisesRegex(ValueError, 'Rebuild'):
-                pkg.package(self.root, release_id='2026-10-25-1234567')
+                pkg.package(self.root, release_id='2026-10-25-1234567', repository=REPO)
             with self.assertRaisesRegex(ValueError, 'must match'):
-                pkg.package(self.root, release_id='2026-10-25-7654321')
+                pkg.package(self.root, release_id='2026-10-25-7654321', repository=REPO)
         with self.assertRaisesRegex(ValueError, 'requires --release-id'):
             pkg.package(self.root, source=revision)
         with self.assertRaises(ValueError):
-            pkg.package(self.root, release_id='../escape')
+            pkg.package(self.root, release_id='../escape', repository=REPO)
+
+
+    def test_toolchain_notices_carry_cloudlibc_and_musl_texts_from_the_compiler(self):
+        lib = self.root / 'zig/lib'
+        for name, value in {
+            'libc/wasi/LICENSE': 'pointer: cloudlibc is BSD-2-Clause\n',
+            'libc/wasi/LICENSE-MIT': 'MIT text\n', 'libc/wasi/LICENSE-APACHE-LLVM': 'Apache LLVM text\n',
+            'libc/wasi/libc-bottom-half/cloudlibc/LICENSE': 'BSD-2-Clause cloudlibc text\n',
+            'libc/wasi/libc-top-half/musl/COPYRIGHT': 'musl copyright\n',
+            'libc/wasi/libc-bottom-half/sources/a.c': 'not a licence\n',
+            'libc/musl/COPYRIGHT': 'musl copyright\n', 'LICENSE': 'Zig MIT\n'}.items():
+            (lib / name).parent.mkdir(parents=True, exist_ok=True)
+            (lib / name).write_text(value)
+        notices = pkg.toolchain_notices(lib, lib / 'LICENSE')
+        self.assertEqual(set(notices), set(pkg.NOTICES))
+        wasi = notices['wasi-libc-LICENSE']
+        self.assertTrue(wasi.startswith('libc/wasi/LICENSE\n\npointer'))
+        for heading, body in (('libc/wasi/libc-bottom-half/cloudlibc/LICENSE', 'BSD-2-Clause cloudlibc text'),
+                              ('libc/wasi/libc-top-half/musl/COPYRIGHT', 'musl copyright'),
+                              ('libc/wasi/LICENSE-MIT', 'MIT text')):
+            self.assertIn(heading + '\n\n' + body, wasi)
+        self.assertNotIn('not a licence', wasi)
+        self.assertIn('LICENSE\n\nZig MIT', notices['compiler-rt-LICENSE'])
+        (lib / 'libc/wasi/libc-bottom-half/cloudlibc/LICENSE').write_text(' \n')
+        with self.assertRaisesRegex(ValueError, 'Empty toolchain licence'):
+            pkg.toolchain_notices(lib, lib / 'LICENSE')
+        (lib / 'libc/wasi/libc-bottom-half/cloudlibc/LICENSE').unlink()
+        with self.assertRaisesRegex(ValueError, 'cloudlibc'):
+            pkg.toolchain_notices(lib, lib / 'LICENSE')
+
+    def test_kept_release_names_its_public_repository_and_a_published_commit(self):
+        revision = '1234567' + 'f' * 33
+        release = '2026-10-25-1234567'
+        notices = self.root / 'notices'
+        self.stamp(revision)
+        with patch.object(pkg, 'source_commit', return_value=revision):
+            for bad in (None, 'http://example.invalid/synth', 'https://user@example.invalid/synth',
+                        'https://example.invalid/a b', 'git@example.invalid:synth.git', 'https://example.invalid'):
+                with self.assertRaisesRegex(ValueError, 'https URL of the public source repository'):
+                    pkg.package(self.root, release_id=release, notices_dir=notices, repository=bad)
+            with self.assertRaisesRegex(ValueError, 'public ref'):
+                pkg.package(self.root, release_id=release, notices_dir=notices, repository=REPO,
+                            public_ref='--upload-pack=x')
+            with patch.object(pkg, 'published_commit', return_value=False) as published:
+                with self.assertRaisesRegex(ValueError, 'not in origin/main'):
+                    pkg.package(self.root, release_id=release, notices_dir=notices, repository=REPO)
+                published.assert_called_once_with(self.root.resolve(), revision, 'origin/main')
+            self.assertFalse((self.root / 'web/engines.json').exists())
+            entry = pkg.package(self.root, release_id=release, notices_dir=notices, repository=REPO)
+            self.assertEqual((entry['source_commit'], entry['repository']), (revision, REPO))
+            with self.assertRaisesRegex(ValueError, 'repository binding'):
+                pkg.package(self.root, release_id=release, notices_dir=notices, repository=REPO + '-fork')
+        for options in ({'repository': REPO}, {'public_ref': 'origin/main'}):
+            with self.assertRaisesRegex(ValueError, 'requires --release-id'):
+                pkg.package(self.root, **options)
+        self.assertIsNone(pkg.package(self.root)['repository'])
+
+    def test_published_commit_needs_a_remote_tracking_branch_that_contains_it(self):
+        import subprocess
+        def git(*args):
+            return subprocess.run(['git', '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid',
+                                   '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', *args],
+                                  cwd=self.root, check=True, capture_output=True, text=True).stdout.strip()
+        git('init', '-q')
+        git('commit', '-q', '--allow-empty', '-m', 'one')
+        first = git('rev-parse', 'HEAD')
+        git('commit', '-q', '--allow-empty', '-m', 'two')
+        second = git('rev-parse', 'HEAD')
+        self.assertFalse(REAL_PUBLISHED(self.root, first, 'origin/main'))
+        git('update-ref', 'refs/remotes/origin/main', first)
+        git('branch', 'local-only', second)
+        self.assertTrue(REAL_PUBLISHED(self.root, first, 'origin/main'))
+        self.assertFalse(REAL_PUBLISHED(self.root, second, 'origin/main'))
+        self.assertFalse(REAL_PUBLISHED(self.root, second, 'local-only'))
+        self.assertFalse(REAL_PUBLISHED(self.root, 'f' * 40, 'origin/main'))
 
 
 if __name__ == '__main__':

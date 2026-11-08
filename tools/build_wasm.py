@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 import shlex
 import subprocess
-from package_web import source_commit, digest, write_json, MODULES
+from package_web import source_commit, digest, write_json, toolchain_notices, MODULES
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / 'build/wasm'
@@ -66,21 +66,14 @@ except json.JSONDecodeError:
                re.findall(r'\.(lib_dir|zig_exe)\s*=\s*("(?:[^"\\]|\\.)*")', environment)}
 lib = Path(zig_env['lib_dir'])
 zig_license = Path(zig_env['zig_exe']).resolve().parent.parent / 'LICENSE'
-notice_inputs = {
-    'wasi-libc-LICENSE': [lib / 'libc/wasi/LICENSE'],
-    'compiler-rt-LICENSE': [zig_license, lib / 'libc/musl/COPYRIGHT',
-                            lib / 'libc/wasi/LICENSE-APACHE-LLVM'],
-}
 notice_dir = OUT / 'notices'
 notice_dir.mkdir(exist_ok=True)
-for name, paths in notice_inputs.items():
-    contents = []
-    for path in paths:
-        data = path.read_text()
-        if not data.strip():
-            raise SystemExit('Empty toolchain licence: ' + path.name)
-        contents.append(data.rstrip())
-    (notice_dir / name).write_text(('\n\n' + '=' * 72 + '\n\n').join(contents) + '\n')
+try:
+    notices = toolchain_notices(lib, zig_license)
+except (ValueError, OSError) as error:
+    raise SystemExit(str(error))
+for name, text in notices.items():
+    (notice_dir / name).write_text(text)
 
 (OUT / 'toolchain.txt').write_text(toolchain + '\n')
 write_json(OUT / 'build.json', {
