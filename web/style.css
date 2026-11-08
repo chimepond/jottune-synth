@@ -37,6 +37,8 @@ button, summary, input, select, textarea, a { -webkit-tap-highlight-color: trans
 .skip-link { position: fixed; top: 8px; left: 8px; z-index: 30; padding: 8px 12px; color: var(--display); background: var(--focus); transform: translateY(-160%); }
 .skip-link:focus { transform: translateY(0); }
 .app-header { position: sticky; top: env(safe-area-inset-top); z-index: 20; display: flex; align-items: center; gap: 24px; max-width: 1668px; margin: auto; padding: 16px 28px; background: var(--display); border-bottom: 1px solid var(--line); }
+/* Paint the top safe-area band so scrolled content never shows above the sticky header. */
+.app-header::before { content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: env(safe-area-inset-top); background: var(--display); }
 .brand { display: flex; flex-direction: column; gap: 3px; font-family: var(--font-panel); font-size: 18px; font-weight: 400; letter-spacing: .11em; line-height: 1.25; text-decoration: none; text-transform: uppercase; white-space: nowrap; }
 .brand span { font-size: 10px; letter-spacing: .16em; font-weight: 400; color: var(--muted); }
 .header-note { margin: 0; font-size: 12px; color: var(--muted); }
@@ -82,7 +84,7 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 .library-search-filters { display: grid; grid-template-columns: minmax(240px, 1fr) minmax(0, 2fr); align-items: end; gap: 12px; margin-bottom: 10px; }
 .library-filters { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px 10px; }
 .library-filters > div { min-width: 0; }
-.library-filters select { width: 100%; min-height: 38px; font-size: 12px; }
+.library-filters select { width: 100%; height: 38px; min-height: 38px; font-size: 12px; }
 #song-discovery { margin: 0 0 9px; }
 #song-discovery:empty { display: none; }
 .library-controls { display: grid; grid-template-columns: minmax(0, 1fr) minmax(130px, 180px); align-items: start; gap: 12px; }
@@ -126,7 +128,7 @@ input[type="checkbox"], input[type="range"] { accent-color: var(--accent); }
 }
 .loaded-song { margin: 0; font-size: 20px; font-weight: 700; }
 #loaded-version { margin: 2px 0 12px; }
-.mobile-transport { display: none; }
+.mobile-transport, .dock-sections { display: none; }
 #song-detail { margin: 7px 0 9px; }
 #song-note:empty { display: none; }
 .open-row { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
@@ -213,29 +215,31 @@ footer { padding: 8px 0 12px; color: var(--muted); font-size: 11px; }
    the entire rail can scroll, so no controls are clipped. Compact windows keep
    the header disclosure and persistent bottom transport. */
 .section-nav { grid-column: 2; grid-row: 1; position: sticky; top: calc(var(--header-height) + env(safe-area-inset-top) + 18px); align-self: start; display: flex; flex-direction: column; min-width: 0; max-height: calc(100dvh - var(--header-height) - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 30px); overflow-y: auto; overscroll-behavior: contain; padding: 10px 8px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
-.section-nav-heading { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 10px 9px; color: var(--muted); font: 10px var(--font-panel); letter-spacing: .1em; text-transform: uppercase; }
+.section-nav-heading { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 10px 9px; color: var(--muted); font: 12px var(--font-panel); letter-spacing: .1em; text-transform: uppercase; }
 .section-links { min-height: 44px; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .rail-transport { flex: none; display: grid; gap: 6px; min-width: 0; margin-bottom: 8px; padding: 8px 6px 10px; border-bottom: 1px solid var(--line); }
 .rail-selection { max-height: 8em; overflow-y: auto; overscroll-behavior: contain; }
 .rail-selection > * { display: block; }
 .rail-selection strong, .rail-selection .small, .rail-loaded-song { overflow-wrap: anywhere; }
 .rail-selection strong { font-size: 13px; line-height: 1.3; }
-.rail-selection .small { margin-top: 3px; font-size: 11px; line-height: 1.3; }
-.rail-label { margin-bottom: 3px; color: var(--muted); font-family: var(--font-panel); font-size: 9px; letter-spacing: .065em; text-transform: uppercase; }
+.rail-selection .small { margin-top: 3px; font-size: 12px; line-height: 1.3; }
+.rail-label { margin-bottom: 3px; color: var(--muted); font-family: var(--font-panel); font-size: 12px; letter-spacing: .02em; text-transform: uppercase; }
 .rail-transport button { width: 100%; min-height: 44px; padding: 8px 5px; }
 #rail-load { color: var(--display); background: #72b9ef; border-color: #72b9ef; }
 #rail-load:hover:not(:disabled) { background: #a0d2f7; border-color: #a0d2f7; }
-.rail-loaded-song, #rail-status { max-height: 4.05em; overflow-y: auto; overscroll-behavior: contain; margin: 0; font-size: 11px; line-height: 1.35; }
+.rail-loaded-song, #rail-status { max-height: 4.05em; overflow-y: auto; overscroll-behavior: contain; margin: 0; font-size: 12px; line-height: 1.35; }
 .rail-loaded-song { color: var(--text); }
-#rail-time { color: var(--muted); font: 11px/1.3 var(--font-readout); white-space: nowrap; }
+#rail-time { color: var(--muted); font: 12px/1.3 var(--font-readout); white-space: nowrap; }
 .section-nav a { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px; border: 1px solid transparent; border-radius: 5px; font-family: var(--font-body); font-size: 12px; font-weight: 600; text-decoration: none; }
-.section-nav a span { color: var(--muted); font: 10px ui-monospace, monospace; }
+.section-nav a span { color: var(--muted); font: 12px ui-monospace, monospace; }
 .section-nav a:hover { background: var(--raised); }
 .section-nav a[aria-current="location"] { border-color: #90b9c8; background: #365a69; color: #fff; }
 .section-nav a[aria-current="location"] span { color: #d3e0e6; }
 .auto-move-control { padding: 8px 10px 4px; }
 .auto-move-control .check-label { min-height: 44px; font-weight: 600; }
-.auto-move-control .small { margin: 0; font-size: 11px; }
+.auto-move-control .small { margin: 0; font-size: 12px; }
+#auto-move-off { margin-bottom: 8px; color: var(--text); }
+#auto-move-on { display: block; width: 100%; margin-top: 6px; }
 .section-toggle { flex: none; min-height: 44px; white-space: nowrap; }
 .section-toggle span { padding-left: 5px; }
 .live-views { margin-top: 18px; }
@@ -294,7 +298,7 @@ footer { padding: 8px 0 12px; color: var(--muted); font-size: 11px; }
   .song-library .library-views { grid-column: 1 / -1; grid-row: 2; }
   #library-status { grid-column: 1 / -1; grid-row: 3; }
   .library-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .library-filters select { min-height: 44px; }
+  .library-filters select { height: 44px; min-height: 44px; }
   .library-controls #song-select { height: 200px; max-height: min(200px, max(124px, calc(100dvh - var(--header-height) - var(--mobile-dock-height) - env(safe-area-inset-top) - 32px))); }
   .song-choice { min-height: 24px; padding: 2px 7px; gap: 7px; font-size: 14px; line-height: 1.4; }
   .song-choice input[type="radio"] { flex-basis: 16px; width: 16px; height: 16px; }
@@ -352,7 +356,7 @@ footer { padding: 8px 0 12px; color: var(--muted); font-size: 11px; }
 
 .profile-controls { display: flex; align-items: end; flex-wrap: wrap; gap: 9px 16px; margin-top: 12px; }
 .profile-controls > div { flex: 1; min-width: 180px; max-width: 340px; }
-.profile-controls select { width: 100%; min-height: 38px; }
+.profile-controls select { width: 100%; height: 38px; min-height: 38px; }
 .profile-controls .check-label { min-height: 38px; margin: 0; }
 #profile-detail { margin: 7px 0; }
 .profile-help { margin: 0 0 13px; font-size: 12px; }
@@ -456,7 +460,8 @@ footer { padding: 8px 0 12px; color: var(--muted); font-size: 11px; }
   body input:not([type="checkbox"]):not([type="radio"]), body select, body textarea,
   body .library-controls select, body .library-filters select, body .qr-dialog textarea,
   #file, #provenance input, #provenance select { font-size: 16px; }
-  body .library-controls input:not([type="radio"]), body .library-controls select { height: 44px; }
+  body .library-controls input:not([type="radio"]), body .library-controls select,
+  body .library-filters select, body .profile-controls select { height: 44px; }
   #seek { height: 44px; }
   #file::file-selector-button { min-height: 44px; }
   .resource-nav { gap: 8px; }
@@ -468,13 +473,15 @@ footer { padding: 8px 0 12px; color: var(--muted); font-size: 11px; }
   .qr-dialog { max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 24px); }
 }
 
-/* Short windows keep their fixed transport while the header scrolls away. */
+/* Short windows keep their fixed transport while the header scrolls away;
+   the dock's Sections button keeps the section menu reachable. */
 @media (max-width: 1099px) and (max-height: 500px) {
   .app-header { position: static; }
   .mobile-transport { column-gap: 8px; }
   .mobile-identity { grid-column: 1; grid-row: 1; }
   .mobile-actions { grid-column: 2; grid-row: 1; min-width: 230px; }
-  .mobile-section-nav { grid-row: 2; }
+  .mobile-section-nav { grid-row: 2; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .dock-sections { display: block; min-width: 0; padding: 6px 4px; font-size: 12px; line-height: 1.2; }
   #mobile-time, #mobile-version { display: none; }
 }
 
@@ -483,3 +490,18 @@ footer { padding: 8px 0 12px; color: var(--muted); font-size: 11px; }
 .diagnostics .row > label input:not([type="checkbox"]) { width: 100%; }
 
 .guide-manual { display: inline-flex; align-items: center; min-height: 44px; padding: 4px 8px; }
+
+/* Phone type scale: body copy 14px and secondary text, labels and readouts at
+   least 13px. The brand lockup, chart axis ticks and keyboard key letters keep
+   their small sizes. Song rows stay 24px, so eight remain visible. */
+@media (max-width: 480px) {
+  .agent-entry, .agent p, .library-research p, .profile-help, .timeline > p, .mobile-transport strong { font-size: 14px; }
+  .small, label, dl, pre, footer, .badge, #views-heading, #song-results-label, .player-status, #spectrum-status,
+  .song-preview-legend, .agent code, #time, .mobile-transport span, .mobile-transport output, .mobile-section-nav a,
+  .library-views button, .library-search button, .song-actions button, .song-actions > .primary, .downloads button,
+  .view-controls button, .section-nav-heading, .section-nav a, .section-nav a span, .auto-move-control .small,
+  .instrument h3, .instrument-caption, .instrument-detail, .instrument-roll-legend, #instrument-clock,
+  .instrument-panel-controls label, #instrument-spectrum-panel label, .instrument-spectrum-controls button,
+  .instrument-meter label, .instrument-meter span, .instrument-navigation button, #instrument-voices button { font-size: 13px; }
+  .instrument-meter { grid-template-columns: minmax(36px, auto) minmax(30px, 1fr) 90px; }
+}

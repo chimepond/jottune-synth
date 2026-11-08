@@ -341,6 +341,8 @@ test('voice selection and command navigation seek native boundaries without owni
   const voices = app.get('instrument-voices').children;
   voices[1].click();assert.equal(app.container.dataset.selectedVoice, '1');
   assert.match(app.get('instrument-detail').textContent, /Voice 1 · gate open/);
+  // The detail line is static text, not a Tab stop.
+  assert.equal(app.get('instrument-detail').getAttribute('tabindex'), undefined);assert.equal(app.get('instrument-detail').tabIndex, undefined);
   assert.equal(app.get('instrument-prev').disabled, true);assert.equal(app.get('instrument-next').disabled, true);
   assert.equal(voices[1].getAttribute('aria-pressed'), 'true');
   assert.match(app.get('instrument-keyboard').getAttribute('aria-label'), /voice 1 C4/);

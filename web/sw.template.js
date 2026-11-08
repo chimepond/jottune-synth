@@ -4,7 +4,14 @@ const RELEASE='development'; // Replaced by the local packaging command.
 const BASE=new URL('./',self.location.href), PREFIX='intfm-workbench-'+encodeURIComponent(BASE.pathname)+'-';
 const CACHE=PREFIX+RELEASE, ENGINES='intfm-engines-'+encodeURIComponent(BASE.pathname);
 const unavailable=()=>new Response('Not available offline. Reconnect or open a saved TL file.',{status:503,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store'}});
-self.addEventListener('install',event=>event.waitUntil((async()=>{const list=await(await fetch(new URL('precache.json',BASE),{cache:'no-store'})).json();await(await caches.open(CACHE)).addAll(list.map(url=>new Request(new URL(url,BASE),{cache:'reload'})));await self.skipWaiting();})()));
+// './' and index.html are one document: it is fetched once and stored under both
+// keys. no-cache revalidates files the page has just loaded instead of downloading
+// them again, and still never stores a stale copy.
+self.addEventListener('install',event=>event.waitUntil((async()=>{const list=await(await fetch(new URL('precache.json',BASE),{cache:'no-store'})).json(),cache=await caches.open(CACHE);
+  const shared=list.includes('./')&&list.includes('index.html');
+  await cache.addAll(list.filter(url=>!shared||url!=='index.html').map(url=>new Request(new URL(url,BASE),{cache:'no-cache'})));
+  if(shared)await cache.put(new URL('index.html',BASE),await cache.match(new URL('./',BASE)));
+  await self.skipWaiting();})()));
 self.addEventListener('activate',event=>event.waitUntil((async()=>{for(const key of await caches.keys())if(key.startsWith(PREFIX)&&key!==CACHE)await caches.delete(key);await self.clients.claim();})()));
 self.addEventListener('fetch',event=>{
   const url=new URL(event.request.url);

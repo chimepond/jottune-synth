@@ -2878,9 +2878,10 @@ def default_name(path):
     return name if NAME_RE.match(name) else 'midi'
 
 
-def parser():
+def parser(*, allow_abbrev=True):
     ap = argparse.ArgumentParser(prog='midi2tl.py', description=__doc__,
-                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+                                 formatter_class=argparse.RawDescriptionHelpFormatter,
+                                 allow_abbrev=allow_abbrev)
     ap.add_argument('midi', nargs='?', help='the Standard MIDI File, format 0 or 1')
     ap.add_argument('--map', action='append', metavar='CH=RECIPE[:STREAM][@LO-HI[/VLO-VHI[~]]] [ARG=DELTA ...]')
     ap.add_argument('--program', action='append', metavar='PROG=RECIPE [ARG=DELTA ...]')
@@ -2986,11 +2987,18 @@ def agent_convert(request, result):
     """Isolated child adapter over the established converter; never builds."""
     result.update(dry_run=request['dry_run'], options=request['options'])
     try:
-        arguments = parser().parse_args(request['options'])
+        # Exact option names only: an abbreviation must not reach a file option unchecked.
+        arguments = parser(allow_abbrev=False).parse_args(request['options'])
     except SystemExit as error:
         raise AgentError('invalid or reserved converter option; read midi-options reference', 2) from error
     agent_require(arguments.midi is None and arguments.out is None and not arguments.dry_run
                   and not arguments.selftest, 'input, out, dry-run and selftest are adapter-owned')
+    workspace = os.environ.get('JOTTUNE_MCP_WORKSPACE')
+    if workspace:
+        selected = [request['source'], request['out'], arguments.tuning,
+                    *(scala_files(arguments.scala) if arguments.scala else ())]
+        agent_require(all(path is None or Path(path).resolve().is_relative_to(Path(workspace).resolve())
+                          for path in selected), 'tool path leaves the configured workspace')
     source = Path(request['source']).resolve()
     name = arguments.name or default_name(str(source))
     destination = None

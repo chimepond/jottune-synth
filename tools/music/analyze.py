@@ -76,6 +76,7 @@ import math
 import os
 import re
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -1393,6 +1394,71 @@ def jsonable(o):
 TRANSCRIBE_DEFAULTS = dict(min_hz=55.0, max_hz=1760.0, onset_dbfs=-60.0,
                            gap_ms=40.0, min_note_ms=20.0, onset_refine_ms=5.0,
                            pitch_candidates=4)
+# Duration cap read from the WAV header before any sample is read. Analysis holds
+# about 185 MB per minute of mono 48 kHz PCM16, so 300 s stays near 1 GB and the
+# hard bound of 1200 s near 4 GB; the first stage targets short separated notes.
+TRANSCRIBE_MAX_SECONDS, TRANSCRIBE_MAX_SECONDS_LIMIT = 300.0, 1200.0
+NATIVE_PATCH_LIMIT = 32
+
+
+def transcription_wav_header(path):
+    """Walk RIFF chunks up to data, checking every declared size against the file.
+
+    CPython's wave trusts declared sizes: a 0xFFFFFFFF data size asks for a 4 GiB
+    read buffer, and an odd chunk without its pad byte raises a bare RuntimeError.
+    Returns the declared data size in bytes; reads no samples.
+    """
+    size = os.stat(path).st_size
+    with open(path, 'rb') as stream:
+        head = stream.read(12)
+        if len(head) < 12:
+            raise ValueError('truncated WAV header: the file has only %d bytes' % len(head))
+        if head[:4] != b'RIFF':
+            raise ValueError('file does not start with RIFF id')
+        if head[8:] != b'WAVE':
+            raise ValueError('not a WAVE file')
+        offset, have_fmt, odd = 12, False, None
+        printable = lambda name: all(32 <= byte < 127 for byte in name)
+        while True:
+            stream.seek(offset)
+            header = stream.read(8)
+            if len(header) < 8:
+                raise ValueError('truncated WAV header: fmt chunk and/or data chunk missing before byte %d of %d'
+                                 % (offset, size))
+            name, length = header[:4], struct.unpack('<I', header[4:])[0]
+            if odd is not None:  # A missing pad byte shifts the next chunk id back by one byte.
+                stream.seek(offset - 1)
+                shifted = stream.read(4)
+                if shifted in (b'fmt ', b'data') or not printable(name) and printable(shifted):
+                    raise ValueError('malformed WAV: the odd-sized %r chunk at byte %d is missing its pad byte'
+                                     % (odd[0], odd[1]))
+            remaining = size - offset - 8
+            label = name.decode('latin-1')
+            if name == b'data':
+                if not have_fmt:
+                    raise ValueError('data chunk before fmt chunk')
+                if length > remaining:
+                    raise ValueError('truncated WAV: data chunk declares %d bytes but only %d remain in the file'
+                                     % (length, remaining))
+                return length
+            if length > remaining:
+                raise ValueError('truncated or malformed WAV: %r chunk at byte %d declares %d bytes but only %d remain '
+                                 'in the file' % (label, offset, length, remaining))
+            if name == b'fmt ':
+                if length < 16:
+                    raise ValueError('truncated WAV header: fmt chunk has %d bytes; PCM needs 16' % length)
+                have_fmt = True
+            odd = (label, offset) if length % 2 else None
+            offset += 8 + length + length % 2
+
+
+def transcription_file_digest(path):
+    """SHA-256 of a file read in bounded blocks, so hashing never holds a second copy."""
+    digest = hashlib.sha256()
+    with open(path, 'rb') as stream:
+        for block in iter(lambda: stream.read(1 << 20), b''):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 def transcription_regions(au, *, onset_dbfs, gap_ms, min_note_ms, onset_refine_ms, split_onsets=False,
@@ -1796,7 +1862,7 @@ def transcribe(wav, out, *, cp, recipes=None, split_onsets=False, recipe_candida
                split_drop_db=6.0, split_energy_ms=20.0, fit_hold=False,
                hold_grid_points=17, hold_refine_points=9, hold_refine_rounds=4,
                hold_tail_ms=1500.0, pitch_refine_cents=0.0, pitch_refine_rounds=4,
-               pool_voices=False, max_notes=64, **thresholds):
+               pool_voices=False, max_notes=64, max_seconds=TRANSCRIBE_MAX_SECONDS, **thresholds):
     """Recover an approximate mono record using an explicitly selected child renderer.
 
     This host routine never builds or selects a binary. The CLI below selects
@@ -1828,6 +1894,9 @@ def transcribe(wav, out, *, cp, recipes=None, split_onsets=False, recipe_candida
         raise ValueError('split_onsets, fit_hold and pool_voices must be booleans')
     if type(max_notes) is not int or not 1 <= max_notes <= 4096 or (max_notes > 64 and not pool_voices):
         raise ValueError('max_notes must be an integer1..4096; values above64 require pool_voices')
+    if (isinstance(max_seconds, bool) or not isinstance(max_seconds, (int, float))
+            or not 0 < max_seconds <= TRANSCRIBE_MAX_SECONDS_LIMIT):
+        raise ValueError('max_seconds must be above 0 and at most %g' % TRANSCRIBE_MAX_SECONDS_LIMIT)
     if type(recipe_candidates) is not int or not 1 <= recipe_candidates <= len(cp.RECIPES):
         raise ValueError('recipe_candidates must be a positive integer no larger than the recipe inventory')
     for key, value in (('align_ms', align_ms), ('align_window_ms', align_window_ms),
@@ -1881,11 +1950,19 @@ def transcribe(wav, out, *, cp, recipes=None, split_onsets=False, recipe_candida
         raise ValueError('transcription output must be a new or empty directory')
     if source.resolve() == destination.resolve() or destination.resolve() in source.resolve().parents:
         raise ValueError('transcription output must not contain or overwrite its source')
-    source_digest = hashlib.sha256(source.read_bytes()).hexdigest()
-    with wave.open(str(source), 'rb') as reader:
-        if (reader.getnchannels() != 1 or reader.getsampwidth() != 2 or reader.getcomptype() != 'NONE'
-                or reader.getframerate() not in (44100, 48000)):
-            raise ValueError('first transcription stage requires mono PCM16 at 44100 or 48000 Hz')
+    data_bytes = transcription_wav_header(source)
+    try:
+        with wave.open(str(source), 'rb') as reader:
+            if (reader.getnchannels() != 1 or reader.getsampwidth() != 2 or reader.getcomptype() != 'NONE'
+                    or reader.getframerate() not in (44100, 48000)):
+                raise ValueError('first transcription stage requires mono PCM16 at 44100 or 48000 Hz')
+            seconds = data_bytes / 2 / reader.getframerate()
+    except (EOFError, RuntimeError) as error:  # Raised only by wave's header parser here.
+        raise ValueError('malformed WAV header (%s)' % (str(error) or type(error).__name__)) from error
+    if seconds > max_seconds:
+        raise ValueError('transcription source is %.1f s, over the %g s cap; pass --max-seconds up to %g to raise it'
+                         % (seconds, max_seconds, TRANSCRIBE_MAX_SECONDS_LIMIT))
+    source_digest = transcription_file_digest(source)
     fs, samples = channel.read_wav(source)
     if len(samples) < DEC:
         raise ValueError('transcription source is shorter than one 32-frame envelope bin')
@@ -1897,6 +1974,10 @@ def transcribe(wav, out, *, cp, recipes=None, split_onsets=False, recipe_candida
         ('onset_dbfs', 'gap_ms', 'min_note_ms', 'onset_refine_ms')})
     if not regions:
         raise ValueError('no audible region meets the selected thresholds')
+    if not pool_voices and len(regions) > NATIVE_PATCH_LIMIT:
+        raise ValueError('unpooled transcription writes one patch per note; %d audible regions exceed the native '
+                         '%d-patch limit; add --pool-voices to reuse patches, or transcribe a shorter excerpt'
+                         % (len(regions), NATIVE_PATCH_LIMIT))
     config_run = subprocess.run([str(binary), '--retrig', '--fs', str(fs)], capture_output=True, text=True)
     configurations = [line for line in config_run.stdout.splitlines() if line.startswith('CONFIG ')]
     if config_run.returncode or len(configurations) != 1:
@@ -2091,7 +2172,7 @@ def transcribe(wav, out, *, cp, recipes=None, split_onsets=False, recipe_candida
     for note in notes:
         start, end = note['start_frame'], note['end_frame']
         note['score'] = transcription_score(samples[start:end], reconstructed[start:end])
-    if hashlib.sha256(source.read_bytes()).hexdigest() != source_digest:
+    if transcription_file_digest(source) != source_digest:
         raise ValueError('source WAV changed during transcription')
     if hashlib.sha256(binary.read_bytes()).hexdigest() != binary_digest:
         raise ValueError('native executable changed during transcription')
@@ -2156,6 +2237,9 @@ def transcribe_parser(*, allow_abbrev=True):
     parser.add_argument('--pitch-refine-rounds', type=int, default=4, help='pitch refinement round cap0..8; default4')
     parser.add_argument('--pool-voices', action='store_true', help='deduplicate exact patches and reuse eligible idle voices')
     parser.add_argument('--max-notes', type=int, default=64, help='accepted region cap1..4096; above64 requires pool-voices')
+    parser.add_argument('--max-seconds', type=float, default=TRANSCRIBE_MAX_SECONDS,
+                        help='source duration cap read from the WAV header; default %g, at most %g'
+                             % (TRANSCRIBE_MAX_SECONDS, TRANSCRIBE_MAX_SECONDS_LIMIT))
     for key, default in TRANSCRIBE_DEFAULTS.items():
         parser.add_argument('--' + key.replace('_', '-'), type=int if key == 'pitch_candidates' else float,
                             default=default)
@@ -2177,10 +2261,12 @@ def cmd_transcribe(argv):
                             hold_refine_points=args.hold_refine_points, hold_refine_rounds=args.hold_refine_rounds,
                             hold_tail_ms=args.hold_tail_ms,
                             pitch_refine_cents=args.pitch_refine_cents, pitch_refine_rounds=args.pitch_refine_rounds,
-                            pool_voices=args.pool_voices, max_notes=args.max_notes,
+                            pool_voices=args.pool_voices, max_notes=args.max_notes, max_seconds=args.max_seconds,
                             **{key: getattr(args, key) for key in TRANSCRIBE_DEFAULTS})
     except (OSError, ValueError, wave.Error, EOFError) as error:
-        parser.error(str(error))
+        parser.error(str(error) or 'malformed or truncated WAV input (%s)' % type(error).__name__)
+    except MemoryError:
+        parser.exit(5, 'analyze.py transcribe: out of memory; use a shorter source or a lower --max-seconds\n')
     print(json.dumps(jsonable(report), indent=2, allow_nan=False))
     return 0
 

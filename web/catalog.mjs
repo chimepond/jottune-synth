@@ -101,11 +101,25 @@ export function createCatalog(base, validDiscovery) {
     }
     return null;
   }
-  function cached(recordPath, sha) {
+  function byHash(rows, sha) {
+    const found = new Map();
+    for (const song of rows) for (const variant of song.variants)
+      if (variant.record_sha256 === sha) found.set(`${song.id}\n${variant.kind}`, {song, variant});
+    return [...found.values()];
+  }
+  // A legacy or renamed library path names its catalogue song only when the hash
+  // identifies one song, preferring the linked page; a shared hash is not guessed.
+  function aliasIn(preferred, recordPath, sha) {
+    const rows = [...cache.values()].flatMap(value => value.items);
+    if (rows.some(song => song.variants.some(item => item.path === recordPath))) return null;
+    const near = byHash(preferred, sha), found = near.length ? near : byHash(rows, sha);
+    return found.length === 1 ? found[0] : null;
+  }
+  function cached(recordPath, sha, preferred = []) {
     for (const value of cache.values()) {
       const found = findIn(value.items, recordPath, sha); if (found) return found;
     }
-    return null;
+    return recordPath ? aliasIn(preferred, recordPath, sha) : null;
   }
   async function lookup(hint, recordPath, sha, signal) {
     const value = await open(); signal?.throwIfAborted();
@@ -114,20 +128,20 @@ export function createCatalog(base, validDiscovery) {
     const category = value.categories.find(item => item.id === match[1]);
     check(category && Number(match[2]) <= Math.ceil(category.count / 24), 'Catalog page hint is unavailable.');
     const result = await page(hint, category, signal); signal?.throwIfAborted();
-    return findIn(result.items, recordPath, sha);
+    return findIn(result.items, recordPath, sha) || cached(recordPath, sha, result.items);
   }
-  async function browse(category, matches, cursor = null, signal) {
+  async function browse(category, matches, cursor = null, signal, want = 8) {
     check(index && index.categories.includes(category));
     const start = cursor || {path:category.first_page, offset:0, examined:0, matched:0};
     let path = start.path, offset = start.offset, examined = start.examined, matched = start.matched;
     let pagesRead = 0, pageNumber = path ? Number(path.match(/-(\d+)\.json$/)[1]) : 0;
     const items = [];
     // At most four static requests per explicit browse step, even for no-match searches.
-    while (path && items.length < 8 && pagesRead < 4) {
+    while (path && items.length < want && pagesRead < 4) {
       signal?.throwIfAborted();
       const value = await page(path, category, signal); pagesRead++;
       pageNumber = Number(path.match(/-(\d+)\.json$/)[1]);
-      while (offset < value.items.length && items.length < 8) {
+      while (offset < value.items.length && items.length < want) {
         const song = value.items[offset++]; examined++;
         const variants = matches(song);
         if (variants.length) {items.push({song, variants}); matched++;}

@@ -16,7 +16,8 @@ Loading prepares silently and leaves Play ready for your tap. Auto move, at the
 bottom of Sections, starts enabled: Load moves to Player, successful Play moves
 to Live views, and natural completion returns to Songs. Manual section navigation,
 including scrolling into another section,
-turns it off; select Auto move again to restore the cycle. Pause, Stop and looping
+turns it off and says so; select Auto move or Turn Auto move on to restore the
+cycle. Pause, Stop and looping
 do not return to Songs. It never starts audio or changes the chosen display mode.
 Loading never collapses the chooser. You can collapse or reopen it yourself
 without stopping playback, or return using Sections → Songs. Live shows
@@ -275,7 +276,9 @@ The static workbench includes no publishing service. The legacy #r form reads
 r/<sha256>.tl directly. ?release= names an exact registry entry; a conflicting
 service descriptor is refused. Unrelated anchors such as #agent do not load TL.
 
-Copy song link and Song QR code are beside the Player's exports. Exact library
+Copy song link and Song QR code are beside the Player's exports. On touch
+devices whose browser can share links, the button reads Share song link and
+opens the system share sheet; otherwise it copies the link. Exact library
 versions use compact references to existing TL bytes with their content identity.
 Other results, including changed profiles, carry TL in a portable fragment.
 Both retain the kept renderer release when available. Neither publishes anything

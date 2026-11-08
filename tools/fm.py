@@ -390,15 +390,8 @@ class Native:
                     workspace_path(path)
                 if self.call_hook is not None:
                     self.call_hook(["--inspect", "--", *map(str, files)])
-                inspected = subprocess.run([str(self.path), "--inspect", "--", *map(str, files)],
-                    capture_output=True, text=True, timeout=NATIVE_SECONDS)
-                if inspected.returncode == 0:
-                    rows = [line for line in inspected.stdout.splitlines() if line.startswith("INSPECT ")]
-                    require(len(rows) == 1, "native inspection returned no unique cost estimate", 5)
-                    costs = dict(item.split("=", 1) for item in rows[0].split()[1:] if "=" in item)
-                    lower, pcm = int(costs["render_bytes_lower_bound"]), int(costs["pcm_bytes"])
-                    require(lower <= MAX_RENDER_BYTES and lower + pcm * 3 <= MAX_MEMORY_BYTES,
-                            "render exceeds the supported 192MiB render/256MiB memory profile", 2)
+                admit_render(subprocess.run([str(self.path), "--inspect", "--", *map(str, files)],
+                    capture_output=True, text=True, timeout=NATIVE_SECONDS))
             if self.call_hook is not None:
                 self.call_hook(args)
             result = subprocess.run(command, capture_output=True, text=True, timeout=NATIVE_SECONDS)
@@ -406,6 +399,17 @@ class Native:
             raise ToolError("native operation exceeded the 120-second execution limit", 5) from error
         require(sha(self.path.read_bytes()) == self.identity["sha256"], "native executable changed during operation", 5)
         return result
+
+
+def admit_render(inspected):
+    """Refuse a render outside the MCP profile; a failed inspection leaves the refusal to the render."""
+    if inspected.returncode == 0:
+        rows = [line for line in inspected.stdout.splitlines() if line.startswith("INSPECT ")]
+        require(len(rows) == 1, "native inspection returned no unique cost estimate", 5)
+        costs = dict(item.split("=", 1) for item in rows[0].split()[1:] if "=" in item)
+        lower, pcm = int(costs["render_bytes_lower_bound"]), int(costs["pcm_bytes"])
+        require(lower <= MAX_RENDER_BYTES and lower + pcm * 3 <= MAX_MEMORY_BYTES,
+                "render exceeds the supported 192MiB render/256MiB memory profile", 2)
 
 
 def refusal(text):
@@ -917,7 +921,7 @@ def artifact_read(directory, kind, digest, offset=0, length=8192, *, filename=No
 
 
 def read_log(directory, verify=True):
-    path = directory / "log.tsv"
+    path = workspace_path(directory / "log.tsv")
     if not path.exists():
         return []
     with path.open(newline="", encoding="utf-8") as stream:
@@ -942,7 +946,7 @@ def read_log(directory, verify=True):
                 continue
             require(re.fullmatch(r"[0-9a-f]{64}", digest), "invalid take artifact identity", 5)
             if verify:
-                data = (directory / folder / (digest + suffix)).read_bytes()
+                data = workspace_path(directory / folder / (digest + suffix)).read_bytes()
                 require(sha(data) == digest, "take artifact digest mismatch: " + digest, 5)
     return rows
 
@@ -2552,9 +2556,9 @@ def log_show(directory, *, kind="takes", offset=0, limit=20, expected_index_sha2
     with locked(path, create=False) as path:
         rows = read_log(path)
         if detail == "full":
-            text = (path / "log.tsv").read_text() if rows else "\t".join(LOG_COLUMNS) + "\n"
+            text = workspace_path(path / "log.tsv").read_text() if rows else "\t".join(LOG_COLUMNS) + "\n"
             return dict(version=1, ok=True, exit=0, count=len(rows), rows=rows, text=text)
-        data = (path / "log.tsv").read_bytes()
+        data = workspace_path(path / "log.tsv").read_bytes()
     identity = sha(data)
     require(expected_index_sha256 is None or expected_index_sha256 == identity,
             "take index SHA256 differs; restart discovery", 2)
@@ -2580,7 +2584,7 @@ def log_show(directory, *, kind="takes", offset=0, limit=20, expected_index_sha2
 
 
 def existing_log(directory):
-    path = Path(directory).resolve()
+    path = workspace_path(directory)
     require((path / "log.tsv").is_file(), "take log does not exist", 5)
     return path
 
@@ -3106,7 +3110,8 @@ def transcribe_projection(full):
                           allow_nan=False).encode("utf-8")
     keys = ("version", "ok", "exit", "operation", "source", "native", "output", "note_count",
             "score", "replay", "costs", "record", "wav", "limitations", "message", "native_returncode",
-            "complete", "stop_reason", "native_budget", "budget_remaining", "blocked_operation", "note_preview")
+            "complete", "stop_reason", "native_budget", "budget_remaining", "blocked_operation", "note_preview",
+            "draft")
     reply = {key: full[key] for key in keys if key in full}
     reply.update(detail="compact", published=full.get("output") is not None,
                  full_result_sha256=sha(document), full_result_bytes=len(document),
@@ -3139,7 +3144,7 @@ def transcribe_projection(full):
 
 
 def transcribe_request(request):
-    require(isinstance(request, dict) and set(request) <= {"source", "out", "options", "harness", "native_budget"}
+    require(isinstance(request, dict) and set(request) <= {"source", "out", "options", "harness", "native_budget", "draft"}
             and {"source", "out", "harness"} <= set(request),
             "transcription request requires source/out/harness and optional options/native_budget", 2)
     for name in ("source", "out", "harness"):
@@ -3155,6 +3160,12 @@ def transcribe_request(request):
     budget = request.get("native_budget")
     require(budget is None or type(budget) is int and budget >= 0,
             "native_budget must be a nonnegative integer or null", 2)
+    draft = request.get("draft")
+    require(draft is None or isinstance(draft, dict) and set(draft) == {"tool", "tool_version", "strict", "min_snr_db"}
+            and isinstance(draft["tool"], str) and (draft["tool_version"] is None or isinstance(draft["tool_version"], str))
+            and type(draft["strict"]) is bool and type(draft["min_snr_db"]) in (int, float)
+            and math.isfinite(draft["min_snr_db"]),
+            "draft must be null or tool/tool_version/strict/min_snr_db", 2)
     return dict(request, options=options, native_budget=budget)
 
 
@@ -3171,13 +3182,57 @@ def transcribe_note_preview(report):
     return dict(total=len(notes), shown=len(preview), truncated=len(notes) > len(preview), notes=preview)
 
 
+TRANSCRIBE_DRAFT_LIMITATIONS = ("mono only: one note at a time; chords and polyphony are not transcribed",
+                                "timbre is approximated by the nearest built-in recipes",
+                                "effects, stereo and physical note-offs are not recovered")
+
+
+def transcribe_draft(report, draft, dependencies, staging, options, name):
+    """wav2tl only: warnings from existing measurements, the strict gate, and provenance.json."""
+    snr = report["score"].get("snr_db")
+    warnings = []
+    if snr is None or snr < draft["min_snr_db"]:
+        warnings.append("whole-signal SNR %s is below %g dB" % (
+            "unavailable (%s)" % report["score"].get("snr_reason") if snr is None else "%.2f dB" % snr,
+            draft["min_snr_db"]))
+    if report["omitted_regions"]:
+        warnings.append("%d audible region(s) were omitted from the draft (%s)" % (
+            len(report["omitted_regions"]), ", ".join(sorted({row["reason"] for row in report["omitted_regions"]}))))
+    if draft["strict"] and warnings:
+        # Exit 4 is the existing failed-gate status; nothing is published.
+        raise ToolError("strict draft check failed: " + "; ".join(warnings), 4,
+                        draft=dict(warnings=warnings, snr_db=snr, strict=True, min_snr_db=draft["min_snr_db"]))
+    engine = next((line.split(None, 1)[1].strip() for line in
+                   (staging / "canonical.tl").read_text(encoding="utf-8").splitlines()
+                   if line.startswith("engine ")), None)
+    roles = {item["role"]: item for item in dependencies}
+    # Basename and digests only: no absolute paths, host names or clock times.
+    provenance = dict(version=1, derived="audio-transcription", draft=True, mode=report["mode"],
+                      source_sha256=roles["source"]["sha256"], source_bytes=roles["source"]["bytes"],
+                      source_name=name, tool=draft["tool"], tool_version=draft["tool_version"],
+                      engine=engine, native_sha256=roles["native"]["sha256"],
+                      implementation={role: item["sha256"] for role, item in roles.items()
+                                      if role not in ("source", "native")},
+                      options=options, snr_db=snr, limitations=list(TRANSCRIBE_DRAFT_LIMITATIONS),
+                      warnings=warnings)
+    with open(staging / "provenance.json", "x", encoding="utf-8") as stream:
+        stream.write(json.dumps(clean(provenance), indent=2, sort_keys=True, ensure_ascii=False, allow_nan=False) + "\n")
+    return dict(provenance=clean(provenance), file="provenance.json", warnings=warnings, snr_db=snr,
+                strict=draft["strict"], min_snr_db=draft["min_snr_db"])
+
+
 def _transcribe_worker(request, result, stdout, stderr):
     """Run only in a fresh child; neither service renderer nor caches are mutated."""
     dependencies = result["dependencies"]
     def identity(path, role):
         path = Path(path).resolve()
-        data = path.read_bytes()
-        return dict(role=role, path=str(path), sha256=sha(data), bytes=len(data))
+        # Bounded blocks: re-checking a long source never holds another full copy.
+        digest, size = hashlib.sha256(), 0
+        with path.open("rb") as stream:
+            for data in iter(lambda: stream.read(1 << 20), b""):
+                digest.update(data)
+                size += len(data)
+        return dict(role=role, path=str(path), sha256=digest.hexdigest(), bytes=size)
     def unchanged():
         for item in dependencies:
             require(identity(item["path"], item["role"]) == item,
@@ -3242,11 +3297,21 @@ def _transcribe_worker(request, result, stdout, stderr):
             return completed
         with session_module().destination_lock(sys.modules[__name__], destination):
             require(not os.path.lexists(destination), "transcription output already exists", 2)
-            staging = Path(tempfile.mkdtemp(prefix=".transcribe-pending-", dir=destination.parent))
+            # Staging names carry this destination's tag. Under its lock no live
+            # worker can own a tagged directory, so one left by a killed run is swept.
+            pending = ".transcribe-pending-" + hashlib.sha256(str(destination).encode()).hexdigest()[:16] + "-"
+            for stale in destination.parent.glob(pending + "*"):
+                with contextlib.suppress(OSError):
+                    if stat.S_ISDIR(stale.lstat().st_mode) and stale.lstat().st_uid == os.geteuid():
+                        shutil.rmtree(stale)
+            staging = Path(tempfile.mkdtemp(prefix=pending, dir=destination.parent))
             try:
                 compose.H, subprocess.run = str(native), observed
                 report = analysis.jsonable(analysis.transcribe(str(source), str(staging), cp=compose, **settings))
                 result["costs"]["template_render_requests"] = report["native"]["template_render_requests"]
+                draft = None if request.get("draft") is None else transcribe_draft(
+                    report, request["draft"], dependencies, staging, result["normalized_options"],
+                    Path(request["source"]).name)
                 artifacts = [dict(path=path.name, sha256=sha(path.read_bytes()), bytes=path.stat().st_size)
                              for path in sorted(staging.iterdir()) if path.is_file()]
                 record = next(row for row in artifacts if row["path"] == "canonical.tl")
@@ -3260,6 +3325,8 @@ def _transcribe_worker(request, result, stdout, stderr):
                                 note_preview=transcribe_note_preview(report),
                                 score=report["score"], replay=replay, limitations=report["limitations"],
                                 diagnostics=dict(stdout=stdout.getvalue(), stderr=stderr.getvalue()))
+                if draft is not None:
+                    complete["draft"] = draft
                 # Prepare full serialization and bounded metadata before publication.
                 transcribe_projection(complete)
                 unchanged()
@@ -3302,8 +3369,10 @@ def _transcribe_child(text):
             result.update(exit=error.exit, message=str(error), **error.details)
         except (OSError, ImportError, subprocess.SubprocessError) as error:
             result.update(exit=5, message=str(error))
+        except MemoryError:
+            result.update(exit=5, message="transcription ran out of memory; use a shorter source or a lower --max-seconds")
         except (ValueError, wave.Error, EOFError, SystemExit) as error:
-            result.update(exit=2, message=str(error))
+            result.update(exit=2, message=str(error) or "malformed or truncated WAV input (%s)" % type(error).__name__)
     if not result["complete"]:
         result["costs"]["template_render_requests"] = None
     result["diagnostics"] = dict(stdout=stdout.getvalue(), stderr=stderr.getvalue())
@@ -3312,14 +3381,18 @@ def _transcribe_child(text):
 
 
 @public
-def transcribe(source, out, *, options=None, harness=None, native_budget=None):
-    """Run accepted approximate mono transcription in an isolated, staged child."""
+def transcribe(source, out, *, options=None, harness=None, native_budget=None, draft=None):
+    """Run accepted approximate mono transcription in an isolated, staged child.
+
+    draft (wav2tl only) adds draft warnings, an optional strict gate before
+    publication, and a provenance.json sidecar in the published directory."""
     try:
         for name, value in (("source", source), ("out", out), ("harness", harness)):
             require(name == "harness" and value is None or isinstance(value, (str, Path))
                     and bool(str(value)) and "\0" not in str(value), name + " must be a nonempty path", 2)
         request = transcribe_request(dict(source=str(source), out=str(out), options=[] if options is None else options,
-                                          harness=str(Path(harness or DEFAULT_HARNESS).resolve()), native_budget=native_budget))
+                                          harness=str(Path(harness or DEFAULT_HARNESS).resolve()), native_budget=native_budget,
+                                          **({} if draft is None else dict(draft=draft))))
         return transcribe_projection(child_result([sys.executable, "-B", str(ROOT / "tools/fm.py"),
                                                    "--transcribe-json"], request, "transcribe"))
     except ToolError as error:
@@ -3631,6 +3704,19 @@ def main(argv=None):
     transcribe_parser.add_argument("--option", action="append", default=[], help="one transcriber argv token; use --option=--flag for flags; discover transcribe-options")
     transcribe_parser.add_argument("--native-budget", type=int, help="maximum attempted native CONFIG/play calls; exhausted budget returns incomplete work without publication")
     transcribe_parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    tl2wav_parser = commands.add_parser("tl2wav", help="render .tl files or a piece directory to a new WAV (exact; never overwrites)")
+    tl2wav_parser.add_argument("inputs", nargs="+", metavar="IN", help="a .tl file, several .tl files, or one piece directory")
+    tl2wav_parser.add_argument("-o", "--out", "--output", dest="output", type=Path, required=True, metavar="OUT.wav")
+    tl2wav_parser.add_argument("--allow-silent", action="store_true", help="write the WAV even when the render is silent")
+    tl2wav_parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
+    wav2tl_parser = commands.add_parser("wav2tl", help="draft an approximate mono TL piece from a WAV (CLI only; review before sharing; never overwrites)")
+    wav2tl_parser.add_argument("source", metavar="IN.wav")
+    wav2tl_parser.add_argument("-o", "--out", dest="out", type=Path, required=True, metavar="OUT_DIR", help="new piece directory")
+    wav2tl_parser.add_argument("--strict", action="store_true", help="exit 4 and publish nothing when the draft has warnings (SNR below --min-snr-db or omitted regions)")
+    wav2tl_parser.add_argument("--min-snr-db", type=float, default=0.0, help="whole-signal SNR warning threshold; default 0 dB (no better than silence)")
+    wav2tl_parser.add_argument("--option", action="append", default=[], help="one transcriber argv token, as for transcribe; default adds --recipe-candidates 8")
+    wav2tl_parser.add_argument("--native-budget", type=int, help="maximum attempted native CONFIG/play calls, shared with the fallback attempt")
+    wav2tl_parser.add_argument("--json", action="store_true", default=argparse.SUPPRESS)
     check_parser = commands.add_parser("check_patch")
     check_parser.add_argument("files", nargs="*")
     check_parser.add_argument("--text")
@@ -3818,6 +3904,16 @@ def main(argv=None):
         elif args.command == "transcribe":
             result = transcribe(args.source, args.out, options=args.option, harness=args.harness,
                                 native_budget=args.native_budget, **receipt_options)
+        elif args.command in ("tl2wav", "wav2tl"):
+            sys.modules.setdefault("fm", sys.modules[__name__])
+            spec = importlib.util.spec_from_file_location("decode", ROOT / "tools/decode.py")
+            sys.modules["decode"] = decode = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(decode)
+            if args.command == "tl2wav":
+                result = decode.tl2wav(args.inputs, args.output, harness=args.harness, allow_silent=args.allow_silent)
+            else:
+                result = decode.wav2tl(args.source, args.out, options=args.option, harness=args.harness,
+                                       native_budget=args.native_budget, strict=args.strict, min_snr_db=args.min_snr_db)
         elif args.command == "check_patch":
             result = check_patch(args.files, text=args.text, harness=args.harness, patch_name=args.patch_name,
                                  fs=args.fs, detail=args.detail, **receipt_options)
@@ -3854,6 +3950,10 @@ def main(argv=None):
                               "descriptors_reason": result.get("descriptors_reason")}, allow_nan=False))
     elif not args.json and result["ok"] and args.command == "log" and args.action == "show" and args.kind == "takes" and args.detail == "full":
         sys.stdout.write(result["text"])
+    elif not args.json and args.command == "tl2wav" and "decode" in sys.modules:
+        sys.modules["decode"].report(result, sys.stdout, sys.stderr)
+    elif args.command == "wav2tl" and "decode" in sys.modules:
+        sys.modules["decode"].wav2tl_report(result, sys.stdout, sys.stderr, args.json)
     else:
         print(json.dumps(result, ensure_ascii=False, allow_nan=False))
     return result["exit"]

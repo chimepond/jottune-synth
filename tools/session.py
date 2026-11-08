@@ -191,15 +191,33 @@ def session_verify(directory, *, expected_manifest_sha256=None, api=None):
 
 @contextlib.contextmanager
 def destination_lock(api, destination):
-    """A stable sidecar lock coordinates publishers without unlinking a live lock."""
+    """A per-destination sidecar lock that its holder unlinks before releasing.
+
+    The holder unlinks while it still holds the flock. A waiter that then wins the
+    flock on the unlinked inode sees that the path no longer names that inode, so
+    it reopens the path and waits again; two publishers never both hold the lock.
+    """
     destination.parent.mkdir(parents=True, exist_ok=True)
     name = '.session-export-' + hashlib.sha256(str(destination).encode()).hexdigest() + '.lock'
     path = destination.parent / name
-    descriptor = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0), 0o600)
-    with os.fdopen(descriptor, 'a+b') as stream:
-        api.require(stat.S_ISREG(os.fstat(stream.fileno()).st_mode), 'session publication lock is not a regular file', 5)
-        fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
-        yield
+    while True:
+        descriptor = os.open(path, os.O_CREAT | os.O_RDWR | getattr(os, 'O_NOFOLLOW', 0), 0o600)
+        with os.fdopen(descriptor, 'a+b') as stream:
+            held = os.fstat(stream.fileno())
+            api.require(stat.S_ISREG(held.st_mode), 'session publication lock is not a regular file', 5)
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                current = os.stat(path, follow_symlinks=False)
+            except FileNotFoundError:
+                continue
+            if (current.st_dev, current.st_ino) != (held.st_dev, held.st_ino):
+                continue
+            try:
+                yield
+            finally:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(path)
+            return
 
 
 def copy_member(api, source, relative, target, expected):

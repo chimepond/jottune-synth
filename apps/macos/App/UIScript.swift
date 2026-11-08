@@ -883,6 +883,16 @@ private struct Probe {
             require(try Data(contentsOf: destination) == bytes, "export preserves exact original")
             require(engine.loadID == serial && !engine.isPlaying, "export leaves transport unchanged")
             require(local.export(to: URL(fileURLWithPath: engine.loadedPaths[0])) == nil, "export cannot overwrite loaded source")
+            // Export WAV…: uitest.sh compares these files with harness --play --wav.
+            if let task = local.export(to: localDir.appendingPathComponent("local-export.wav"), wav: true) { await task.value }
+            require(local.status == "Exported the record's offline WAV."
+                    && (try? Data(contentsOf: localDir.appendingPathComponent("local-export.wav")).prefix(4)) == Data("RIFF".utf8),
+                    "export WAV writes the native WAV: \(local.status)")
+            require(engine.loadID == serial && !engine.isPlaying, "WAV export leaves transport unchanged")
+            require(local.export(to: localDir.appendingPathComponent("local-export.aiff"), wav: true) == nil
+                    && !FileManager.default.fileExists(atPath: localDir.appendingPathComponent("local-export.aiff").path),
+                    "WAV export needs a .wav destination")
+            require(local.export(to: URL(fileURLWithPath: engine.loadedPaths[0]), wav: true) == nil, "WAV export cannot overwrite loaded source")
             require(RecordOpen.open(URL(string: "https://example.invalid/song.tl")!) != nil && engine.loadID == serial, "internet URL refused before load")
             let pending = local.importFile(source); local.cancel(); await pending?.value
             require(!local.busy && engine.loadID == serial && local.status == "Cancelled.", "cancel cannot install stale import")
@@ -897,6 +907,22 @@ private struct Probe {
             reopened.removeSelected()
             require(reopened.records.isEmpty, "remove retained copy")
             require(try Data(contentsOf: source) == bytes, "remove preserves original file")
+            if sourcePath == nil {
+                // A two-file piece (session.tl + notes.tl), built like tests/decode_cli.py.
+                let lines = try String(contentsOf: engine.recordsRoot.appendingPathComponent("tests/golden/48000/sine.tl"), encoding: .utf8)
+                    .split(separator: "\n").map(String.init)
+                let piece = localDir.appendingPathComponent("piece", isDirectory: true)
+                try FileManager.default.createDirectory(at: piece, withIntermediateDirectories: true)
+                let header = lines.prefix(8).filter { !$0.hasPrefix("hash ") }.map { $0.replacingOccurrences(of: "streams golden", with: "streams notes") }
+                let events = lines.filter { $0.contains(" golden ") }.map { $0.replacingOccurrences(of: " golden ", with: " notes ") }
+                let session = piece.appendingPathComponent("session.tl"), notes = piece.appendingPathComponent("notes.tl")
+                try (header.joined(separator: "\n") + "\n").write(to: session, atomically: true, encoding: .utf8)
+                try (events.joined(separator: "\n") + "\n").write(to: notes, atomically: true, encoding: .utf8)
+                engine.open(paths: [session.path, notes.path], title: "piece"); await loaded()
+                require(engine.info != nil && engine.loadedPaths.count == 2 && events.count == 2, "two-file piece opens")
+                if let task = local.export(to: localDir.appendingPathComponent("piece-export.wav"), wav: true) { await task.value }
+                require(local.status == "Exported the record's offline WAV.", "two-file piece exports WAV: \(local.status)")
+            }
         } catch { fail("LOCALFILES \(error)") }
         if !originalPaths.isEmpty {
         engine.open(paths: originalPaths, title: originalTitle); await loaded()

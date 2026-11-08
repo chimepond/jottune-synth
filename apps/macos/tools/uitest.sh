@@ -48,6 +48,16 @@ for name in take full midi; do
     else bad=1; echo "WAV_SAVE $name FAIL"; fi
     rm -f "$O/run/$name.expected.wav"
 done
+# Records' Export WAV… (localfilescheck) against tl2wav's reference, harness --play --wav.
+L="$O/run/local-files"
+for name in local piece; do
+    case "$name" in local) set -- "$L/local-export.tl";; piece) set -- "$L/piece/session.tl" "$L/piece/notes.tl";; esac
+    if "$H" --play "$@" --wav "$O/$name.expected.wav" > "$O/wav-export-$name.log" 2>&1 \
+       && cmp -s "$L/$name-export.wav" "$O/$name.expected.wav"; then
+        echo "WAV_EXPORT $name byte_identical=yes"
+    else bad=1; echo "WAV_EXPORT $name FAIL"; fi
+    rm -f "$O/$name.expected.wav"
+done
 [ "$n" -gt 0 ] || bad=1
 checks=$(grep -c '^check .* ok$' "$O/run/log.txt")
 if [ "$nc" -eq "$((2 * checks))" ] && [ "$checks" -gt 0 ]; then

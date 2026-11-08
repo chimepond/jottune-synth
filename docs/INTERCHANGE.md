@@ -7,6 +7,16 @@ reader and renderer; a saved-hash mismatch refuses conversion. No MIDI is sent,
 no software is installed, and no song is uploaded. The tools use Python's
 standard library and the built native renderer.
 
+## Render TL to WAV
+
+`python3 tools/fm.py tl2wav IN -o OUT.wav` renders one TL file, several TL
+files or a piece directory to a new WAV with the same bytes as
+`harness --play FILES --wav`. It never overwrites, refuses a saved-hash
+mismatch and refuses a silent render. Options and exit codes are in
+[DECODING.md](DECODING.md#tl2wav-exact-render).
+
+## Export
+
 Run `make`, then inspect a complete song:
 
 ```sh
@@ -105,7 +115,7 @@ python3 tests/receiver_roundtrip.py --harness build/s12e10p1v1/harness \
   --sfizz-render /path/to/sfizz_render \
   --fluidsynth /path/to/fluidsynth --soundfont /path/to/instrument.sf2
 
-# Optional existing mono WAV -> inferred TL -> WAV; requires NumPy.
+# Optional mono WAV -> approximate draft TL -> WAV (the CLI transcriber); requires NumPy.
 python3 tests/receiver_roundtrip.py --harness build/s12e10p1v1/harness --transcribe
 ```
 

@@ -11,7 +11,8 @@ apps/macos/tlplay examples/bell.tl
 ```
 
 Records imports one complete TL, retains it in a local collection, prepares audio
-silently and offers playback, seeking, live views and export. Finder opening and
+silently and offers playback, seeking, live views and export (Export TL…, and
+Export WAV… with the same bytes as `harness --play --wav`). Finder opening and
 drag/drop follow the same import path. Removing a retained tune removes the app's
 copy. Instrument provides sound editing, recipes, keyboard/MIDI input, apply/reset
 and take recording.

@@ -61,6 +61,10 @@ clean:
 
 quick: all
 	python3 -B tests/cli_safety.py
+	python3 -B tests/decode_cli.py
+	python3 -B tests/transcribe_robust.py
+	python3 -B tests/wav2tl_cli.py
+	python3 -B tests/decoding_docs.py
 	$(B)/harness --check
 	$(B)/harness --play tests/golden/48000/sine.tl --metrics
 	python3 tools/music/compose.py --selftest-perf

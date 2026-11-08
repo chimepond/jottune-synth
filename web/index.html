@@ -22,15 +22,15 @@
     <nav id="section-nav" class="section-nav" aria-label="Page sections">
       <div class="section-nav-heading"><span>Sections</span><button id="section-close" aria-label="Close sections" hidden>Close</button></div>
       <section id="rail-transport" class="rail-transport" aria-label="Selected song and playback">
-        <div class="rail-selection" tabindex="0" aria-label="Selected song details">
+        <div id="rail-selection" class="rail-selection" role="group" aria-label="Selected song details">
           <span class="rail-label">Selected song</span>
           <strong id="rail-selected-song">Choose a song</strong>
           <span id="rail-selected-version" class="small"></span>
         </div>
         <button id="rail-load" type="button" disabled>Load song</button>
-        <p id="rail-loaded-song" class="rail-loaded-song" tabindex="0">No song loaded</p>
+        <p id="rail-loaded-song" class="rail-loaded-song">No song loaded</p>
         <button id="rail-play" type="button" class="primary" aria-describedby="rail-status" disabled>Play</button>
-        <p id="rail-status" class="small" aria-live="off" tabindex="0">Load a song, then press Play.</p>
+        <p id="rail-status" class="small" aria-live="off">Load a song, then press Play.</p>
         <output id="rail-time" aria-label="Playback time" aria-live="off">0:00 / 0:00</output>
       </section>
       <div class="section-links">
@@ -42,6 +42,7 @@
       <a href="#agent" data-section="agent" data-section-focus="agent-summary"><span aria-hidden="true">06</span> Guide</a>
       <div class="auto-move-control">
         <label class="check-label"><input id="auto-move" type="checkbox" checked aria-describedby="auto-move-help"> Auto move</label>
+        <p id="auto-move-off" class="small" hidden>Turned off by manual navigation. <button id="auto-move-on" type="button">Turn Auto move on</button></p>
         <p id="auto-move-help" class="small">Load → Player<br>Play → Live views<br>Finish → Songs<br>Manual navigation or scrolling to another section turns this off.</p>
       </div>
       </div>
@@ -138,7 +139,7 @@
       </div>
       <p id="loaded-song" class="loaded-song">No song loaded</p>
       <p id="loaded-version" class="small">Load a song, then press Play.</p>
-      <div class="transport" aria-label="Playback controls">
+      <div class="transport" role="group" aria-label="Playback controls">
         <button id="play" disabled class="primary">Play</button>
         <button id="stop" disabled>Stop</button>
         <label class="check-label"><input id="loop" type="checkbox"> Loop</label>
@@ -300,6 +301,7 @@
     </footer>
   </main>
   </div>
+  <p id="auto-move-status" class="sr-only" role="status" aria-live="polite"></p>
   <script type="module" src="app.mjs"></script>
 <aside id="mobile-transport" class="mobile-transport" aria-label="Song controls and sections">
   <div class="mobile-identity"><strong id="mobile-song">No song loaded</strong><span id="mobile-version"></span></div>
@@ -312,6 +314,7 @@
     <a href="#library-panel" data-section="library-panel" data-section-focus="library-summary" aria-current="location">Song library</a>
     <a href="#player-panel" data-section="player-panel" data-section-focus="player-heading">Player</a>
     <a href="#live-views" data-section="live-views" data-section-focus="views-heading">Live Viz</a>
+    <button id="dock-sections" class="dock-sections" type="button" aria-controls="section-nav" aria-expanded="false">Sections</button>
   </nav>
 </aside>
 </body>

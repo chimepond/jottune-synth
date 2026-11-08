@@ -354,7 +354,7 @@ def _capture(data, complete):
 
 
 class BatchRunner:
-    """One request's three children and concurrent bounded pipe captures."""
+    """One request's native children and concurrent bounded pipe captures."""
     def __init__(self, fm, analyzer, *, pipe_flag="--wav-fd"):
         self.fm, self.analyzer = fm, analyzer
         self.pipe_flag = pipe_flag
@@ -531,6 +531,14 @@ class BatchRunner:
         return errors
 
 
+def _admit(fm, native, inputs):
+    """Under MCP, apply the render profile with one inspection before the batch renders."""
+    if fm.WORKSPACE_ROOT is not None:
+        for path in inputs:
+            fm.workspace_path(path)
+        fm.admit_render(native.run(["--inspect", "--", *inputs]))
+
+
 def execute_sections(fm, files=None, *, text=None, harness=None, sections):
     """Measure all windows from one accepted full-history native pipe stream."""
     analyzer = PipeAnalyzer(fm, sections)
@@ -540,7 +548,8 @@ def execute_sections(fm, files=None, *, text=None, harness=None, sections):
         def run(self, args):
             return runner.run(self.path, args, self.identity)
     def cost():
-        return dict(normal_success_native_children=3, native_children=len(runner.processes),
+        return dict(normal_success_native_children=3 + (fm.WORKSPACE_ROOT is not None),
+            native_children=len(runner.processes),
             native_render_passes=2 if accepted else None, temporary_wav_bytes=0,
             temporary_audio_files=0, persistent_wav=False, total_pcm_bytes=analyzer.pcm_bytes,
             captured_stream_bytes=analyzer.stream_bytes, captured_stream_sha256=analyzer.stream_sha.hexdigest(),
@@ -560,6 +569,7 @@ def execute_sections(fm, files=None, *, text=None, harness=None, sections):
                     raise fm.ToolError("native metadata cannot be verified: " + str(error), 5) from error
                 raise
             record = Path(temporary) / "canonical.tl"
+            _admit(fm, native, inputs)
             result = native.run(["--play", "--metrics", "--merged", record, "--", *inputs])
             if result.returncode not in (0, 3):
                 raise fm.ToolError("native render failed", result.returncode,
@@ -897,7 +907,8 @@ def execute_voice_sections(fm, files=None, *, text=None, harness=None, voices, s
             return runner.run(self.path, args, self.identity)
     def cost():
         counts = [evidence["full_mix_render_passes"], evidence["dry_render_passes"]]
-        return dict(normal_success_native_children=3, native_children=runner.started_children,
+        return dict(normal_success_native_children=3 + (fm.WORKSPACE_ROOT is not None),
+            native_children=runner.started_children,
             native_attempts=len(runner.processes), native_render_passes=sum(counts) if None not in counts else None,
             full_mix_render_passes=counts[0], dry_render_passes=counts[1],
             temporary_audio_files=0, temporary_wav_bytes=0, persistent_wav=False, native_pcm_buffers=2,
@@ -973,6 +984,7 @@ def execute_voice_sections(fm, files=None, *, text=None, harness=None, voices, s
             record, failure, result = Path(temporary) / "canonical.tl", None, None
             try:
                 native = StemNative(harness)
+                _admit(fm, native, inputs)
                 result = native.run(["--play", "--metrics", "--merged", record, "--", *inputs])
             except (fm.ToolError, OSError, UnicodeError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
                 failure = error

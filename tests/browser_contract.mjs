@@ -99,6 +99,7 @@ async function withPage(run, configuration = {}) {
     prepend(...children) { this.children.unshift(...children); }
     setAttribute(name, value) { this.attributes.set(name, String(value)); }
     getAttribute(name) { return this.attributes.get(name) ?? null; }
+    removeAttribute(name) { this.attributes.delete(name); }
     focus() { document.activeElement = this; }
     scrollIntoView(options) { this.scrolled = options; }
     getContext(kind) {
@@ -166,6 +167,12 @@ async function withPage(run, configuration = {}) {
   if (configuration.serviceWorker) navigation.serviceWorker = configuration.serviceWorker;
   if (configuration.serviceWorkerAccess) Object.defineProperty(navigation,'serviceWorker',configuration.serviceWorkerAccess);
   if (configuration.audioSession) Object.defineProperty(navigation, 'audioSession', configuration.audioSession);
+  if (configuration.mediaSession) {
+    navigation.mediaSession = configuration.mediaSession;
+    install('MediaMetadata', class {constructor(init) {Object.assign(this, init);}});
+  }
+  if (configuration.share) Object.assign(navigation, configuration.share);
+  if (configuration.coarse !== undefined) install('matchMedia', query => ({matches: query === '(pointer: coarse)' && configuration.coarse}));
   install('navigator', navigation);
   install('Worker', WorkerMock);
   install('AudioContext', class {
@@ -441,6 +448,20 @@ test('cancellation and replacement remain immediate during offline installation'
   }, {serviceWorker:service});
 });
 
+test('an installed worker that does not control the page asks for a reload instead of waiting forever', async () => {
+  const service = installingService(), worker = new EventTarget();
+  worker.state = 'activated'; service.register = async () => ({active:worker});
+  await withPage(async page => {
+    page.ready();const pending = page.api.listen('hard reload song');await nextTurn();
+    assert.match(page.get('offline-status').textContent,/installed; reload the page/);
+    page.expire(15000);await nextTurn();
+    assert.match(page.get('offline-status').textContent,/installed; reload the page/);
+    page.workers[0].reply(validResult());await pending;
+    service.activate();await nextTurn();
+    assert.match(page.get('offline-status').textContent,/Offline app is ready/);
+  }, {serviceWorker:service});
+});
+
 for (const reason of ['rejected','redundant','stalled']) test(`offline setup ${reason} falls back online without claiming cached playback`, async () => {
   const service = installingService();
   if (reason === 'rejected') service.register = async () => {throw Error('Registration unavailable');};
@@ -450,10 +471,11 @@ for (const reason of ['rejected','redundant','stalled']) test(`offline setup ${r
     if (reason === 'stalled') page.expire(15000);
     await nextTurn();assert.equal(page.workers.length,1);
     page.workers[0].reply(validResult());await pending;
-    assert.match(page.get('offline-status').textContent,/unavailable; online/);
+    // A slow installation is still running, not unavailable, and its late outcome is shown (UI-6).
+    assert.match(page.get('offline-status').textContent,reason==='stalled'?/still running; online playback is available/:/unavailable; online/);
     service.activate();await nextTurn();
     assert.equal(page.workers.length,1,'Late installation must not restart or relabel the uncontrolled render');
-    assert.match(page.get('offline-status').textContent,/unavailable; online/);
+    assert.match(page.get('offline-status').textContent,reason==='stalled'?/Offline app is ready/:/unavailable; online/);
     await complete(page,'later controlled song');
     assert.match(page.get('offline-status').textContent,/Used renderers may be cached/);
   }, {serviceWorker:service});
@@ -721,7 +743,7 @@ test('metadata filters select matching variants with Unknown and tempo ranges ke
   page.get('song-model').value = ''; await page.get('song-model').onchange();
   page.get('song-collection').value = 'Electronic'; await page.get('song-collection').onchange();
   assert.equal(selectedSongId(page), 'songs/first.tl');
-  assert.match(page.get('library-status').textContent, /1 matches in this source selection/);
+  assert.match(page.get('library-status').textContent, /1 match in this source selection/);
 }, {catalog:curatedCatalog()}));
 
 test('global filters and search leave Favorites while explicit Favorites and clearing preserve their scope', async () => {
@@ -812,7 +834,7 @@ test('song catalog defaults to Keys when available and otherwise Standard', () =
   page.get('song-search').value = 'acoustic'; page.get('song-search').dispatch('input'); await nextTurn();
   assert.equal(selectedSongId(page), 'songs/second.tl');
   assert.equal(page.get('song-variant').value, 'standard');
-  assert.match(page.get('library-status').textContent, /1 matches in this source selection/);
+  assert.match(page.get('library-status').textContent, /1 match in this source selection/);
   page.get('song-search').value = 'no such song'; page.get('song-search').dispatch('input'); await nextTurn();
   assert.equal(page.get('song-load').disabled, true);
   page.get('song-search').value = 'later take'; page.get('song-search').dispatch('input'); await nextTurn();
@@ -1033,7 +1055,7 @@ test('sparse Unicode search continues bounded chunks until it finds an existing 
     page.get('song-search').value='夜の旅';page.get('song-search').dispatch('input');await nextTurn();
     assert.equal(page.get('song-load').disabled,false);
     assert.equal(page.get('selected-song-title').textContent,'夜の旅');
-    assert.match(page.get('library-status').textContent,/1 matches in this source selection/);
+    assert.match(page.get('library-status').textContent,/1 match in this source selection/);
     assert.equal(page.requests.filter(url=>/catalog\/all-\d+.json$/.test(url)).length,5);
     assert.equal(page.get('library-next').disabled,true);assert.equal(page.workers.length,0);
     assert.equal(page.get('library-previous').disabled,true,'Empty scan chunks are not false result pages');
@@ -1238,6 +1260,26 @@ test('Sections Load prepares the selected version silently and Play keeps the lo
     assert.equal(page.get('rail-time').value,'0:10 / 0:10');
     assert.equal(page.get('rail-selected-song').textContent,'Second song');
     assert.equal(page.api.result(),result);assert.equal(page.requests.length,requests);assert.equal(page.workers.length,1);
+  },{autoMove:false,catalog:songCatalog,network:{'/web/songs/first-keys.tl':()=>download.promise}});
+});
+test('Sections buttons start their accessible names with their visible text in every state', async()=>{
+  const download=deferred();
+  await withPage(async page=>{
+    page.setSection('source-panel');
+    const name=id=>[page.get(id).textContent,page.get(id).getAttribute('aria-label')];
+    assert.deepEqual(name('rail-load'),['Load song','Load song: <First song>']);
+    assert.deepEqual(name('rail-play'),['Play','Play']);
+    const loading=page.get('rail-load').click();await nextTurn();
+    assert.deepEqual(name('rail-load'),['Loading…','Loading…']);
+    assert.deepEqual(name('rail-play'),['Loading…','Loading…']);
+    download.resolve(new Response('selected Keys record'));
+    page.ready();await nextTurn();
+    assert.deepEqual(name('rail-load'),['Preparing…','Preparing…']);
+    assert.deepEqual(name('rail-play'),['Rendering…','Rendering…']);
+    page.workers.at(-1).reply(transportResult());await loading;await nextTurn();
+    assert.deepEqual(name('rail-play'),['Play','Play <First song>']);
+    selectSong(page,'songs/second.tl');
+    assert.deepEqual(name('rail-load'),['Load song','Load song: Second song']);
   },{autoMove:false,catalog:songCatalog,network:{'/web/songs/first-keys.tl':()=>download.promise}});
 });
 
@@ -1634,6 +1676,46 @@ test('Auto move off and manual Choose song preserve location and require explici
   assert.deepEqual(page.sectionJumps,['library-panel'],'Re-enabling does not move or start audio');
   await page.get('play-right').click();assert.deepEqual(page.sectionJumps,['library-panel','live-views']);
 }, {catalog:songCatalog,network:{'/web/songs/first-keys.tl':'first record'}}));
+
+test('Auto move announces an automatic switch-off and offers a one-step way back', () => withPage(async page=>{
+  const html=readFileSync(new URL('../web/index.html',import.meta.url),'utf8');
+  assert.match(html,/<p id="auto-move-off" class="small" hidden>/,'The note starts hidden');
+  assert.match(html,/<p id="auto-move-status" class="sr-only" role="status" aria-live="polite"><\/p>\s*<script type="module" src="app.mjs">/,
+    'The announcement region sits outside the Sections menu, which is hidden on small screens');
+  assert.equal(page.get('auto-move-status').textContent,'');
+  page.setSection('live-views');page.get('choose-song').click();
+  assert.equal(page.get('auto-move').checked,false);assert.deepEqual(page.sectionJumps,['library-panel']);
+  assert.equal(page.get('auto-move-status').textContent,'Auto move off. Turn it back on in Sections.');
+  assert.equal(page.get('auto-move-off').hidden,false,'The rail shows why the box is clear');
+  page.setSection('live-views');page.get('choose-song').click();
+  assert.equal(page.get('auto-move-status').textContent,'Auto move off. Turn it back on in Sections.','An already-off mode is not announced again');
+  page.get('auto-move-on').click();
+  assert.equal(page.get('auto-move').checked,true);assert.equal(page.get('auto-move-off').hidden,true);
+  assert.equal(page.get('auto-move-status').textContent,'');
+  assert.equal(document.activeElement,page.get('auto-move'),'Focus moves to the box when its note hides');
+  assert.deepEqual(page.sectionJumps,['library-panel','library-panel'],'Turning it back on does not move');
+  page.get('auto-move').checked=false;page.get('auto-move').dispatch('change');
+  assert.equal(page.get('auto-move-off').hidden,true,'Turning it off yourself needs no notice');
+  assert.equal(page.get('auto-move-status').textContent,'');
+}));
+
+test('rail text boxes are Tab stops only while their text is clipped', () => withPage(async page=>{
+  const html=readFileSync(new URL('../web/index.html',import.meta.url),'utf8');
+  for (const id of ['rail-selection','rail-loaded-song','rail-status'])
+    assert.doesNotMatch(html,new RegExp(`id="${id}"[^>]*tabindex`),'Static rail text starts outside the Tab order');
+  const loaded=page.get('rail-loaded-song'),status=page.get('rail-status');
+  loaded.clientHeight=48;loaded.scrollHeight=96;status.clientHeight=48;status.scrollHeight=48;
+  await complete(page,'clipped fixture',transportResult());
+  assert.equal(loaded.getAttribute('tabindex'),'0','Clipped text stays reachable for keyboard scrolling');
+  assert.equal(status.getAttribute('tabindex'),null);
+  loaded.scrollHeight=48;status.scrollHeight=96;
+  await page.get('play').click();
+  assert.equal(loaded.getAttribute('tabindex'),null,'Text that fits again leaves the Tab order');
+  assert.equal(status.getAttribute('tabindex'),'0');
+  status.focus();status.scrollHeight=48;page.advance(1);await page.get('play').click();
+  assert.match(status.textContent,/Paused/);
+  assert.equal(status.getAttribute('tabindex'),'0','A focused box keeps its Tab stop until focus leaves');
+}));
 
 test('an old audio-resume promise cannot move a manually changed section even after Auto move is re-enabled', async()=>{
   const resumed=deferred();
@@ -2196,7 +2278,10 @@ test('missing or mismatched hinted metadata never blocks valid audio or attaches
   for (const failure of ['unavailable','path','sha']) {
     const catalog=coldLinkCatalog(),documents=catalogPages(catalog);
     const response=documents['catalog/all-2.json'];
-    if (failure==='path') response.items[8].variants[1].path='songs/another-mirror.tl';
+    // A renamed path keeps its label only when the verified hash names one song (UI-1);
+    // a second song with that hash leaves the link unnamed.
+    if (failure==='path') {response.items[8].variants[1].path='songs/another-mirror.tl';
+      response.items[7].variants.push({kind:'mirror',path:'songs/other-mirror.tl',duration_seconds:30,bytes:30,record_sha256:'a'.repeat(64)});}
     if (failure==='sha') response.items[8].variants[1].record_sha256='d'.repeat(64);
     await withPage(async page=>{
       await prepared(page,undefined,'mirror song');assert.equal(page.api.result().verdict,'valid');
@@ -2206,6 +2291,18 @@ test('missing or mismatched hinted metadata never blocks valid audio or attaches
     },{href:coldLinkURL(),catalog,network:{'/web/songs/beyond-mirror.tl':'mirror song',
       '/web/catalog/all-2.json':()=>new Response(JSON.stringify(response),{status:failure==='unavailable'?503:200})}});
   }
+});
+
+test('a renamed library path with a unique verified hash selects its catalogue song', async()=>{
+  const catalog=coldLinkCatalog(),response=catalogPages(catalog)['catalog/all-2.json'];
+  response.items[8].variants[1].path='songs/another-mirror.tl';
+  await withPage(async page=>{
+    await prepared(page,undefined,'mirror song');assert.equal(page.api.result().verdict,'valid');
+    assert.equal(page.get('loaded-song').textContent,'Beyond Featured');
+    assert.equal(page.get('selected-song-title').textContent,'Beyond Featured');
+    assert.equal(page.get('song-variant').value,'mirror');
+  },{href:coldLinkURL(),catalog,network:{'/web/songs/beyond-mirror.tl':'mirror song',
+    '/web/catalog/all-2.json':()=>new Response(JSON.stringify(response))}});
 });
 
 test('late hinted metadata is aborted and cannot rename a replacement local song', async()=>{
@@ -2247,6 +2344,70 @@ test('sharing a saved library version uses its short link, while a modified resu
   assert.match(page.copied.at(-1), /#v1\./);
 }, {catalog:{version:1,songs:[{id:'one',title:'One',collection:'Local',variants:[{
   kind:'standard',path:'songs/first-standard.tl',duration_seconds:20,bytes:20,record_sha256:'a'.repeat(64)}]}]}}));
+
+test('touch devices share the song link through the native sheet, and the clipboard stays the fallback', async () => {
+  const catalog = {version:1,songs:[{id:'one',title:'One',collection:'Local',variants:[{
+    kind:'standard',path:'songs/first-standard.tl',duration_seconds:20,bytes:20,record_sha256:'a'.repeat(64)}]}]};
+  const shared = []; let failure = null;
+  const share = {share: async data => { shared.push(data); if (failure) throw failure; }, canShare: data => !data.url.includes('#v1.')};
+  await withPage(async page => {
+    assert.equal(page.get('share').textContent, 'Share song link');
+    await complete(page, 'library song', validResult({recordSha256:'a'.repeat(64)}));
+    await page.get('share').click();
+    assert.equal(shared.length, 1); assert.equal(shared[0].title, 'One · Original · saved');
+    assert.match(shared[0].url, /#song=songs%2Ffirst-standard.tl&sha=a{64}&catalog=catalog%2Fall-1.json$/);
+    assert.equal(page.copied.length, 0);
+    assert.equal(page.get('status').textContent, 'Song link shared for this exact saved version. Nothing was published.');
+    failure = Object.assign(Error('Share canceled'), {name:'AbortError'});
+    await page.get('share').click();
+    assert.equal(page.copied.length, 0, 'Closing the sheet copies nothing');
+    assert.equal(page.get('status').textContent, 'Sharing cancelled. Nothing was published.');
+    failure = Object.assign(Error('Share refused'), {name:'NotAllowedError'});
+    await page.get('share').click();
+    assert.equal(page.copied.length, 1, 'Other share failures fall back to the clipboard');
+    assert.equal(page.get('status').textContent, 'Song link copied for this exact saved version. Nothing was published.');
+    await complete(page, 'changed song', validResult({recordSha256:'f'.repeat(64)}));
+    await page.get('share').click();
+    assert.equal(shared.length, 3, 'A link the sheet cannot carry is not offered to it');
+    assert.match(page.copied.at(-1), /#v1\./);
+    assert.equal(page.get('status').textContent, 'Portable record link copied. Nothing was published.');
+  }, {coarse:true, share, catalog});
+  await withPage(async page => {
+    assert.notEqual(page.get('share').textContent, 'Share song link');
+    await complete(page, 'library song', validResult({recordSha256:'a'.repeat(64)}));
+    await page.get('share').click();
+    assert.equal(shared.length, 3, 'Mouse and trackpad pointers keep the clipboard');
+    assert.match(page.copied.at(-1), /#song=songs%2Ffirst-standard.tl&sha=a{64}/);
+  }, {coarse:false, share, catalog});
+});
+
+test('Media Session mirrors the loaded song, and its actions use the same transport', async () => {
+  const handlers = {}, session = {metadata:null, playbackState:'none', setActionHandler(action, handler) { handlers[action] = handler; }};
+  await withPage(async page => {
+    assert.deepEqual(Object.keys(handlers).sort(), ['pause', 'play', 'stop']);
+    await prepared(page, page.get('song-load-right').click(), 'first record', transportResult());
+    assert.equal(session.metadata.title, '<First song>'); assert.equal(session.metadata.album, 'JotTune Synth');
+    assert.equal(session.playbackState, 'paused');
+    const metadata = session.metadata; page.advance(1);
+    assert.equal(session.metadata, metadata, 'Periodic updates keep the same metadata');
+    handlers.play(); await nextTurn();
+    assert.equal(page.audioSources.length, 1); assert.equal(page.get('play').textContent, 'Pause');
+    assert.equal(session.playbackState, 'playing');
+    handlers.play(); await nextTurn();
+    assert.equal(page.audioSources.length, 1, 'Play while playing starts nothing');
+    page.advance(1); handlers.pause();
+    assert.equal(page.get('play').textContent, 'Resume'); assert.equal(session.playbackState, 'paused');
+    handlers.pause(); assert.equal(page.get('play').textContent, 'Resume', 'Pause while paused does nothing');
+    handlers.stop(); assert.equal(page.get('play').textContent, 'Play');
+  }, {mediaSession:session, autoMove:false, catalog:songCatalog, network:{'/web/songs/first-keys.tl':'first record'}});
+  const partial = {}, limited = {setActionHandler(action, handler) { if (action === 'stop') throw new TypeError('Unsupported'); partial[action] = handler; }};
+  await withPage(async page => {
+    assert.deepEqual(Object.keys(partial).sort(), ['pause', 'play'], 'An unsupported action leaves the others in place');
+    await complete(page, 'programmatic', transportResult());
+    assert.equal(limited.metadata.title, 'Local song'); assert.equal(limited.playbackState, 'paused');
+    await page.get('play').click(); assert.equal(limited.playbackState, 'playing');
+  }, {mediaSession:limited});
+});
 
 test('browser profile bounds UTF-8 bytes and native-inspected duration', () => {
   checkRecord('x'.repeat(limits.recordBytes));

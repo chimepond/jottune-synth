@@ -22,6 +22,10 @@ build/s12e10p1v1/harness --play examples/bell.tl --wav build/bell.wav
 make quick
 ```
 
+To render a piece directory or several TL files to a new WAV, use
+`python3 tools/fm.py tl2wav IN -o OUT.wav`. It and the command-line-only
+approximate `wav2tl` draft tool are described in [DECODING.md](docs/DECODING.md).
+
 `--play` verifies the saved render and block independence. `--play-once` prepares
 one render for listening without claiming block independence. Host-side tools
 may use floating point; the five synthesis modules use integer arithmetic.
@@ -67,6 +71,7 @@ notarization are separate from building the source.
 - [Native and browser APIs](docs/API.md)
 - [Build and validation](docs/BUILD.md)
 - [MIDI, WAV and SFZ interchange](docs/INTERCHANGE.md)
+- [Render and decode: tl2wav, wav2tl and MIDI import](docs/DECODING.md)
 - [Shared native bridge](bindings/native/README.md)
 
 The [JotTune MCP repository](https://github.com/chimepond/jottune-mcp) provides

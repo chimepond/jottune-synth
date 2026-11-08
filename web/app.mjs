@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import {toSvg, toWav, spectrogram, songStructure, songStructureText} from './media.mjs';
 import {limits, options, selectEngine, checkRecord, checkInspection, verification} from './policy.mjs';
-import {fetchRecord, isRecordLink, resolveLink, portableLink, libraryLink} from './links.mjs';
+import {fetchRecord, isRecordLink, resolveLink, portableLink, libraryLink, linkProblem} from './links.mjs';
 import {openQr, closeQr} from './qr-view.mjs';
 import {createCatalog, catalogJSON} from './catalog.mjs';
 import {songPreview} from './song-preview.mjs';
@@ -16,13 +16,37 @@ function playerStatus(message) {
   if ($('status').textContent !== message) $('status').textContent = message;
   const hint = message || 'Choose a song, press Load, then Play.';
   if ($('rail-status').textContent !== hint) $('rail-status').textContent = hint;
+  updateRailFocus();
 }
+// Rail text boxes are Tab stops only while their text is clipped, so the keyboard can
+// still scroll them. Layout is read again only when their text, width or visibility changes.
+let railFocusKey = '';
+function updateRailFocus() {
+  const nodes = [$('rail-selection'), $('rail-loaded-song'), $('rail-status')];
+  const key = [...nodes.map(node => node.textContent), $('section-nav').hidden, window.innerWidth].join('\n');
+  if (key === railFocusKey) return;
+  railFocusKey = key;
+  for (const node of nodes) {
+    if (node.scrollHeight > node.clientHeight + 1) node.setAttribute('tabindex', '0');
+    else if (node !== document.activeElement) node.removeAttribute('tabindex');
+  }
+}
+document.fonts?.ready.then(() => { railFocusKey = ''; updateRailFocus(); }, () => {});
 let sectionNavigation, autoMoveEpoch = 0, currentSection = 'library-panel', mobileSongActionReady = false;
 function currentSectionChanged(id) {
   currentSection = id;
   if (mobileSongActionReady) updateMobileSongAction();
 }
-function stopAutoMove() { $('auto-move').checked = false; autoMoveEpoch++; }
+// Automatic switch-off is announced, and the rail offers a one-step way back.
+function autoMoveNotice(off) {
+  $('auto-move-off').hidden = !off;
+  $('auto-move-status').textContent = off ? 'Auto move off. Turn it back on in Sections.' : '';
+}
+function stopAutoMove() {
+  const wasOn = $('auto-move').checked;
+  $('auto-move').checked = false; autoMoveEpoch++;
+  if (wasOn) autoMoveNotice(true);
+}
 function followSection(id, epoch = autoMoveEpoch) {
   if (!$('auto-move').checked || epoch !== autoMoveEpoch) return;
   const transport = id === 'live-views' && ['play','play-right','rail-play','mobile-play'].some(key => $(key) === document.activeElement);
@@ -32,20 +56,31 @@ function followSection(id, epoch = autoMoveEpoch) {
     $(compact ? 'mobile-play' : 'rail-play').focus({preventScroll:true});
   }
 }
-$('auto-move').addEventListener('change', () => { autoMoveEpoch++; });
+$('auto-move').addEventListener('change', () => { autoMoveEpoch++; autoMoveNotice(false); });
+$('auto-move-on').onclick = () => { $('auto-move').checked = true; autoMoveEpoch++; autoMoveNotice(false); $('auto-move').focus(); };
 
 // Page navigation is independent of render/playback state. In particular, the
 // fragment belongs to portable records, so section jumps never rewrite it.
 function prepareSectionNavigation() {
-  const nav = $('section-nav'), toggle = $('section-toggle'), close = $('section-close');
+  const nav = $('section-nav'), toggle = $('section-toggle'), close = $('section-close'), dockToggle = $('dock-sections');
   const header = document.querySelector('.app-header');
+  // A hosted page can add a sharing panel after the player; it gets a section link of its own.
+  // The standalone page has no such panel and no link to one.
+  if ($('publication-panel') && $('publication-summary')) {
+    const link = document.createElement('a'), number = document.createElement('span');
+    link.href = '#publication-panel'; link.dataset.section = 'publication-panel'; link.dataset.sectionFocus = 'publication-summary';
+    number.setAttribute('aria-hidden', 'true'); number.textContent = '07';
+    link.append(number, ' Sharing');
+    nav.querySelector('.auto-move-control').before(link);
+  }
   const links = [...nav.querySelectorAll('a[data-section]')];
   const navigationLinks = [...links,...$('mobile-section-nav').querySelectorAll('a[data-section]')];
   const compact = matchMedia('(max-width: 1099px)');
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
-  let open = false, queued = false, requested = null, jumpTimer;
+  let open = false, queued = false, requested = null, jumpTimer, opener = toggle;
   let manualScroll = null, manualScrollTimer;
   let documentY = window.scrollY;
+  const isToggle = node => toggle.contains(node) || dockToggle.contains(node);
   function clearManualScroll(expected = manualScroll) {
     if (manualScroll !== expected) return;
     manualScroll = null; clearTimeout(manualScrollTimer);
@@ -56,7 +91,15 @@ function prepareSectionNavigation() {
     toggle.hidden = !compact.matches;
     close.hidden = !compact.matches;
     toggle.setAttribute('aria-expanded', String(open));
-    if (returnFocus && compact.matches) toggle.focus({preventScroll:true});
+    dockToggle.setAttribute('aria-expanded', String(open));
+    // Short windows let the header scroll away, so focus returns to the dock's
+    // Sections button when that is the one that opened the menu.
+    if (returnFocus && compact.matches) (opener === dockToggle && dockToggle.getClientRects().length ? dockToggle : toggle).focus({preventScroll:true});
+  }
+  // A sharing panel can be introduced by the section just before it; count that section as part of it.
+  function sectionStart(target) {
+    const before = target.previousElementSibling;
+    return before?.querySelector(`[aria-controls="${target.id}"]`) ? before : target;
   }
   function markCurrent(id) {
     currentSectionChanged(id);
@@ -69,7 +112,7 @@ function prepareSectionNavigation() {
     const edge = Math.max(0, header.getBoundingClientRect().bottom) + 24;
     let current = links[0].dataset.section;
     for (const link of links) {
-      if ($(link.dataset.section).getBoundingClientRect().top <= edge) current = link.dataset.section;
+      if (sectionStart($(link.dataset.section)).getBoundingClientRect().top <= edge) current = link.dataset.section;
     }
     return current;
   }
@@ -101,7 +144,7 @@ function prepareSectionNavigation() {
     markCurrent(requested);
     setOpen(false);
     if (moveFocus) focus.focus({preventScroll:true});
-    target.scrollIntoView({block:'start', behavior:reduced.matches ? 'auto' : 'smooth'});
+    sectionStart(target).scrollIntoView({block:'start', behavior:reduced.matches ? 'auto' : 'smooth'});
     clearTimeout(jumpTimer);
     jumpTimer = setTimeout(() => { requested = null; }, 1500);
   }
@@ -116,21 +159,21 @@ function prepareSectionNavigation() {
     stopAutoMove();
     jump(links.find(link => link.dataset.section === 'player-panel'));
   });
-  toggle.addEventListener('click', () => setOpen(!open));
+  for (const button of [toggle, dockToggle]) button.addEventListener('click', () => { opener = button; setOpen(!open); });
   close.addEventListener('click', () => setOpen(false, true));
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && open) { event.preventDefault(); setOpen(false, true); }
     if (['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' '].includes(event.key)) noteManualScroll(event);
   });
   document.addEventListener('pointerdown', event => {
-    if (!nav.contains(event.target) && !toggle.contains(event.target)) {
+    if (!nav.contains(event.target) && !isToggle(event.target)) {
       requested = null;
       if (open) setOpen(false);
     }
   });
   document.addEventListener('focusin', event => {
-    if (open && !nav.contains(event.target) && !toggle.contains(event.target)) setOpen(false);
-    if (requested && !$(requested).contains(event.target) && !nav.contains(event.target) && !toggle.contains(event.target)) {
+    if (open && !nav.contains(event.target) && !isToggle(event.target)) setOpen(false);
+    if (requested && !$(requested).contains(event.target) && !nav.contains(event.target) && !isToggle(event.target)) {
       requested = null; scheduleCurrent();
     }
   });
@@ -166,7 +209,7 @@ function prepareSectionNavigation() {
   compact.addEventListener('change', () => {
     const focused = document.activeElement;
     const hidingLink = compact.matches && nav.contains(focused);
-    const hidingControl = !compact.matches && (focused === toggle || focused === close);
+    const hidingControl = !compact.matches && (focused === toggle || focused === close || focused === dockToggle);
     setOpen(false, hidingLink);
     if (hidingControl) (links.find(link => link.hasAttribute('aria-current')) || links[0]).focus({preventScroll:true});
   });
@@ -181,13 +224,15 @@ prepareSectionNavigation();
 const assetBase = new URL('./', import.meta.url);
 const serviceWorkerURL = new URL('sw.js', assetBase);
 const serviceWorker = (() => {try {return navigator.serviceWorker;} catch {return null;}})();
-let offlineSetupPending = true;
+let offlineSetupPending = true, offlineSetupSlow = false, offlineNeedsReload = false;
 function hasOfflineControl() {
   try {return serviceWorker?.controller?.scriptURL === serviceWorkerURL.href;} catch {return false;}
 }
 function updateOfflineStatus() {
   $('offline-status').textContent = hasOfflineControl() ? 'Offline app is ready. Used renderers may be cached; save the TL locally.'
-    : offlineSetupPending ? 'Preparing offline support…' : 'Offline setup is unavailable; online playback remains available.';
+    : offlineNeedsReload ? 'Offline app is installed; reload the page to use it offline. Online playback is available now.'
+    : offlineSetupPending ? (offlineSetupSlow ? 'Offline setup is still running; online playback is available now.' : 'Preparing offline support…')
+    : 'Offline setup is unavailable; online playback remains available.';
 }
 function prepareOfflineSupport() {
   const service = serviceWorker;
@@ -203,10 +248,19 @@ function prepareOfflineSupport() {
       resolve();
     };
     const controlled = () => { if (hasOfflineControl()) finish(true); };
-    const changed = () => { controlled(); if (installing?.state === 'redundant') finish(false); };
+    const changed = () => {
+      controlled(); if (settled) return;
+      if (installing?.state === 'redundant') { finish(false); return; }
+      // An active worker that does not control this page (for example after a
+      // hard reload, which bypasses it) will not change state again. Say so,
+      // and keep listening in case it claims the page later.
+      if (installing?.state === 'activated') { offlineNeedsReload = true; updateOfflineStatus(); }
+    };
     // Offline installation is optional. Slow storage/network must not prevent
     // online rendering indefinitely, and Cancel does not wait for this timer.
-    const timer = setTimeout(() => finish(false), 15000);
+    // After it the status says setup is still running and keeps listening, so a
+    // late installation or failure still updates it.
+    const timer = setTimeout(() => { offlineSetupSlow = true; updateOfflineStatus(); resolve(); }, 15000);
     service.addEventListener('controllerchange', controlled);
     Promise.resolve().then(() => service.register(serviceWorkerURL, {scope:assetBase.pathname})).then(registration => {
       if (settled) return;
@@ -225,6 +279,8 @@ const spatialModules = new WeakMap();
 let analysisJob, analysisResult, analysisSequence = 0;
 let generation = 0, expectedRecordSha = null, loadedRelease;
 let rendering = false, playbackRequest = 0, playbackBuffer, playbackBufferResult;
+const mediaSession = (() => {try {return navigator.mediaSession || null;} catch {return null;}})();
+let mediaTitle = null;
 let spectrumController, spectrumResult, displayView = 'live';
 let liveOnscreen = true;
 let profileBase = null, appliedProfile = null, loadedIdentity = null, linkedMetadata = null, pendingSongLoad = null;
@@ -521,7 +577,7 @@ async function render(recordText, value = {}, sourceContext = null) {
     result.mode = config.profile ? (result.mode || 'verify') : config.mode;
     if (expected && result.verdict === 'valid' && (config.profile ? result.sourceRecordSha256 : result.recordSha256) !== expected) {
       result.verdict = 'mismatch: record identity differs from link';
-      result.stderr = 'Canonical record SHA-256 differs from the requested link identity.';
+      result.stderr = 'This song does not match the saved version the link names, so it was not played. The link may be out of date.';
       result.canonical = new Uint8Array();
     }
     Object.assign(result, verification(result));
@@ -716,15 +772,18 @@ function updateTransport(redraw = true) {
   $('rail-selected-version').textContent = variant ? variantLabels[variant.kind] || variant.kind : '';
   $('rail-load').disabled = rendering || !!pendingSongLoad || !selectionReady;
   $('rail-load').textContent = rendering ? 'Preparing…' : pendingSongLoad ? 'Loading…' : 'Load song';
-  $('rail-load').setAttribute('aria-label', selected ? `Load song: ${selected.title}` : 'Load song');
+  // Each accessible name starts with the visible text; the song name is added only while the button acts on it.
+  const busy = rendering || !!pendingSongLoad;
+  $('rail-load').setAttribute('aria-label', selected && !busy ? `Load song: ${selected.title}` : $('rail-load').textContent);
   $('rail-play').disabled = $('mobile-play').disabled;
   $('rail-play').textContent = $('mobile-play').textContent;
-  $('rail-play').setAttribute('aria-label', prepared ? `${$('play').textContent} ${title}` : 'Play');
+  $('rail-play').setAttribute('aria-label', prepared && !busy ? `${$('play').textContent} ${title}` : $('rail-play').textContent);
   $('rail-loaded-song').textContent = rendering ? `Preparing: ${loadedIdentity?.title || pendingSongLoad?.song.title || 'song'}`
     : pendingSongLoad ? `Loading: ${pendingSongLoad.song.title}`
     : prepared ? `${source ? 'Playing' : 'Loaded'}: ${title} · ${version}` : 'No song ready to play';
   $('rail-time').value = $('time').value;
   playerStatus($('status').textContent);
+  updateMediaSession(title, prepared && canAudition(lastResult));
   if (redraw && liveVisible()) instrumentView.update(current, !!source);
   synchronizeLiveAnimation();
 }
@@ -733,6 +792,19 @@ function pause() {
   playerStatus('Paused.');
 }
 setInterval(() => updateTransport(false), 200);
+// Where a browser offers Media Session for this page, it shows the loaded song and its
+// play, pause and stop actions use the same transport. Playback stays on Web Audio.
+function updateMediaSession(title, playable) {
+  if (!mediaSession) return;
+  try {
+    const name = playable ? title : null;
+    if (name !== mediaTitle && typeof MediaMetadata === 'function') {
+      mediaSession.metadata = name ? new MediaMetadata({title: name, album: pageTitle}) : null;
+      mediaTitle = name;
+    }
+    mediaSession.playbackState = source ? 'playing' : playable ? 'paused' : 'none';
+  } catch { /* Optional platform integration must not affect playback. */ }
+}
 
 function prepareAudio() {
   // Called synchronously inside the click handler, before any render/fetch await.
@@ -804,6 +876,13 @@ $('listen').onclick = async () => {
   } catch (error) { if (requestGeneration === generation && request === playbackRequest) playerStatus(error.message); }
 };
 $('stop').onclick = () => { stop(); if (canAudition(lastResult)) playerStatus('Stopped.'); };
+if (mediaSession) for (const [action, handler] of [
+  ['play', () => { if (!source) $('play').click(); }],
+  ['pause', () => { if (source) $('play').click(); }],
+  ['stop', () => $('stop').click()],
+]) {
+  try { mediaSession.setActionHandler(action, handler); } catch { /* The browser does not offer this action. */ }
+}
 function seekTo(target) {
   if (!canAudition(lastResult)) return;
   const playing = !!source;
@@ -968,14 +1047,21 @@ function matchingVariants(song) {
       && (!model || (model === 'unknown' ? !modelOf(variant) : modelOf(variant) === model.slice(6)));
   });
 }
-function libraryFilters() {
-  const categories = catalogIndex.categories;
+// Catalog genres are slugs; the page shows them as words and keeps the slug as the value.
+const genreLabel = value => (value => value.charAt(0).toLocaleUpperCase() + value.slice(1))(value.replace(/[-_]+/g, ' ').replace(/\s*\/\s*/g, ' / '));
+const plural = (count, one, many = one + 's') => `${count} ${count === 1 ? one : many}`;
+// With genres (a Set, or null for every genre) only the genre choices are refilled.
+function libraryFilters(genres) {
+  const categories = catalogIndex.categories, current = $('song-genre').value.replace(/^value:/, '');
   const fill = (id, label, prefix, trim = '') => {
-    $(id).replaceChildren(libraryOption('', label), ...categories.filter(item => item.id.startsWith(prefix)).map(item => {
-      const value = item.title.replace(trim, ''); return libraryOption(id === 'song-collection' ? value : 'value:' + value, value);
+    $(id).replaceChildren(libraryOption('', label), ...categories.filter(item => item.id.startsWith(prefix)).flatMap(item => {
+      const value = item.title.replace(trim, '');
+      if (id === 'song-genre' && genres && !genres.has(value) && value !== current) return [];
+      return [libraryOption(id === 'song-collection' ? value : 'value:' + value, id === 'song-genre' ? genreLabel(value) : value)];
     }), ...(id === 'song-collection' ? [] : [libraryOption('unknown', 'Unknown')]));
     $(id).value = ''; $(id).disabled = false;
   };
+  if (genres !== undefined) { const genre = $('song-genre').value; fill('song-genre', 'All genres', 'genre-', 'Genre: '); $('song-genre').value = genre; return; }
   fill('song-collection', 'All collections', 'collection-');
   fill('song-genre', 'All genres', 'genre-', 'Genre: ');
   fill('song-model', 'All models', 'model-', 'Model: ');
@@ -1019,7 +1105,7 @@ function libraryDetails() {
   const meta = metadataOf(variant), sourceLabel = value => value === 'retained-score' ? 'retained score' : value === 'creator-declared' ? 'creator declaration' : value;
   const tempo = meta.tempo ? (meta.tempo.min_bpm === meta.tempo.max_bpm ? `${meta.tempo.min_bpm} BPM`
     : `${meta.tempo.min_bpm}–${meta.tempo.max_bpm} BPM range`) + ` (${sourceLabel(meta.tempo.source)})` : 'Unknown';
-  const genre = meta.genre ? `${meta.genre.value} (${sourceLabel(meta.genre.source)})` : 'Unknown';
+  const genre = meta.genre ? `${genreLabel(meta.genre.value)} (${sourceLabel(meta.genre.source)})` : 'Unknown';
   const model = modelOf(variant) ? `${modelOf(variant)} (${variant.discovery.provenance.model_source})` : 'Unknown';
   const note = variant.discovery?.[libraryView]?.note || (variant.kind === song.defaultKind ? song.note : '');
   $('song-note').textContent = note || '';
@@ -1064,7 +1150,7 @@ async function librarySongs({cursor = null, reset = true, preserveLinked = false
     : 'Browse the available source songs and saved versions.';
   const crumbs = ['Source library', {featured:'Favorites',all:'Browse all'}[libraryView]];
   for (const [field,label] of [['collection','Collection'],['genre','Genre'],['tempo','Tempo'],['model','Model']]) {
-    const value = $('song-' + field).value; if (value) crumbs.push(label + ': ' + value.replace(/^value:/,''));
+    const value = $('song-' + field).value.replace(/^value:/,''); if (value) crumbs.push(label + ': ' + (field === 'genre' && value !== 'unknown' ? genreLabel(value) : value));
   }
   if ($('song-search').value.trim()) crumbs.push('Search: ' + $('song-search').value.trim());
   $('library-path').textContent = crumbs.join(' › ');
@@ -1076,15 +1162,17 @@ async function librarySongs({cursor = null, reset = true, preserveLinked = false
   updateJogControls();
   try {
     let result = await catalog.browse(category, matchingVariants, cursor, signal);
-    const start = result.start;
-    // Continue empty search chunks without displaying a premature zero result.
-    // Each chunk still reads at most four bounded pages; a changed query aborts it.
-    while (!result.items.length && result.next) {
+    const start = result.start, items = [...result.items];
+    // Continue search chunks until a full result page or the end of the source
+    // selection. Each chunk reads at most four pages, a step at most twelve chunks,
+    // and a changed query aborts it.
+    for (let chunks = 1; items.length < 8 && result.next && chunks < 12; chunks++) {
       if (request !== librarySequence || signal.aborted) return;
-      $('library-status').textContent = `Searching… ${result.examined} of ${result.total} songs checked.`;
-      result = await catalog.browse(category, matchingVariants, result.next, signal);
+      $('library-status').textContent = `Searching… ${result.examined} of ${plural(result.total, 'song')} checked.`;
+      result = await catalog.browse(category, matchingVariants, result.next, signal, 8 - items.length);
+      items.push(...result.items);
     }
-    result = {...result,start};
+    result = {...result,start,items};
     if (request !== librarySequence) return;
     catalogResult = result; libraryCursor = result.start; librarySelection = result.items;
     songLibrary = [...result.items.map(item => item.song)];
@@ -1106,8 +1194,8 @@ async function librarySongs({cursor = null, reset = true, preserveLinked = false
     const filtered = ['search','collection','genre','tempo','model'].some(field => $('song-' + field).value.trim());
     const range = result.items.length ? `${result.matched - result.items.length + 1}–${result.matched}` : '0 on this step';
     $('library-status').textContent = filtered
-      ? `Results ${range}. Searched ${result.examined} of ${result.total} songs. ${result.next ? 'More songs may match; choose Next results.' : `${result.matched} matches in this source selection.`}`
-      : `${result.total ? range : 0} of ${result.total} songs`;
+      ? `Results ${range}. Searched ${result.examined} of ${plural(result.total, 'song')}. ${result.next ? 'More songs may match; choose Next results.' : `${plural(result.matched, 'match', 'matches')} in this source selection.`}`
+      : `${result.total ? range : 0} of ${plural(result.total, 'song')}`;
     $('library-previous').disabled = !libraryHistory.length;
     $('library-next').disabled = !result.next;
     libraryVariants(selectedSongId === previous ? kind : undefined);
@@ -1131,10 +1219,24 @@ async function loadLibrary() {
 }
 $('song-search').addEventListener('input', () => {if ($('song-search').value.trim()) libraryView = 'all'; void librarySongs();});
 for (const view of ['featured','all']) $('library-' + view).onclick = () => {libraryView = view; return librarySongs();};
+// Genre choices follow the chosen collection when its songs fit one bounded
+// read of at most four pages; a larger collection keeps every genre choice.
+let genreRequest = 0;
+async function collectionGenres() {
+  const request = ++genreRequest, collection = $('song-collection').value;
+  const category = collection && catalogIndex?.categories.find(item => item.id.startsWith('collection-') && item.title === collection);
+  let genres = null;
+  if (category && category.count <= 96) try {
+    const result = await catalog.browse(category, song => song.variants, null, undefined, category.count);
+    if (!result.next) genres = new Set(result.items.flatMap(item => item.variants.map(variant => metadataOf(variant).genre?.value).filter(Boolean)));
+  } catch { genres = null; }
+  if (request === genreRequest && catalogIndex) libraryFilters(genres);
+}
 for (const field of ['collection','genre','tempo','model']) $('song-' + field).onchange = () => {
-  if ($('song-' + field).value) libraryView = 'all'; return librarySongs();
+  if ($('song-' + field).value) libraryView = 'all';
+  return field === 'collection' ? librarySongs().then(collectionGenres) : librarySongs();
 };
-$('library-clear').onclick = () => {for (const field of ['search','collection','genre','tempo','model']) $('song-' + field).value = ''; return librarySongs();};
+$('library-clear').onclick = () => {for (const field of ['search','collection','genre','tempo','model']) $('song-' + field).value = ''; return librarySongs().then(collectionGenres);};
 $('library-next').onclick = () => {if (!catalogResult?.next) return; libraryHistory.push(libraryCursor); if (libraryHistory.length > 128) libraryHistory.shift(); return librarySongs({cursor:catalogResult.next,reset:false});};
 $('library-previous').onclick = () => {if (!libraryHistory.length) return; return librarySongs({cursor:libraryHistory.pop(),reset:false});};
 function updateJogControls() {
@@ -1299,8 +1401,9 @@ function surfaceLinkedSelection(match = null) {
     : 'The linked song is in Player; no unrelated library song is selected.';
   libraryVariants(match?.variant.kind);
 }
-// A link never supplies its display title. Only exact path/hash matches in a
-// validated packaged catalog can label a successfully prepared linked record.
+// A link never supplies its display title. Only an exact path/hash match, or a
+// hash naming one song (legacy path), in a validated packaged catalog can label
+// a successfully prepared linked record.
 function reconcileLinkedIdentity() {
   const context = linkedMetadata; if (!context) return;
   context.match ||= catalog.cached(context.path, context.sha);
@@ -1326,13 +1429,20 @@ async function hydrateLinkedIdentity(context) {
     if (context === linkedMetadata) reconcileLinkedIdentity();
   } finally {clearTimeout(context.timer);}
 }
+// The link is resolved and checked before anything is replaced, so a failed
+// link keeps the current song and selection and reports the problem plainly.
+let linkRequest = 0;
+const linkGenerations = new WeakMap();
 async function loadLink(value) {
-  invalidate(); linkedSelectionActive = true; surfaceLinkedSelection(); const requestGeneration = generation;
+  const request = ++linkRequest, requestGeneration = generation, current = () => request === linkRequest && requestGeneration === generation;
   playerStatus('Loading record…');
   try {
-    const loaded = await resolveLink(value, location.href);
-    if (requestGeneration !== generation) throw Error('Loading cancelled.');
+    let loaded;
+    try { loaded = await resolveLink(value, location.href); }
+    catch (error) { if (current()) error.linkMessage = linkProblem(error); throw error; }
+    if (!current()) throw Error('Loading cancelled.');
     checkRecord(loaded.recordText);
+    invalidate(); linkedSelectionActive = true; surfaceLinkedSelection(); linkGenerations.set(loaded, generation);
     $('record').value = loaded.recordText; expectedRecordSha = loaded.recordSha256 || null; loadedRelease = loaded.release;
     loadedIdentity = {title:'Linked song',version:'Linked saved version'};
     if (loaded.libraryPath && loaded.recordSha256) {
@@ -1343,14 +1453,14 @@ async function loadLink(value) {
     playerStatus('Record loaded. Listen or verify.');
     return loaded;
   } catch (error) {
-    if (requestGeneration === generation) playerStatus(error.message);
+    if (current()) playerStatus((error.linkMessage || error.message)
+      + ($('record').value.trim() ? ' The current song is unchanged.' : ''));
     throw error;
   }
 }
 async function loadLinkForPlayback(value) {
-  const pending = loadLink(value), requestGeneration = generation;
-  const loaded = await pending;
-  if (requestGeneration !== generation) throw Error('Loading cancelled.');
+  const loaded = await loadLink(value);
+  if (linkGenerations.get(loaded) !== generation) throw Error('Loading cancelled.');
   return preparePlayback(loaded.recordText);
 }
 $('file').onchange = () => {
@@ -1466,12 +1576,31 @@ async function loadedSongLink(result) {
   }
   return {url:await portableLink(result.canonical, assetBase, result.rendererRelease), label:'Portable song link', portable:true};
 }
+// Touch devices hand the link to the native share sheet when it can carry it; the clipboard stays the fallback.
+function shareSheet(data) {
+  try {
+    return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches
+      && typeof navigator.share === 'function' && typeof navigator.canShare === 'function' && navigator.canShare(data);
+  } catch { return false; }
+}
+if (shareSheet({url: location.href})) $('share').textContent = 'Share song link';
 $('share').onclick = async () => {
   const result = lastResult;
   try {
     if (!result || result.verdict !== 'valid') return;
     const {url, label:linkLabel, portable} = await loadedSongLink(result);
     if (lastResult !== result) return;
+    const data = {title: linkLabel, url};
+    if (shareSheet(data)) {
+      try {
+        await navigator.share(data);
+        if (lastResult === result) playerStatus(portable ? 'Portable record link shared. Nothing was published.' : 'Song link shared for this exact saved version. Nothing was published.');
+        return;
+      } catch (error) {
+        if (error?.name === 'AbortError') { if (lastResult === result) playerStatus('Sharing cancelled. Nothing was published.'); return; }
+        if (lastResult !== result) return;
+      }
+    }
     try { await navigator.clipboard.writeText(url); }
     catch { if (lastResult === result) { openQr(url, {label:linkLabel, trigger:$('share'), selectLink:true}); playerStatus('Clipboard access is unavailable. The song link is selected in the dialog; copy it manually. Nothing was published.'); } return; }
     if (lastResult !== result) return;

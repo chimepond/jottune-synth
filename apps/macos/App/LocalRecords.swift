@@ -26,22 +26,7 @@ enum RecordDocument {
     /// also the authority for complete pooled-record exports.
     static func canonical(paths: [String] = [], data: Data? = nil, work: RecordWork) throws -> Data {
         var error = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
-        var player: OpaquePointer?
-        if let data {
-            let status = data.withUnsafeBytes { bytes in
-                fms_player_import(bytes.bindMemory(to: CChar.self).baseAddress, data.count,
-                                  work.token, &player, &error, error.count)
-            }
-            if status == FMS_CANCELLED { throw CancellationError() }
-            guard status == FMS_OK else { throw Refused(String(cString: error)) }
-        } else {
-            let strings = paths.map { strdup($0) }
-            defer { strings.forEach { free($0) } }
-            player = strings.map { UnsafePointer($0) }.withUnsafeBufferPointer {
-                fms_player_open($0.baseAddress, Int32($0.count), &error, error.count)
-            }
-        }
-        guard let player else { throw Refused(String(cString: error)) }
+        let player = try open(paths: paths, data: data, work: work)
         defer { fms_player_close(player) }
         var info = fms_info_t()
         fms_player_info(player, &info)
@@ -61,6 +46,41 @@ enum RecordDocument {
             throw Refused("The complete verified record could not be exported.")
         }
         return text.withUnsafeBytes { Data($0.dropLast()) }
+    }
+
+    /// The record's offline PCM16 WAV bytes from the native writer that also
+    /// saves take companions (byte-identical to `harness --play --wav`; it
+    /// refuses a record whose stated hash does not match). A private player
+    /// writes a scratch file; the caller publishes the bytes.
+    static func wav(paths: [String] = [], data: Data? = nil, work: RecordWork) throws -> Data {
+        var error = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
+        let player = try open(paths: paths, data: data, work: work)
+        defer { fms_player_close(player) }
+        let temp = FileManager.default.temporaryDirectory.appendingPathComponent("fmspike-export-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: temp) }
+        guard fms_player_write_wav(player, temp.path, &error, error.count) == 0 else { throw Refused(String(cString: error)) }
+        return try Data(contentsOf: temp)
+    }
+
+    private static func open(paths: [String], data: Data?, work: RecordWork) throws -> OpaquePointer {
+        var error = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
+        var player: OpaquePointer?
+        if let data {
+            let status = data.withUnsafeBytes { bytes in
+                fms_player_import(bytes.bindMemory(to: CChar.self).baseAddress, data.count,
+                                  work.token, &player, &error, error.count)
+            }
+            if status == FMS_CANCELLED { throw CancellationError() }
+            guard status == FMS_OK else { throw Refused(String(cString: error)) }
+        } else {
+            let strings = paths.map { strdup($0) }
+            defer { strings.forEach { free($0) } }
+            player = strings.map { UnsafePointer($0) }.withUnsafeBufferPointer {
+                fms_player_open($0.baseAddress, Int32($0.count), &error, error.count)
+            }
+        }
+        guard let player else { throw Refused(String(cString: error)) }
+        return player
     }
 }
 
@@ -177,7 +197,9 @@ enum RecordDocument {
         } catch { status = "Remove refused: \(error)" }
     }
 
-    @discardableResult func export(to destination: URL) -> Task<Void, Never>? {
+    /// Export TL, or with wav the record's offline WAV: the same PCM16 bytes
+    /// as `harness --play <record files> --wav` (tl2wav on the command line).
+    @discardableResult func export(to destination: URL, wav: Bool = false) -> Task<Void, Never>? {
         do {
             guard engine.info != nil, !engine.isLive, !engine.loadedPaths.isEmpty else {
                 throw RecordDocument.Refused("Open a complete record before exporting it.")
@@ -186,7 +208,10 @@ enum RecordDocument {
             guard !paths.contains(where: { URL(fileURLWithPath: $0).resolvingSymlinksInPath() == destination.resolvingSymlinksInPath() }) else {
                 throw RecordDocument.Refused("Choose a new destination to preserve the original record.")
             }
-            let (request, load, installed, work) = try begin("Verifying the complete record for export…")
+            guard !wav || destination.pathExtension.lowercased() == "wav" else {
+                throw RecordDocument.Refused("Choose a .wav destination.")
+            }
+            let (request, load, installed, work) = try begin(wav ? "Rendering the complete record to WAV…" : "Verifying the complete record for export…")
             let result = Task { @MainActor in
                 defer { finish(request) }
                 do {
@@ -196,15 +221,17 @@ enum RecordDocument {
                             let source = URL(fileURLWithPath: paths[0])
                             let bytes = source.deletingLastPathComponent().standardizedFileURL == store.directory.standardizedFileURL
                                 ? try store.read(source.deletingPathExtension().lastPathComponent) : try Data(contentsOf: source)
+                            if wav { return try RecordDocument.wav(data: bytes, work: work) }
                             _ = try RecordDocument.canonical(data: bytes, work: work)
                             return bytes
                         }
+                        if wav { return try RecordDocument.wav(paths: paths, work: work) }
                         return try RecordDocument.canonical(paths: paths, work: work)
                     }.value
                     try current(request, load, installed)
                     let bytes = snapshot
                     try bytes.write(to: destination, options: .atomic)
-                    status = paths.count == 1 ? "Exported original TL bytes." : "Exported one complete verified TL."
+                    status = wav ? "Exported the record's offline WAV." : paths.count == 1 ? "Exported original TL bytes." : "Exported one complete verified TL."
                 } catch is CancellationError {
                     if generation == request { status = "Source changed or export cancelled." }
                 } catch {
@@ -232,6 +259,15 @@ enum RecordDocument {
         export(to: url)
     }
 
+    /// The standard save panel asks before replacing an existing file.
+    func exportWavPanel() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.wav]
+        panel.nameFieldStringValue = "song.wav"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        export(to: url, wav: true)
+    }
+
  }
 
 struct LocalRecordsView: View {
@@ -250,6 +286,7 @@ struct LocalRecordsView: View {
             }
             HStack {
                 Button("Export TL…") { records.exportPanel() }.disabled(records.busy || engine.info == nil || engine.isLive)
+                Button("Export WAV…") { records.exportWavPanel() }.disabled(records.busy || engine.info == nil || engine.isLive)
                 if records.busy { ProgressView().controlSize(.small) }
                 if records.canCancel { Button("Cancel") { records.cancel() } }
             }

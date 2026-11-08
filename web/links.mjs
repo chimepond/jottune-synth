@@ -3,7 +3,7 @@
 import {limits, options} from './policy.mjs';
 
 async function boundedText(response) {
-  if (!response.ok) throw Error('Record request returned ' + response.status);
+  if (!response.ok) throw Object.assign(Error('Record request returned ' + response.status), {status:response.status});
   if (Number(response.headers.get('content-length')) > limits.recordBytes) throw Error('Record exceeds the 1 MB input limit.');
   const reader = response.body.getReader(), chunks = [];
   let size = 0;
@@ -27,8 +27,28 @@ function httpURL(value, base) {
   return url;
 }
 
+// A request that never reached a response is marked so the page can say so plainly.
+async function request(url, init) {
+  try { return await fetch(url, init); }
+  catch (error) {
+    if (error?.name === 'AbortError') throw error;
+    throw Object.assign(Error(error?.message || 'Record request failed.'), {unreachable:true});
+  }
+}
+
 export async function fetchRecord(value, base, {signal} = {}) {
-  return boundedText(await fetch(httpURL(value, base), {signal}));
+  return boundedText(await request(httpURL(value, base), {signal}));
+}
+
+// Plain-language text for a link that could not be opened. The thrown error
+// keeps its technical detail for programmatic callers.
+export function linkProblem(error) {
+  if (error?.status === 404 || error?.status === 410)
+    return 'This link points to a song that is not available. It may have been removed, or the link may be incomplete.';
+  if (error?.status) return 'The linked song could not be fetched just now. Try the link again later.';
+  if (error?.unreachable) return 'The linked song could not be reached. Check your connection and try the link again.';
+  if (/1 MB input limit/.test(error?.message)) return 'The linked song is larger than the 1 MB record limit, so it was not opened.';
+  return 'This link is incomplete or damaged, so no song could be opened from it.';
 }
 
 export function isRecordLink(url) {
@@ -92,7 +112,7 @@ export async function resolveLink(value, base) {
   const serviceBase = new URL((record || submission)[1], url);
   const endpoint = new URL('api/' + (record ? 'records/' + record[2] : 'submissions/' + submission[2]), serviceBase);
   if (release) endpoint.searchParams.set('release', release);
-  const descriptor = JSON.parse(await boundedText(await fetch(endpoint)));
+  const descriptor = JSON.parse(await boundedText(await request(endpoint)));
   if (!descriptor || !/^[0-9a-f]{64}$/.test(descriptor.record_sha256)
       || typeof descriptor.record_url !== 'string' || typeof descriptor.renderer_release !== 'string')
     throw Error('The service did not return a complete record descriptor.');
