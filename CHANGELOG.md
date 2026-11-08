@@ -4,8 +4,9 @@
 
 - `tools/package_web.py` packages a kept release only with `--repository`, the
   https URL of the public source repository, and only when the source commit is
-  in a remote-tracking branch (`--public-ref`, default `origin/main`). The entry
-  records the repository. The check reads the local repository only; fetch first.
+  in a remote-tracking branch (`--public-ref`, default `origin/main`) of a remote
+  that fetches from that repository. The entry records the repository. The check
+  reads the local repository only; fetch first.
 - `tools/build_wasm.py` writes the wasi-libc and compiler-rt notices from the
   Zig distribution that built the module, including the cloudlibc and musl texts.
 - Text files check out with LF endings on every platform; TL files keep their
@@ -34,6 +35,15 @@
   record's WAV through the native take-companion writer, byte-identical to
   `harness --play --wav` for the record's files (checked by `make uitest`). The
   app does not transcribe WAV to TL.
+- The library exporter, the web player and the agent client accept the provenance
+  that the tunes repository writes for contributed songs: `made_by` (`agent`,
+  `human` or `mixed`), alone or with the `model` and `model_source` pair.
+  `discover --examples` also accepts `creator-declared` genre and tempo labels.
+  Before, the first contributed song made the exporter and the player refuse the
+  whole catalog, and `discover --examples` refused it at the first contributed
+  song with a genre or tempo.
+- `tools/fm.py` declares `API_VERSION = 1`, which `jottune-mcp doctor` reports and checks against
+  the versions that server supports.
 
 ## 0.1.0 beta — prepared, not published
 

@@ -304,6 +304,25 @@ try {
     const empty = await cli(site,'discover','--cache',cache,'--examples','10');
     assert.equal(empty.code,0,empty.stderr);
     assert.equal(JSON.parse(empty.stdout).examples.eligibleSongs,0); assert.deepEqual(JSON.parse(empty.stdout).examples.songs,[]);
+    // Songs contributed through tunes carry creator-declared labels and made_by, with the model pair when one was declared.
+    songsCatalog = structuredClone(exampleCatalog);
+    const delta = songsCatalog.songs[3].variants[0];
+    delta.record_sha256 = 'd'.repeat(64);
+    delta.discovery = {record_sha256:delta.record_sha256,metadata:{genre:{value:'test-style',source:'creator-declared'},
+      tempo:{min_bpm:90,max_bpm:90,source:'creator-declared'}},provenance:{made_by:'human'}};
+    songsCatalog.songs[0].variants[1].discovery.provenance = {made_by:'agent',model:'declared-model',model_source:'user-stated'};
+    const contributed = await cli(site,'discover','--cache',cache,'--examples','3','--example-seed','test-seed');
+    assert.equal(contributed.code,0,contributed.stderr);
+    const found = id => JSON.parse(contributed.stdout).examples.songs.find(song => song.id === id);
+    assert.deepEqual(found('delta').metadata,{genre:{value:'test-style',source:'creator-declared'},
+      tempo:{min_bpm:90,max_bpm:90,source:'creator-declared'}});
+    assert.deepEqual(found('delta').provenance,{made_by:'human'});
+    assert.deepEqual(found('alpha').provenance,{made_by:'agent',model:'declared-model',model_source:'user-stated'});
+    for (const provenance of [{},{made_by:'robot'},{made_by:'human',model:'declared-model'},{made_by:'human',prompt:'extra'}]) {
+      delta.discovery.provenance = provenance;
+      const refused = await cli(site,'discover','--cache',cache,'--examples','1');
+      assert.equal(refused.code,2); assert.match(refused.stderr,/catalog/);
+    }
     songsCatalog = exampleCatalog;
   });
   await check('native analysis admission rejects invalid sections and voices before the audio worker',async () => {

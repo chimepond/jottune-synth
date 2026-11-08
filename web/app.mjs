@@ -1030,8 +1030,13 @@ function validDiscovery(variant) {
       || meta.tempo.max_bpm > Number.MAX_SAFE_INTEGER)) return false;
   for (const key of ['featured', 'showcase']) if (item[key] !== undefined && (!keys(item[key], ['order','note'])
     || !Number.isSafeInteger(item[key].order) || item[key].order < 1 || !text(item[key].note))) return false;
-  return item.provenance === undefined || (keys(item.provenance, ['model','model_source']) && token(item.provenance.model)
-    && ['client-reported', 'user-stated', 'unknown'].includes(item.provenance.model_source));
+  // Contributed songs declare made_by, with the model pair when one was declared (tunes/tools/validate.py).
+  const provenance = item.provenance;
+  return provenance === undefined || (keys(provenance, ['made_by','model','model_source']) && Object.keys(provenance).length > 0
+    && (provenance.made_by === undefined || ['agent','human','mixed'].includes(provenance.made_by))
+    && ('model' in provenance) === ('model_source' in provenance)
+    && (provenance.model === undefined || (token(provenance.model)
+      && ['client-reported', 'user-stated', 'unknown'].includes(provenance.model_source))));
 }
 
 function matchingVariants(song) {

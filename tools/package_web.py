@@ -53,22 +53,49 @@ def source_commit(root):
 
 
 # A kept release names the https URL of its public repository and a commit that a
-# remote-tracking branch of that repository already contains.
+# remote-tracking branch of that repository already contains. The branch's remote
+# must fetch from that repository (repository_key).
 REPOSITORY = re.compile(r'https://[A-Za-z0-9.-]+(?::[0-9]+)?(?:/[A-Za-z0-9._~-]+)+/?')
 PUBLIC_REF = re.compile(r'[A-Za-z0-9][A-Za-z0-9._/-]*')
 
 
-def published_commit(root, revision, ref):
-    """True when ref is a remote-tracking branch that contains revision.
+def repository_key(url):
+    """The host and path that an https, ssh or scp-like Git URL names, or None.
 
-    Fetch the public repository first. This reads the local repository only."""
+    The host's letter case, a trailing slash and a final .git do not count, so
+    git@host:owner/repo.git and https://host/owner/repo name the same repository."""
+    url = url.strip()
+    match = (re.fullmatch(r'(?:https|ssh)://(?:[^/@]+@)?([^/:@]+)(?::[0-9]+)?/(.+)', url) or
+             re.fullmatch(r'(?:[^/@:]+@)?([^/:@]+):(?!/)(.+)', url))
+    if not match:
+        return None
+    path = match[2].strip('/')
+    path = path[:-4] if path.endswith('.git') else path
+    return match[1].lower() + '/' + path if path else None
+
+
+def published_commit(root, revision, ref, repository):
+    """True when ref is a remote-tracking branch that contains revision, and the
+    remote it is named after (refs/remotes/<remote>/...) fetches from repository.
+
+    Fetch the public repository first. This reads the local repository only: it
+    catches packaging from the wrong remote, not edited local refs."""
+    def git(*args):
+        return subprocess.run(['git', *args], cwd=root, capture_output=True, text=True)
     try:
-        full = subprocess.run(['git', 'rev-parse', '--symbolic-full-name', ref],
-                              cwd=root, capture_output=True, text=True)
-        if full.returncode or not full.stdout.strip().startswith('refs/remotes/'):
+        full = git('rev-parse', '--symbolic-full-name', ref)
+        name = full.stdout.strip()
+        if full.returncode or not name.startswith('refs/remotes/'):
             return False
-        return subprocess.run(['git', 'merge-base', '--is-ancestor', revision, ref],
-                              cwd=root, capture_output=True).returncode == 0
+        # Remote names may hold a slash; the longest configured name that prefixes the ref wins.
+        remotes = [remote for remote in git('remote').stdout.split() if name.startswith('refs/remotes/' + remote + '/')]
+        if not remotes:
+            return False
+        url = git('remote', 'get-url', max(remotes, key=len))
+        expected = repository_key(repository)
+        if url.returncode or expected is None or repository_key(url.stdout) != expected:
+            return False
+        return git('merge-base', '--is-ancestor', revision, name).returncode == 0
     except OSError:
         return False
 
@@ -340,9 +367,10 @@ def package(root=ROOT, *, release_id=None, source=None, notices_dir=None, reposi
         public_ref = public_ref or 'origin/main'
         if not PUBLIC_REF.fullmatch(public_ref):
             raise ValueError('Invalid public ref: ' + public_ref)
-        if not published_commit(root, revision, public_ref):
-            raise ValueError('The source commit is not in ' + public_ref + ', a remote-tracking branch of the '
-                             'public repository. Push it, fetch, and package again.')
+        if not published_commit(root, revision, public_ref, repository):
+            raise ValueError('The source commit is not in ' + public_ref + ', or that branch does not belong to a '
+                             'remote that fetches from ' + repository + '. Push the commit there, fetch, and '
+                             'package again; --public-ref names a branch of that remote.')
     elif source:
         raise ValueError('--source-commit requires --release-id.')
     elif repository or public_ref:
@@ -454,8 +482,8 @@ def main():
     parser.add_argument('--source-commit', help='full public source commit for the kept release')
     parser.add_argument('--notices-dir', type=Path, help='matching wasi-libc/compiler-rt licence notices')
     parser.add_argument('--repository', help='https URL of the public source repository (kept releases)')
-    parser.add_argument('--public-ref', help='remote-tracking branch that must contain the source commit '
-                        '(kept releases; default origin/main)')
+    parser.add_argument('--public-ref', help='remote-tracking branch that must contain the source commit; its '
+                        'remote must fetch from --repository (kept releases; default origin/main)')
     parser.add_argument('--withdraw', metavar='ID', help='mark renderer unavailable without deleting its archive')
     parser.add_argument('--withdrawn-at', help='withdrawal date, YYYY-MM-DD')
     parser.add_argument('--refresh-assets', action='store_true', help='refresh precache; keep renderer registry and SW unchanged')

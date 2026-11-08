@@ -31,6 +31,9 @@ import wave
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_HARNESS = ROOT / "build/s12e10p1v1/harness"
+# Version of this module's Python interface as jottune-mcp uses it. The MCP doctor reports
+# whether it supports this version. Raise it when the interface changes incompatibly.
+API_VERSION = 1
 WORKSPACE_ROOT = Path(os.environ["JOTTUNE_MCP_WORKSPACE"]).resolve() if os.environ.get("JOTTUNE_MCP_WORKSPACE") else None
 NATIVE_SECONDS = 120
 MAX_RENDER_BYTES = 192 * 1024 * 1024

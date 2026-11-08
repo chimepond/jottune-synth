@@ -25,6 +25,7 @@ CATALOG_PAGE_SIZE = 24
 CATALOG_JSON_LIMIT = 262144
 SUMMARY_BREAKDOWN_LIMIT = 32
 DECLARATION_SOURCES = ('retained-score', 'creator-declared')
+MADE_BY = ('agent', 'human', 'mixed')
 
 
 def require(condition, message):
@@ -75,7 +76,12 @@ def validate_discovery(value, root):
                     'Tempo needs an explicit supported source and positive BPM range.')
     if 'provenance' in value:
         provenance = value['provenance']
-        require(isinstance(provenance, dict) and set(provenance) == {'model', 'model_source'} and
+        # Songs contributed through tunes declare made_by, with the model pair when one was declared.
+        # The archived songs carry only the model pair. The rule matches tunes/tools/validate.py.
+        require(isinstance(provenance, dict) and provenance and set(provenance) <= {'made_by', 'model', 'model_source'} and
+                ('model' in provenance) == ('model_source' in provenance) and
+                provenance.get('made_by', 'agent') in MADE_BY, 'Invalid discovery model provenance.')
+        require('model' not in provenance or
                 isinstance(provenance['model'], str) and re.fullmatch('[A-Za-z0-9._:+/@-]{1,160}', provenance['model']) and
                 provenance['model_source'] in ('client-reported', 'user-stated', 'unknown'), 'Invalid discovery model provenance.')
     for key in ('featured', 'showcase'):

@@ -76,6 +76,14 @@ async function discoverExamples(context,count,seed) {
   const catalog = JSON.parse(decoder.decode(await download(catalogUrl,MAX_CATALOG)));
   const text = value => typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\x00-\x1f\x7f]/.test(value);
   const object = value => value && typeof value === 'object' && !Array.isArray(value);
+  // Songs contributed through tunes carry creator-declared labels and made_by, with the model pair
+  // when one was declared. The archived songs carry retained-score labels and only the model pair.
+  const SOURCES = ['retained-score','creator-declared'];
+  const validProvenance = value => object(value) && Object.keys(value).length > 0 &&
+    Object.keys(value).every(key => ['made_by','model','model_source'].includes(key)) &&
+    (value.made_by === undefined || ['agent','human','mixed'].includes(value.made_by)) &&
+    ('model' in value) === ('model_source' in value) &&
+    (value.model === undefined || (text(value.model) && ['client-reported','user-stated','unknown'].includes(value.model_source)));
   if (catalog?.version !== 1 || !Array.isArray(catalog.songs) || catalog.songs.length > 10000)
     fail('Unsupported or oversized song catalog.');
   const ids = new Set(), candidates = [];
@@ -97,10 +105,10 @@ async function discoverExamples(context,count,seed) {
     if (!usable.length) continue;
     const variant = usable[0], discovery = variant.discovery, metadata = discovery?.metadata ?? {}, provenance = discovery?.provenance;
     if (!object(metadata) || (discovery !== undefined && (!object(discovery) || discovery.record_sha256 !== variant.record_sha256)) ||
-        (metadata.genre !== undefined && (!text(metadata.genre?.value) || metadata.genre.source !== 'retained-score')) ||
+        (metadata.genre !== undefined && (!text(metadata.genre?.value) || !SOURCES.includes(metadata.genre.source))) ||
         (metadata.tempo !== undefined && (!Number.isFinite(metadata.tempo?.min_bpm) || !Number.isFinite(metadata.tempo?.max_bpm) ||
-          metadata.tempo.min_bpm <= 0 || metadata.tempo.max_bpm < metadata.tempo.min_bpm || metadata.tempo.source !== 'retained-score')) ||
-        (provenance !== undefined && (!text(provenance?.model) || !['client-reported','user-stated','unknown'].includes(provenance.model_source))))
+          metadata.tempo.min_bpm <= 0 || metadata.tempo.max_bpm < metadata.tempo.min_bpm || !SOURCES.includes(metadata.tempo.source))) ||
+        (provenance !== undefined && !validProvenance(provenance)))
       fail('Invalid song catalog metadata.');
     const known = {};
     if (metadata.genre) known.genre = {value:metadata.genre.value,source:metadata.genre.source};
@@ -108,7 +116,8 @@ async function discoverExamples(context,count,seed) {
     candidates.push({rank:hash('jottune-examples-v1\0' + seed + '\0' + song.id),song:{id:song.id,title:song.title,collection:song.collection,
       ...(song.revision ? {revision:song.revision} : {}),variant:variant.kind,url:new URL(variant.path,context.site).href,
       bytes:variant.bytes,durationSeconds:variant.duration_seconds,...(variant.record_sha256 ? {recordSha256:variant.record_sha256} : {}),
-      metadata:known,...(provenance ? {provenance:{model:provenance.model,model_source:provenance.model_source}} : {})}});
+      metadata:known,...(provenance ? {provenance:{...(provenance.made_by ? {made_by:provenance.made_by} : {}),
+        ...(provenance.model ? {model:provenance.model,model_source:provenance.model_source} : {})}} : {})}});
   }
   candidates.sort((a,b) => a.rank < b.rank ? -1 : a.rank > b.rank ? 1 : a.song.id < b.song.id ? -1 : a.song.id > b.song.id ? 1 : 0);
   return {seed,requested:count,eligibleSongs:candidates.length,catalogUrl,songs:candidates.slice(0,count).map(item => item.song),

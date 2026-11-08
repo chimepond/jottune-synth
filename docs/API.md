@@ -45,7 +45,9 @@ ID, bind `source_commit` to the public source revision, record the public
 `repository` URL, and keep the matching Wasm, runtime module and shim together.
 `tools/package_web.py` packages a kept release only when `--repository` is an
 https URL and the commit is in a remote-tracking branch of that repository
-(`--public-ref`, default `origin/main`). The check reads the local repository
+(`--public-ref`, default `origin/main`). That branch's remote must fetch from the
+same host and path as `--repository`; https, ssh and scp-like URLs match, and the
+host's letter case, a trailing slash and `.git` do not count. The check reads the local repository
 and does not contact the network, so fetch first. A withdrawn entry retains its ID and
 withdrawal date. Development entries use `dev-<digest>` and cannot claim release
 acceptance. Neither an engine-line match nor a song-supplied URL selects code.
@@ -76,7 +78,10 @@ Each item has `id` (the unique saved-variant ID), `title`, `collection`, `revisi
 `bytes`, `record_sha256`, `duration_seconds` and `technical`. The technical
 object retains native-inspected `source`, `channels`, `route`, `allocated_voices`
 and `events`. Optional `metadata`, `provenance` and editorial `note` describe
-only the exact selected variant. Featured and Synth showcase use their explicit
+only the exact selected variant. `provenance` has `made_by` (`agent`, `human` or
+`mixed`) for songs contributed through the tunes repository, and the `model` and
+`model_source` pair when a model was declared (`client-reported`, `user-stated`
+or `unknown`); it is never empty. Featured and Synth showcase use their explicit
 editorial order; general browsing prefers a saved Keys variant, then Standard.
 Collections and available genre/model declarations form additional categories;
 unknown values are not guessed or transferred between profiles.

@@ -727,6 +727,25 @@ test('Favorites retain editorial order and prefer Keys without inheriting Origin
   assert.equal(page.workers.length, 0);
 }, {catalog:curatedCatalog()}));
 
+test('contributed made_by provenance loads with or without a model; malformed provenance is refused', async () => {
+  // tunes/tools/check_pr.py writes made_by for every contribution and adds the model pair when one was declared.
+  const contributed = provenance => {
+    const catalog = curatedCatalog();
+    catalog.songs[0].variants[1].discovery.provenance = {made_by:'human'};
+    catalog.songs[1].variants[0].discovery.provenance = provenance;
+    return catalog;
+  };
+  await withPage(async page => {
+    assert.doesNotMatch(page.get('library-status').textContent, /unavailable/);
+    assert.match(page.get('song-discovery').textContent, /Start here.*declared-model \(user-stated\)/);
+    selectSong(page,'songs/first.tl');
+    page.get('song-variant').value = 'standard'; page.get('song-variant').onchange();
+    assert.match(page.get('song-discovery').textContent, /A selected changing-tempo arrangement.*Model: Unknown/);
+  }, {catalog:contributed({made_by:'agent',model:'declared-model',model_source:'user-stated'})});
+  for (const provenance of [{}, {made_by:'robot'}, {made_by:'human',model:'declared-model'}, {made_by:'human',prompt:'extra'}])
+    await withPage(async page => assert.match(page.get('library-status').textContent, /unavailable/), {catalog:contributed(provenance)});
+});
+
 test('metadata filters select matching variants with Unknown and tempo ranges kept distinct', () => withPage(async page => {
   await page.get('library-all').click();
   page.get('song-tempo').value = 'range'; await page.get('song-tempo').onchange();

@@ -446,7 +446,7 @@ class Packages(unittest.TestCase):
             with patch.object(pkg, 'published_commit', return_value=False) as published:
                 with self.assertRaisesRegex(ValueError, 'not in origin/main'):
                     pkg.package(self.root, release_id=release, notices_dir=notices, repository=REPO)
-                published.assert_called_once_with(self.root.resolve(), revision, 'origin/main')
+                published.assert_called_once_with(self.root.resolve(), revision, 'origin/main', REPO)
             self.assertFalse((self.root / 'web/engines.json').exists())
             entry = pkg.package(self.root, release_id=release, notices_dir=notices, repository=REPO)
             self.assertEqual((entry['source_commit'], entry['repository']), (revision, REPO))
@@ -468,13 +468,38 @@ class Packages(unittest.TestCase):
         first = git('rev-parse', 'HEAD')
         git('commit', '-q', '--allow-empty', '-m', 'two')
         second = git('rev-parse', 'HEAD')
-        self.assertFalse(REAL_PUBLISHED(self.root, first, 'origin/main'))
+        git('remote', 'add', 'origin', REPO)
+        self.assertFalse(REAL_PUBLISHED(self.root, first, 'origin/main', REPO))
         git('update-ref', 'refs/remotes/origin/main', first)
         git('branch', 'local-only', second)
-        self.assertTrue(REAL_PUBLISHED(self.root, first, 'origin/main'))
-        self.assertFalse(REAL_PUBLISHED(self.root, second, 'origin/main'))
-        self.assertFalse(REAL_PUBLISHED(self.root, second, 'local-only'))
-        self.assertFalse(REAL_PUBLISHED(self.root, 'f' * 40, 'origin/main'))
+        self.assertTrue(REAL_PUBLISHED(self.root, first, 'origin/main', REPO))
+        self.assertFalse(REAL_PUBLISHED(self.root, second, 'origin/main', REPO))
+        self.assertFalse(REAL_PUBLISHED(self.root, second, 'local-only', REPO))
+        self.assertFalse(REAL_PUBLISHED(self.root, 'f' * 40, 'origin/main', REPO))
+
+    def test_published_commit_needs_a_remote_that_fetches_the_named_repository(self):
+        import subprocess
+        def git(*args):
+            return subprocess.run(['git', '-c', 'user.name=fixture', '-c', 'user.email=fixture@example.invalid',
+                                   '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', *args],
+                                  cwd=self.root, check=True, capture_output=True, text=True).stdout.strip()
+        git('init', '-q')
+        git('commit', '-q', '--allow-empty', '-m', 'one')
+        head = git('rev-parse', 'HEAD')
+        # origin is a private predecessor; the public repository is reachable under other names and URL forms.
+        remotes = {'origin': 'https://example.invalid/private/jottune-synth.git',
+                   'public': 'git@EXAMPLE.invalid:jottune-synth.git', 'mirror': 'ssh://git@example.invalid/jottune-synth/',
+                   'web': 'https://example.invalid/jottune-synth', 'local': str(self.root)}
+        for name, url in remotes.items():
+            git('remote', 'add', name, url)
+            git('update-ref', 'refs/remotes/' + name + '/main', head)
+        git('update-ref', 'refs/remotes/unconfigured/main', head)
+        for ref, published in (('origin/main', False), ('public/main', True), ('mirror/main', True),
+                               ('web/main', True), ('local/main', False), ('unconfigured/main', False)):
+            self.assertEqual(REAL_PUBLISHED(self.root, head, ref, REPO), published, ref)
+        self.assertTrue(REAL_PUBLISHED(self.root, head, 'origin/main', 'https://example.invalid/private/jottune-synth'))
+        self.assertFalse(REAL_PUBLISHED(self.root, head, 'web/main', REPO + '-fork'))
+        self.assertFalse(REAL_PUBLISHED(self.root, head, 'web/main', 'https://example.invalid/JotTune-Synth'))
 
 
 if __name__ == '__main__':

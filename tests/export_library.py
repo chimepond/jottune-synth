@@ -208,6 +208,23 @@ class Exports(unittest.TestCase):
                 self.save()
                 with self.assertRaises(ValueError): exporter.catalog_entries(self.catalog, self.root)
 
+    def test_contributed_made_by_provenance_is_kept_with_or_without_a_model(self):
+        # tunes/tools/check_pr.py writes made_by for every contribution and adds the model pair when one was declared.
+        baseline = self.discovery()
+        for provenance in [{'made_by':'human'}, {'made_by':'mixed'},
+                           {'made_by':'agent', 'model':'reported-model-v1', 'model_source':'user-stated'}]:
+            with self.subTest(provenance=provenance):
+                self.value['songs'][0]['variants'][0]['discovery'] = {**baseline, 'provenance':provenance}
+                self.save()
+                self.assertEqual(self.export()['songs'][0]['variants'][0]['discovery']['provenance'], provenance)
+        for provenance in [{}, {'made_by':'robot'}, {'made_by':'human', 'model':'reported-model-v1'},
+                           {'made_by':'human', 'model_source':'user-stated'}, {'made_by':'human', 'prompt':'extra'}]:
+            with self.subTest(provenance=provenance):
+                self.value['songs'][0]['variants'][0]['discovery'] = {**baseline, 'provenance':provenance}
+                self.save()
+                with self.assertRaisesRegex(ValueError, 'Invalid discovery model provenance'):
+                    exporter.catalog_entries(self.catalog, self.root)
+
     def test_editorial_order_is_explicit_and_unambiguous(self):
         standard, keys = self.value['songs'][0]['variants']
         standard['discovery'] = self.discovery()
