@@ -59,7 +59,7 @@ clean:
 	rm -rf build
 .PHONY: all portable ubsan check macos clean
 
-quick: all
+quick: all check-catalog
 	python3 -B tests/cli_safety.py
 	python3 -B tests/decode_cli.py
 	python3 -B tests/transcribe_robust.py
@@ -70,6 +70,14 @@ quick: all
 	$(B)/harness --play tests/golden/48000/sine.tl --metrics
 	python3 tools/music/compose.py --selftest-perf
 .PHONY: quick
+
+# Catalog export needs the native harness; the site client needs prebuilt Wasm
+# assets and serves only loopback HTTP. Neither target downloads dependencies.
+check-catalog: all
+	HARNESS="$(abspath $(B)/harness)" python3 -I -B tests/export_library.py
+check-agent:
+	node tests/agent_client.mjs
+.PHONY: check-catalog check-agent
 
 wasm:
 	python3 tools/build_wasm.py

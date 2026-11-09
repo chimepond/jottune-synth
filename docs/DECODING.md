@@ -110,14 +110,17 @@ TL-rendered round trip can score near 0 dB (the single sine above scores about
   descriptor shortlist is widened to 8 recipes. If that run is refused by the
   decoder after native calls (exit 2), it is retried once with the analyzer
   default of 1, sharing `--native-budget`; `fallback` and a warning record it.
+  With `--strict`, that known warning is refused before starting the fallback,
+  so it cannot publish a draft first.
 - `OUT_DIR` must not exist (exit 2). It holds the piece (`session.tl` with the
   existing `# Approximate mono transcription` comment, and `notes.tl`),
   `canonical.tl`, `report.json`, the check WAVs (`rerender.wav`, `replay.wav`)
   and `provenance.json`.
-- Warnings come from existing measurements only: whole-signal SNR below
-  `--min-snr-db` (default 0 dB, a draft no closer than silence) and audible
-  regions the analyzer omitted. There is no polyphony detector. Clipping is not
-  a warning because a clipped reconstruction already fails the run.
+- Warnings report whole-signal SNR below `--min-snr-db` (default 0 dB, a
+  draft no closer than silence), audible regions the analyzer omitted, and a
+  recipe fallback. There is no polyphony detector. Clipping is not a warning
+  because a clipped reconstruction already fails the run. Fallback details are
+  in the command reply; the sidecar records the selected decoder's measurements.
 - `--strict` turns any warning into exit 4 before publication: nothing is
   written. `--json` adds `draft: true`, `snr_db`, `limitations`, `warnings`,
   `provenance`, `provenance_file`, `recipe_candidates` and `fallback` to the
@@ -138,10 +141,15 @@ draft so readers can tell it came from audio.
 
 | Exit | Meaning |
 |---|---|
-| 0 | Draft published; or, with `complete: false` and `stop_reason: "budget"`, the native budget ran out and nothing was published |
+| 0 | Draft published |
 | 2 | Refused input or output: output exists, not mono PCM16 at 44100 or 48000 Hz, malformed or truncated WAV, over the duration cap, too many regions without pooling, or no acceptable reconstruction |
-| 4 | `--strict` and the draft has warnings; nothing written |
+| 4 | Strict draft warning or exhausted native budget; no draft published |
 | 5 | Missing dependency (NumPy, harness), native failure, or out of memory |
+
+A `wav2tl` budget stop keeps `complete: false`, `published: false` and
+`stop_reason: "budget"`, but exits 4 because no requested draft was written.
+The lower-level `transcribe` API's normal partial-progress status remains
+unchanged, as described below.
 
 Input caps, checked before samples are read where possible:
 

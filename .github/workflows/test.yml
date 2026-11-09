@@ -20,6 +20,8 @@ jobs:
         run: make check
       - name: CLI preservation and authoring guide examples
         run: python3 -B tests/cli_safety.py
+      - name: Song catalog export and provenance contracts
+        run: make check-catalog
       - name: Complete bridge linking and record regression
         run: make -C bindings/native check link-smoke
       - name: Browser package lifecycle

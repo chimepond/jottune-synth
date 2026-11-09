@@ -4,6 +4,7 @@
 """fm.py wav2tl: draft banner, JSON fields, provenance sidecar, --strict, fallback, no overwrite."""
 import hashlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -136,6 +137,33 @@ class Wav2Tl(unittest.TestCase):
         passed = fm('wav2tl', self.wav, '-o', self.directory / 'strict-pass', '--strict', '--min-snr-db', '-100')
         self.assertEqual(passed.returncode, 0, passed.stderr)
 
+    def test_native_budget_stop_fails_without_reporting_a_written_draft(self):
+        for json_mode in (False, True):
+            out = self.directory / ('budget-json' if json_mode else 'budget-text')
+            result = fm('wav2tl', self.wav, '-o', out, '--native-budget', '0', *(['--json'] if json_mode else []))
+            self.assertEqual(result.returncode, 4, result.stderr)
+            self.assertTrue(result.stderr.startswith(BANNER), result.stderr)
+            self.assertNotIn('wrote ', result.stdout)
+            self.assertFalse(os.path.lexists(out))
+            if json_mode:
+                reply = json.loads(result.stdout)
+                self.assertFalse(reply['ok'])
+                self.assertFalse(reply['complete'])
+                self.assertFalse(reply['published'])
+                self.assertIsNone(reply['output'])
+                self.assertEqual(reply['stop_reason'], 'budget')
+                self.assertIn('no TL written', reply['message'])
+            else:
+                self.assertEqual(result.stdout, '')
+                self.assertIn('no TL written', result.stderr)
+        plain = fm('transcribe', self.wav, '--out', self.directory / 'plain-budget', '--native-budget', '0', '--json')
+        self.assertEqual(plain.returncode, 0, plain.stderr)
+        partial = json.loads(plain.stdout)
+        self.assertTrue(partial['ok'])
+        self.assertFalse(partial['complete'])
+        self.assertFalse(partial['published'])
+        self.assertFalse(os.path.lexists(self.directory / 'plain-budget'))
+
     def test_explicit_shortlist_is_kept_and_plain_transcribe_is_unchanged(self):
         out = self.directory / 'one'
         reply = json.loads(fm('wav2tl', self.wav, '-o', out, '--option=--recipe-candidates', '--option=1',
@@ -189,6 +217,38 @@ class Fallback(unittest.TestCase):
         self.assertEqual(reply['fallback']['reason'], 'no positive template level fit')
         self.assertIsNone(reply['recipe_candidates'])
         self.assertTrue(any('8-recipe shortlist was refused' in item for item in reply['warnings']))
+
+    def test_strict_refuses_fallback_before_a_second_transcription_can_publish(self):
+        refused = dict(ok=False, exit=2, stop_reason='error', published=False,
+                       message='no positive template level fit', costs=dict(total_attempts=9))
+        self.fake(refused, dict(ok=True, exit=0, published=True))
+        out = self.directory / 'strict-fallback'
+        reply = self.decode.wav2tl(self.wav, out, strict=True, native_budget=20)
+        self.assertEqual(len(self.calls), 1, 'No fallback child may publish before the strict gate')
+        self.assertFalse(reply['ok'])
+        self.assertEqual(reply['exit'], 4)
+        self.assertFalse(reply['published'])
+        self.assertIsNone(reply['fallback'], 'No fallback was attempted')
+        self.assertIn('strict draft check failed', reply['message'])
+        self.assertTrue(any('strict mode refuses' in text for text in reply['warnings']))
+        self.assertFalse(os.path.lexists(out))
+
+    def test_unpublished_budget_result_never_prints_a_success_line(self):
+        budget = dict(ok=True, exit=0, complete=False, stop_reason='budget', published=False,
+                      output=None, costs=dict(total_attempts=0))
+        self.fake(budget)
+        reply = self.decode.wav2tl(self.wav, self.directory / 'budget', native_budget=0)
+        self.assertFalse(reply['ok'])
+        self.assertEqual(reply['exit'], 4)
+        output, errors = io.StringIO(), io.StringIO()
+        self.decode.wav2tl_report(reply, output, errors)
+        self.assertEqual(output.getvalue(), '')
+        self.assertIn('no TL written', errors.getvalue())
+        # Reporting an older adapter's partial result must not claim a file either.
+        output, errors = io.StringIO(), io.StringIO()
+        self.decode.wav2tl_report(budget, output, errors)
+        self.assertEqual(output.getvalue(), '')
+        self.assertIn('no draft was published', errors.getvalue())
 
     def test_no_fallback_after_budget_stop_header_refusal_or_explicit_recipes(self):
         budget = dict(ok=False, exit=0, stop_reason='native_budget', published=False, costs=dict(total_attempts=5))

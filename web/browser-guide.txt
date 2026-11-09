@@ -106,6 +106,10 @@ carriers together and returns complete native declarations. See authoring.txt. a
 compiles existing score v1 into draftText with exact rendererRelease, sourceMap
 and advisories. It does not render, change the editor, play or publish.
 authoring.txt explains musical time and full native instrument declarations.
+The browser and site Node client's score helper accepts score v1; local score
+v2/v3 helpers are separate tools described in local-tools.txt. All routes can
+render full native TL within their stated limits. Retain the exact editable
+score input yourself: canonical TL does not recover its phrases or regions.
 The complete preset catalog is reference/recipes.txt, including synthesis
 declarations and spectral guidance beyond the short recipe descriptions.
 
@@ -348,11 +352,11 @@ execution-policy refusal; the supplied workflow must be authorized there.
 The app works beneath a path prefix. Hosted r/ and s/ pages need a base URL
 pointing at that app prefix. The service worker is scoped there, caches the app
 and used engine assets, and does not cache live service records/API responses.
-On the first visit, rendering waits up to 15 seconds for offline installation
-and control so that the first used renderer is cached too. Unsupported, failed
-or stalled setup falls back to online playback; the footer reports whether
-offline replay is ready. If setup was unavailable, load the song again online
-after installation completes to cache its renderer. Cancel remains immediate.
+Offline installation starts in the background and never delays online rendering.
+After 15 seconds a slow installation is labelled still running; a late result
+updates the footer. Unsupported or failed setup leaves online playback available.
+An uncontrolled first render may not cache its renderer: load the song again
+online after offline support becomes ready. Cancel remains immediate.
 It refreshes the registry online; offline revocation status may be stale.
 Save TL locally: browser caches can be evicted and are not a backup.
 Actual Safari/iPhone, Firefox and offline acceptance remain pending until run.

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `wav2tl` exits 4 without claiming a written draft when its native budget stops
+  before publication. Plain `transcribe` retains its partial-progress contract.
+  Strict mode refuses a recipe fallback warning before another child can publish.
+- `make quick` includes native catalog/provenance checks through `check-catalog`;
+  `make check-agent` runs the official client checks against prebuilt web assets.
+  The browser guide clarifies background offline setup, score helper scope and
+  retaining editable inputs separately from canonical TL.
+
 - `tools/package_web.py` packages a kept release only with `--repository`, the
   https URL of the public source repository, and only when the source commit is
   in a remote-tracking branch (`--public-ref`, default `origin/main`) of a remote

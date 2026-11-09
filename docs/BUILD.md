@@ -15,6 +15,8 @@ make check
 make -C bindings/native check link-smoke
 ```
 
+`make quick` includes `make check-catalog`: native song export, provenance and
+incremental catalog checks. `make check-catalog` can also run on its own.
 `make check` runs numerical, parser, compatibility and negative-input checks.
 The optional complete song collection is selected through `JOTTUNE_TUNES_ROOT`
 for corpus replay. A missing optional collection is reported explicitly.
@@ -30,8 +32,14 @@ current Chromium and WebKit; actual Safari/phone acceptance remains explicit.
 
 ```sh
 make web
+make check-agent
 python3 -m http.server 8080 --bind 127.0.0.1 --protocol HTTP/1.1 --directory web
 ```
+
+`make check-agent` exercises the official Node client against the built Wasm,
+using loopback HTTP and a temporary cache. It needs the `make web` assets (or
+`JOTTUNE_TEST_WEB` pointing at a complete prebuilt player), Node 22.15+, and no
+npm packages. Run it after browser/Node authoring or catalog changes.
 
 All player assets are relative, so the generated `web/` tree can be served from
 an origin root or a directory. It needs no account, database or remote rendering

@@ -170,17 +170,34 @@ def wav2tl(source, out, *, options=(), harness=None, native_budget=None, strict=
     attempt = (["--recipe-candidates", str(WIDE_RECIPE_CANDIDATES)] if widened else []) + options
     result = fm.transcribe(source, destination, options=attempt, harness=harness, native_budget=native_budget, draft=draft)
     fallback = None
+    fallback_warning = None
     spent = (result.get("costs") or {}).get("total_attempts") or 0
     # Fall back to the analyzer's single nearest recipe only after a decoder refusal
     # of the widened run itself (it reached native calls), never after a budget stop.
     if (widened and not result.get("ok") and result.get("exit") == 2 and result.get("stop_reason") == "error"
             and spent and not os.path.lexists(destination) and (native_budget is None or native_budget > spent)):
-        fallback = dict(from_recipe_candidates=WIDE_RECIPE_CANDIDATES, to_recipe_candidates=1,
-                        reason=result.get("message"), native_attempts=spent)
-        result = fm.transcribe(source, destination, options=options, harness=harness, draft=draft,
-                               native_budget=None if native_budget is None else native_budget - spent)
+        if strict:
+            # A fallback is itself a warning. Refuse it before another child can
+            # publish a draft; its own quality gate cannot see this wrapper warning.
+            fallback_warning = ("the %d-recipe shortlist was refused (%s); strict mode refuses "
+                                "the single nearest recipe fallback" % (WIDE_RECIPE_CANDIDATES, result.get("message")))
+            result = dict(result, ok=False, exit=4, message="strict draft check failed: " + fallback_warning)
+        else:
+            fallback = dict(from_recipe_candidates=WIDE_RECIPE_CANDIDATES, to_recipe_candidates=1,
+                            reason=result.get("message"), native_attempts=spent)
+            result = fm.transcribe(source, destination, options=options, harness=harness, draft=draft,
+                                   native_budget=None if native_budget is None else native_budget - spent)
+    # The lower-level transcribe API treats a budget stop as normal partial
+    # progress. This command promises a written draft, so an unpublished result
+    # must be a failed gate, not a successful "wrote None" terminal outcome.
+    if result.get("ok") and not result.get("published"):
+        result = dict(result, ok=False, exit=4,
+                      message="transcription stopped before draft publication (%s); no TL written"
+                              % (result.get("stop_reason") or "incomplete result"))
     info = result.get("draft") or {}
     warnings = list(info.get("warnings") or [])
+    if fallback_warning is not None:
+        warnings.append(fallback_warning)
     if fallback is not None:
         warnings.append("the %d-recipe shortlist was refused (%s); the single nearest recipe was used"
                         % (WIDE_RECIPE_CANDIDATES, fallback["reason"]))
@@ -208,9 +225,9 @@ def wav2tl_report(result, stdout, stderr, as_json=False):
         stderr.write("warning: " + line + "\n")
     if as_json:
         stdout.write(json.dumps(result, ensure_ascii=False, allow_nan=False) + "\n")
-    elif result.get("ok"):
+    elif result.get("ok") and result.get("published") and result.get("output"):
         stdout.write("wrote %s: %s note(s); render it with fm.py tl2wav %s -o OUT.wav; provenance in %s\n"
                      % (result.get("output"), result.get("note_count"), result.get("output"),
                         result.get("provenance_file")))
     else:
-        stderr.write("fm.py wav2tl: " + str(result.get("message") or "failed") + "\n")
+        stderr.write("fm.py wav2tl: " + str(result.get("message") or "no draft was published") + "\n")
