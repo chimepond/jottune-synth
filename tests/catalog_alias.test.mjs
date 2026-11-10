@@ -4,7 +4,8 @@
 // only when the hash identifies one song; an ambiguous or unknown hash stays unnamed.
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {createCatalog} from '../web/catalog.mjs';
+import {createCatalog,checkCatalogDocument} from '../web/catalog.mjs';
+import {composeDocument,bodySha256,documentSha256} from '../web/tl-document.mjs';
 
 const sha = name => name.repeat(64).slice(0, 64);
 const song = (id, title, collection, hashes) => {
@@ -67,4 +68,41 @@ test('a link to the wrong collection page selects only songs already read', asyn
   await catalog.lookup('catalog/all-1.json', 'songs/alpha-keys.tl', sha('2'));
   assert.equal(named(await catalog.lookup('catalog/featured-1.json', 'songs/music-bravo-keys.tl', sha('4'))), 'Bravo/keys');
   await assert.rejects(catalog.lookup('catalog/missing-1.json', 'songs/alpha-keys.tl', sha('2')), /hint is unavailable/);
+});
+
+test('cached variants retain optional full-document checksums, including flat catalogs',async()=>{
+  const path='catalog/all-1.json',original=documents[path];
+  try {
+    const flat=structuredClone(original);
+    flat.items[0].document_sha256=sha('a');flat.items[0].bytes=10;flat.items[0].duration_seconds=1;delete flat.items[0].variants;
+    documents[path]=flat;
+    const catalog=fresh(),found=await catalog.lookup(path,'songs/alpha-keys.tl',sha('2'));
+    assert.equal(found.variant.document_sha256,sha('a'));
+    assert.equal(catalog.cached('songs/alpha-keys.tl',sha('2')).variant.document_sha256,sha('a'));
+    flat.items[0].document_sha256='invalid';
+    await assert.rejects(fresh().lookup(path,'songs/alpha-keys.tl',sha('2')),/Invalid song catalog/);
+  } finally {documents[path]=original;}
+});
+
+test('catalog file integrity rejects metadata changes with an unchanged musical identity',async()=>{
+  const body='timeline draft1\n',original=composeDocument(body,{title:'Declared original'}),altered=composeDocument(body,{title:'Altered metadata'});
+  const variant={record_sha256:await bodySha256(original),document_sha256:await documentSha256(original)};
+  assert.equal(await bodySha256(altered),variant.record_sha256);
+  assert.equal(await checkCatalogDocument(original,variant),original);
+  await assert.rejects(checkCatalogDocument(altered,variant),/document checksum does not match/);
+  await assert.rejects(checkCatalogDocument(altered,{record_sha256:variant.record_sha256}),/document checksum does not match/);
+  assert.equal(await checkCatalogDocument(body,{record_sha256:variant.record_sha256}),body,'Legacy descriptor binds its exact headerless file');
+  assert.equal(await checkCatalogDocument(altered,{}),altered,'No-ID catalogs remain unpinned');
+});
+
+test('nested exporter checksums survive normalization and must agree with top-level values',async()=>{
+  const path='catalog/all-1.json',original=documents[path];
+  try {
+    const page=structuredClone(original),variant=page.items[0].variants[1];
+    variant.discovery={record_sha256:variant.record_sha256,document_sha256:sha('a'),source:'library.json'};
+    documents[path]=page;
+    assert.equal((await fresh().lookup(path,variant.path,variant.record_sha256)).variant.document_sha256,sha('a'));
+    variant.document_sha256=sha('b');
+    await assert.rejects(fresh().lookup(path,variant.path,variant.record_sha256),/Invalid song catalog/);
+  } finally {documents[path]=original;}
 });

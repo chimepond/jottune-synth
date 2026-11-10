@@ -9,6 +9,8 @@ import vm from 'node:vm';
 import {toWav, toSvg, provenance, analyzeSpectrogram, fftPlan, transformFFT} from '../web/media.mjs';
 import {limits, checkRecord, checkInspection, selectEngine} from '../web/policy.mjs';
 import {resolveLink, portableLink, libraryLink, isRecordLink} from '../web/links.mjs';
+import {checkCatalogDocument as checkCatalogDocumentActual} from '../web/catalog.mjs';
+import {composeDocument,bodySha256,documentSha256} from '../web/tl-document.mjs';
 
 const tests = [];
 const test = (name, run) => tests.push({name, run});
@@ -94,6 +96,9 @@ async function withPage(run, configuration = {}) {
     dispatch(type, event = {}) {
       for (const listener of this.listeners.get(type) || []) listener(event);
     }
+    get files() {return this.fileFixtures || [];}
+    set files(values) {this.fileFixtures=values.map(file=>file.arrayBuffer ? file : {...file,
+      arrayBuffer:async()=>new TextEncoder().encode(await file.text()).buffer});}
     replaceChildren(...children) { this.children = children; }
     append(...children) { this.children.push(...children); }
     prepend(...children) { this.children.unshift(...children); }
@@ -140,6 +145,14 @@ async function withPage(run, configuration = {}) {
   const originalCreateURL = URL.createObjectURL, originalRevokeURL = URL.revokeObjectURL;
   URL.createObjectURL = blob => { downloaded.push(blob); return 'blob:contract-fixture'; };
   URL.revokeObjectURL = () => {};
+  // Legacy UI fixtures use repeated-letter native-identity sentinels. Their
+  // headerless transport boundary is mocked; real checksum cases below use the
+  // actual helper, including every portable document and explicit full checksum.
+  install('__checkCatalogDocument',async(text,variant)=>{
+    if(variant.document_sha256===undefined && variant.discovery?.document_sha256===undefined
+      && /^([a-f0-9])\1{63}$/.test(variant.record_sha256 || '') && !checkRecord(text).header)return text;
+    return checkCatalogDocumentActual(text,variant);
+  });
   install('document', {getElementById: get, createElement: tag => new Element(tag), hidden:false,
     addEventListener: (type, listener) => listeners.set('document:'+type, listener)});
   install('__sectionChanged', undefined);
@@ -224,6 +237,7 @@ async function withPage(run, configuration = {}) {
     // actual dependencies. Relative asset URLs must stay inside the mount path.
     const source = readFileSync(new URL('../web/app.mjs', import.meta.url), 'utf8')
       // The display has its own numerical/DOM and actual-browser acceptance.
+      .replace("import {createCatalog, catalogJSON, checkCatalogDocument} from './catalog.mjs';", "import {createCatalog, catalogJSON} from './catalog.mjs'; const checkCatalogDocument=globalThis.__checkCatalogDocument;")
       .replace("import {createInstrumentView} from './instrument-view.mjs';", 'const createInstrumentView = globalThis.__createInstrumentView;')
       // Section layout, focus and scrolling have actual-browser acceptance;
       // this harness isolates playback/rendering from the browser layout APIs.
@@ -552,6 +566,40 @@ test('agent render updates the visible result and export controls', () => withPa
   assert(page.get('facts').children.some(child => child.textContent === result.recordSha256));
   for (const id of ['play', 'share', 'show-qr', 'tl-download']) assert.equal(page.get(id).disabled, false);
 }));
+
+test('local portable and legacy files show compatibility versions and declared metadata in Facts',async()=>{
+  for(const portable of [true,false]) {
+    const body='timeline draft1\n',metadata={title:'Visible document',collection:'Examples',author:'Composer',license:'CC-BY-4.0',utc_day:'2026-11-10',prompt_id:'fixture/1',renderer_release:'reported-release'};
+    const text=portable?composeDocument(body,metadata):body;
+    await withPage(async page=>{
+      const blob=new Blob([text]);page.get('file').files=[{size:blob.size,name:'version-check.tl',arrayBuffer:()=>blob.arrayBuffer()}];
+      const result=validResult({canonical:new TextEncoder().encode(text),tlVersion:1,engineCompatibilityVersion:1,
+        documentHeader:portable?'present':'legacy-headerless',metadata:portable?metadata:{},play:{match:'yes',block_indep:'unchecked'}});
+      await prepared(page,page.get('file').onchange(),text,result);
+      const facts=page.get('facts').children.map(child=>child.textContent).join('\n');
+      assert.match(facts,/TL version\n1/);assert.match(facts,/Engine compatibility version\n1/);
+      assert.match(facts,portable?/Document header\nPortable metadata/:/1 \(legacy, inferred\)\nEngine compatibility version\n1\nDocument header\nLegacy headerless/);
+      if(portable)for(const value of Object.values(metadata))assert.ok(facts.includes(value),value);
+      assert.equal(page.get('play').disabled,false);assert.equal(page.audioCreations(),0);
+    });
+  }
+});
+
+test('catalog loading and note inspection reject a changed metadata checksum before native work',async()=>{
+  const body='timeline draft1\n',original=composeDocument(body,{title:'Expected declaration'}),altered=composeDocument(body,{title:'Changed declaration'});
+  const catalog=largeCatalog(1),variant=catalog.songs[0].variants[0];
+  variant.record_sha256=await bodySha256(original);variant.document_sha256=await documentSha256(original);
+  variant.bytes=new TextEncoder().encode(original).length;
+  variant.discovery={record_sha256:variant.record_sha256,document_sha256:variant.document_sha256,source:'library.json'};
+  assert.equal(await bodySha256(altered),variant.record_sha256);
+  await withPage(async page=>{
+    page.ready();await page.get('song-load').onclick();
+    assert.equal(page.workers.length,0);assert.equal(page.api.result()??null,null);
+    assert.match(page.get('status').textContent,/document checksum does not match/);assert.equal(page.get('play').disabled,true);
+    await page.get('song-preview').onclick();
+    assert.equal(page.workers.length,0);assert.match(page.get('song-preview-status').textContent,/document checksum does not match/);
+  },{catalog,network:{['/web/'+variant.path]:altered}});
+});
 
 test('verification budget refusals leave prepared listening audio intact and disable known impossible actions',()=>withPage(async page=>{
   const value=validResult({info:{route:'0',voices:'1',length_ns:'286480000000',pcm_bytes:'55004160',render_bytes_lower_bound:'116222544'}});
@@ -1479,7 +1527,7 @@ test('file saves use a safe title and mobile controls operate the same prepared 
 
 test('dropping a file prepares playback without acquiring audio', () => withPage(async page => {
   const pending = page.get('dropzone').ondrop({preventDefault() {}, dataTransfer: {
-    files: [{size: 12, name: 'dropped.tl', text: async () => 'dropped record'}]}});
+    files: [{size: 12, name: 'dropped.tl', arrayBuffer: async () => new TextEncoder().encode('dropped record').buffer}]}});
   await prepared(page, pending, 'dropped record');
   assert.equal(page.get('play').disabled, false); assert.equal(page.audioCreations(), 0);
 }));
@@ -2310,6 +2358,24 @@ test('missing or mismatched hinted metadata never blocks valid audio or attaches
     },{href:coldLinkURL(),catalog,network:{'/web/songs/beyond-mirror.tl':'mirror song',
       '/web/catalog/all-2.json':()=>new Response(JSON.stringify(response),{status:failure==='unavailable'?503:200})}});
   }
+});
+
+test('late full-file checksum mismatch cannot attach catalog labels to valid body-ID link playback',async()=>{
+  const body='timeline draft1\n',saved=composeDocument(body,{title:'Expected metadata'}),received=composeDocument(body,{title:'Changed metadata'});
+  assert.equal(await bodySha256(saved),await bodySha256(received));
+  const catalog=coldLinkCatalog(),target=catalog.songs[32].variants[1],documents=catalogPages(catalog),pending=deferred();
+  target.document_sha256=await documentSha256(saved);
+  target.discovery={record_sha256:target.record_sha256,document_sha256:target.document_sha256,source:'library.json'};
+  const response=catalogPages(catalog)['catalog/all-2.json'];
+  await withPage(async page=>{
+    await prepared(page,undefined,received);assert.equal(page.get('loaded-song').textContent,'Linked song');
+    pending.resolve(new Response(JSON.stringify(response)));
+    for(let i=0;i<20;i++)await nextTurn();
+    assert.equal(page.get('loaded-song').textContent,'Linked song');
+    assert.equal(page.get('loaded-version').textContent,'Linked saved version');
+    assert.equal(page.get('play').disabled,false);assert.equal(page.api.result().verdict,'valid');
+    assert.equal(selectedSongId(page),'');assert.equal(page.audioCreations(),0);
+  },{href:coldLinkURL(),catalog,network:{'/web/songs/beyond-mirror.tl':received,'/web/catalog/all-2.json':()=>pending.promise}});
 });
 
 test('a renamed library path with a unique verified hash selects its catalogue song', async()=>{

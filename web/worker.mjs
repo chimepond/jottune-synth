@@ -5,6 +5,9 @@ import { options, checkRecord, checkInspection, verification } from './policy.mj
 import {inspectSpatial,validateSpatial} from './spatial.mjs';
 import {compileScore,selectScoreStreams} from './authoring.mjs';
 import {parseDocument,preserveDocument,bodySha256,documentSha256} from './tl-document.mjs';
+const documentInfo = parsed => ({tlVersion:parsed.tlVersion,engineCompatibilityVersion:parsed.engineVersion,
+  documentHeader:parsed.header ? 'present' : 'legacy-headerless'});
+const nativeFiles = text => ({'record.tl':parseDocument(text).body});
 const hex = bytes => [...new Uint8Array(bytes)].map(x => x.toString(16).padStart(2, '0')).join('');
 
 function spatialWorker(engine, recordText, inspection, timeoutMs) {
@@ -68,7 +71,7 @@ self.onmessage = async ({ data }) => {
     try {
       checkRecord(data.recordText);
       if (data.engine.withdrawn || data.engine.withdrawn_at) throw Error('Renderer build has been withdrawn.');
-      const projection = await inspectSpatial(data.engine, data.recordText, assetURL(data.engine, data.engine.library_wasm));
+      const projection = await inspectSpatial(data.engine, parseDocument(data.recordText).body, assetURL(data.engine, data.engine.library_wasm));
       validateSpatial(projection.spatial, data.inspection);
       self.postMessage({type:'spatial-result', projection});
     } catch (error) { self.postMessage({type:'spatial-error', error:error.message}); }
@@ -82,7 +85,7 @@ self.onmessage = async ({ data }) => {
     const profile = requested.profile;
     if (data.operation === 'inspect' && profile) throw Error('Note previews cannot apply a listening profile.');
     const mode = data.operation === 'inspect' ? 'listen' : profile ? 'verify' : requested.mode;
-    checkRecord(recordText);
+    const sourceDocument = checkRecord(recordText);
     if (engine.withdrawn || engine.withdrawn_at) throw Error('Renderer build has been withdrawn.');
     assetURL(engine, engine.browser_wasm);
     const response = await fetch(engine.browser_wasm);
@@ -91,7 +94,7 @@ self.onmessage = async ({ data }) => {
     if (hex(await crypto.subtle.digest('SHA-256', bytes)) !== engine.browser_sha256) throw Error('Engine module checksum mismatch.');
     const execute = await selectedRuntime(engine);
     const module = await WebAssembly.compile(bytes);
-    const inspected = await execute(module, ['--inspect', 'record.tl'], { 'record.tl': recordText });
+    const inspected = await execute(module, ['--inspect', 'record.tl'], nativeFiles(recordText));
     if (inspected.code) { if (/out of memory|^oom$/im.test(inspected.stderr)) inspected.stderr='Too large for this device.\n'+inspected.stderr; self.postMessage({ ...inspected, verdict: verdict(inspected) }); return; }
     const inspectedLines = inspected.stdout.split('\n');
     const nativeIdentity = inspectedLines.find(line => line.startsWith('ENGINE '))?.slice(7);
@@ -99,12 +102,12 @@ self.onmessage = async ({ data }) => {
     let info = row(inspectedLines.find(x => x.startsWith('INSPECT ')));
     checkInspection(info, mode);
     if (data.operation === 'inspect') {
-      const listing = await execute(module, ['--events', 'record.tl'], {'record.tl':recordText});
+      const listing = await execute(module, ['--events', 'record.tl'], nativeFiles(recordText));
       if (listing.code) { self.postMessage({...listing, verdict:verdict(listing)}); return; }
       const events = listing.stdout.split('\n').filter(line => /^(EVENT|GEN_EVENT) /.test(line));
       if (events.length > 20000) throw Error('Note preview exceeds the 20,000-event display limit. Load the song to listen.');
       self.postMessage({type:'inspection', verdict:'valid', info, events:events.map(row), eventsError:null,
-        sourceRecordSha256:await bodySha256(recordText),metadata:parseDocument(recordText).metadata,
+        sourceRecordSha256:await bodySha256(recordText),metadata:sourceDocument.metadata,...documentInfo(sourceDocument),
         engineId:engine.id, engineIdentity:engine.identity});
       return;
     }
@@ -112,11 +115,12 @@ self.onmessage = async ({ data }) => {
       if (profile) throw Error('Score stream selection cannot also apply a Keys profile.');
       const chosen = selectScoreStreams(data.score,data.selection,{engine:engine.identity});
       checkRecord(chosen.authored.draftText);
-      const selected = await execute(module,['--inspect','record.tl'],{'record.tl':chosen.authored.draftText});
+      const selected = await execute(module,['--inspect','record.tl'],nativeFiles(chosen.authored.draftText));
       if (selected.code) { self.postMessage({...selected,verdict:verdict(selected)}); return; }
       checkInspection(row(selected.stdout.split('\n').find(line => line.startsWith('INSPECT '))),mode);
       const validation = 'original_and_selection_inspected';
       self.postMessage({type:'composition',verdict:'valid',...chosen.authored,
+        ...documentInfo(parseDocument(chosen.authored.draftText)),metadata:parseDocument(chosen.authored.draftText).metadata,
         coverage:{...chosen.authored.coverage,native_validation:validation},
         selection:{...chosen.selection,nativeValidation:validation},
         rendererRelease:engine.release_id || engine.id,engineId:engine.id,engineIdentity:engine.identity});
@@ -127,14 +131,14 @@ self.onmessage = async ({ data }) => {
       if (info.keys_profile !== '1') throw Error('This renderer does not support on-demand Keys profiles. Select a compatible renderer explicitly.');
       // Obtain the original canonical identity with the native writer. The
       // transform itself then verifies both original partitions before editing.
-      const source = await execute(module, ['--play-once', 'record.tl', '--merged', 'canonical.tl'], {'record.tl':recordText});
+      const source = await execute(module, ['--play-once', 'record.tl', '--merged', 'canonical.tl'], nativeFiles(recordText));
       if (source.code) { self.postMessage({...source, canonical:new Uint8Array(), pcm:null, verdict:verdict(source)}); return; }
       sourceRecordSha256 = await bodySha256(source.canonical);
       source.pcm = null;
       const arguments_ = ['--keys-profile', String(profile.halfWidth), '--merged', 'canonical.tl'];
       if (profile.mirror) arguments_.push('--keys-mirror');
       if (profile.levelPolicy === 'carrier-bound') arguments_.push('--keys-carrier-bound');
-      const derived = await execute(module, [...arguments_, '--', 'record.tl'], {'record.tl':recordText});
+      const derived = await execute(module, [...arguments_, '--', 'record.tl'], nativeFiles(recordText));
       if (derived.code) { self.postMessage({...derived, canonical:new Uint8Array(), pcm:null, verdict:verdict(derived)}); return; }
       renderText = new TextDecoder('utf-8', {fatal:true,ignoreBOM:true}).decode(derived.canonical);
       checkRecord(renderText);
@@ -160,15 +164,16 @@ self.onmessage = async ({ data }) => {
         }),
         sourcePcmHash:sourceSummary.hash, sourceHashPresent:info.hash_present === '1',
         sourceMatched:info.hash_present === '1' ? sourceSummary.match === 'yes' : null, sourceBlockIndependent:true};
-      const derivedInspection = await execute(module, ['--inspect', 'record.tl'], {'record.tl':renderText});
+      const derivedInspection = await execute(module, ['--inspect', 'record.tl'], nativeFiles(renderText));
       if (derivedInspection.code) { self.postMessage({...derivedInspection, verdict:verdict(derivedInspection)}); return; }
       info = row(derivedInspection.stdout.split('\n').find(line => line.startsWith('INSPECT ')) || '');
       checkInspection(info, mode);
       if (info.hash_present !== '1') throw Error('Derived song has no saved PCM hash.');
     }
-    const result = await execute(module, [mode === 'listen' ? '--play-once' : '--play', 'record.tl', '--merged', 'canonical.tl', '--metrics'], { 'record.tl': renderText });
+    const renderDocument = parseDocument(renderText);
+    const result = await execute(module, [mode === 'listen' ? '--play-once' : '--play', 'record.tl', '--merged', 'canonical.tl', '--metrics'], nativeFiles(renderText));
     if (/out of memory|^oom$/im.test(result.stderr)) result.stderr='Too large for this device.\n'+result.stderr;
-    const listing = result.code === 0 ? await execute(module, ['--events', 'record.tl'], { 'record.tl': renderText }) : {code:0,stdout:'',stderr:''};
+    const listing = result.code === 0 ? await execute(module, ['--events', 'record.tl'], nativeFiles(renderText)) : {code:0,stdout:'',stderr:''};
     const lines = result.stdout.trim().split('\n');
     const playLine = lines.find(x => x.startsWith('PLAY ')) || '';
     const metricsLine = lines.find(x => x.startsWith('METRICS ')) || '';
@@ -178,7 +183,7 @@ self.onmessage = async ({ data }) => {
     const recordSha256 = result.canonical.length ? await bodySha256(result.canonical) : null;
     const documentSha = result.canonical.length ? await documentSha256(result.canonical) : null;
     const value = { ...result, verdict: verdict(result), mode, info, play, metrics, playLine, metricsLine,
-      recordSha256, documentSha256:documentSha, metadata:parseDocument(renderText).metadata, pcmHash: play.hash || null, engineIdentity: engine.identity, engineId: engine.id,
+      recordSha256, documentSha256:documentSha, metadata:renderDocument.metadata,...documentInfo(renderDocument), pcmHash: play.hash || null, engineIdentity: engine.identity, engineId: engine.id,
       rendererRelease: engine.release_id || null, development: engine.development ?? !engine.release_id,
       ...(profile ? {profile:profileResult, sourceRecordSha256} : {}),
       events: listing.stdout.split('\n').filter(x => /^(EVENT|GEN_EVENT) /.test(x)).map(row),

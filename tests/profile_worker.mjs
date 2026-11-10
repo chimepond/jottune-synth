@@ -97,6 +97,23 @@ test('song previews inspect native notes without rendering, canonicalizing or cr
   assert.equal(workers.length,0);
 });
 
+test('worker exposes portable compatibility versions and explicitly inferred legacy status',async()=>{
+  const portable='# jottune-tl 1 1\n# {"title":"Versioned fixture","author":"Composer"}\n# end-jottune-tl\n'+original;
+  const rendered=await execute([output(inspect()),
+    {...output('PLAY hash=123456789abcdef0 match=yes block_indep=yes\n',canonicalSource),pcm:new Int16Array([1,2]),sampleRate:48000,channels:1},
+    output('EVENT time_ns=0 kind=on\n')],{recordText:portable,mode:'verify',spatialView:false});
+  assert.equal(rendered.result.tlVersion,1);assert.equal(rendered.result.engineCompatibilityVersion,1);
+  assert.equal(rendered.result.documentHeader,'present');assert.equal(rendered.result.metadata.title,'Versioned fixture');
+  assert.equal(parseDocument(rendered.result.canonical).header,parseDocument(portable).header);
+  assert.ok(rendered.calls.every(call=>!parseDocument(call.files['record.tl']).header),'Native receives body-only TL');
+  const inspected=await execute([output(inspect()),output('EVENT time_ns=0 kind=on\n')],{operation:'inspect',recordText:portable});
+  assert.equal(inspected.result.tlVersion,1);assert.equal(inspected.result.engineCompatibilityVersion,1);
+  assert.equal(inspected.result.documentHeader,'present');assert.equal(inspected.result.metadata.author,'Composer');
+  const legacy=await execute([output(inspect()),output('EVENT time_ns=0 kind=on\n')],{operation:'inspect'});
+  assert.equal(legacy.result.tlVersion,1);assert.equal(legacy.result.engineCompatibilityVersion,1);
+  assert.equal(legacy.result.documentHeader,'legacy-headerless');
+});
+
 test('note previews refuse invalid notes, excessive events and profile mutation', async () => {
   const invalid=await execute([output(inspect()),output('', '', 2, 'Invalid events')],{operation:'inspect'});
   assert.equal(invalid.result.verdict,'refused'); assert.equal(invalid.result.events,undefined);

@@ -97,7 +97,8 @@ async function discoverExamples(context,count,seed) {
       if (!text(variant?.kind) || kinds.has(variant.kind) || typeof variant.path !== 'string' ||
           !/^songs\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.tl$/.test(variant.path) ||
           !Number.isSafeInteger(variant.bytes) || variant.bytes < 0 || !Number.isFinite(variant.duration_seconds) || variant.duration_seconds < 0 ||
-          (variant.record_sha256 !== undefined && !SHA.test(variant.record_sha256))) fail('Invalid song catalog variant.');
+          (variant.record_sha256 !== undefined && !SHA.test(variant.record_sha256)) ||
+          (variant.document_sha256 !== undefined && (typeof variant.document_sha256 !== 'string' || !SHA.test(variant.document_sha256)))) fail('Invalid song catalog variant.');
       assetPath(variant.path);kinds.add(variant.kind);
       if (variant.bytes > 0 && variant.bytes <= MAX_INPUT && variant.duration_seconds > 0 && variant.duration_seconds <= 300) usable.push(variant);
     }
@@ -105,6 +106,8 @@ async function discoverExamples(context,count,seed) {
     if (!usable.length) continue;
     const variant = usable[0], discovery = variant.discovery, metadata = discovery?.metadata ?? {}, provenance = discovery?.provenance;
     if (!object(metadata) || (discovery !== undefined && (!object(discovery) || discovery.record_sha256 !== variant.record_sha256)) ||
+        (discovery?.document_sha256 !== undefined && (typeof discovery.document_sha256 !== 'string' || !SHA.test(discovery.document_sha256)
+          || variant.document_sha256 !== undefined && discovery.document_sha256 !== variant.document_sha256)) ||
         (metadata.genre !== undefined && (!text(metadata.genre?.value) || !SOURCES.includes(metadata.genre.source))) ||
         (metadata.tempo !== undefined && (!Number.isFinite(metadata.tempo?.min_bpm) || !Number.isFinite(metadata.tempo?.max_bpm) ||
           metadata.tempo.min_bpm <= 0 || metadata.tempo.max_bpm < metadata.tempo.min_bpm || !SOURCES.includes(metadata.tempo.source))) ||
@@ -116,6 +119,7 @@ async function discoverExamples(context,count,seed) {
     candidates.push({rank:hash('jottune-examples-v1\0' + seed + '\0' + song.id),song:{id:song.id,title:song.title,collection:song.collection,
       ...(song.revision ? {revision:song.revision} : {}),variant:variant.kind,url:new URL(variant.path,context.site).href,
       bytes:variant.bytes,durationSeconds:variant.duration_seconds,...(variant.record_sha256 ? {recordSha256:variant.record_sha256} : {}),
+      ...((variant.document_sha256 ?? discovery?.document_sha256) ? {documentSha256:variant.document_sha256 ?? discovery.document_sha256} : {}),
       metadata:known,...(provenance ? {provenance:{...(provenance.made_by ? {made_by:provenance.made_by} : {}),
         ...(provenance.model ? {model:provenance.model,model_source:provenance.model_source} : {})}} : {})}});
   }
@@ -295,10 +299,10 @@ async function workerMain({context,command,input,options:opts}) {
   const inspect = async (text, label = 'Input') => {
     const {checkRecord,checkInspection} = await load('policy.mjs');
     const {row} = await load('runtime.mjs');
-    checkRecord(text);
+    const document = checkRecord(text);
     inspectedRuntime ||= (await load(context.engine.runtime_module || 'runtime.mjs')).runCLI;
     inspectedModule ||= await WebAssembly.compile(await (await fetch(context.engine.browser_wasm)).arrayBuffer());
-    const answer = await inspectedRuntime(inspectedModule,['--inspect','record.tl'],{'record.tl':text});
+    const answer = await inspectedRuntime(inspectedModule,['--inspect','record.tl'],{'record.tl':document.body});
     if (answer.code) fail(label + ' failed native validation: ' + answer.stderr.slice(0,1000));
     const lines = answer.stdout.split('\n'), identity = lines.find(line => line.startsWith('ENGINE '))?.slice(7);
     if (identity !== context.engine.identity) fail('Inspected engine identity differs from the selected release.');
@@ -378,7 +382,7 @@ async function workerMain({context,command,input,options:opts}) {
           descriptor.browser_sha256 !== context.engine.browser_sha256 || descriptor.library_sha256 !== context.engine.library_sha256)
         fail('Source-analysis companion does not match the selected kept renderer.');
       const {analyzeDryVoices} = await load('analysis-runtime.mjs');
-      result.dryAnalysis = await analyzeDryVoices({module:await WebAssembly.compile(bytes),recordText:decoder.decode(result.canonical),
+      result.dryAnalysis = await analyzeDryVoices({module:await WebAssembly.compile(bytes),recordText:(await load('tl-document.mjs')).parseDocument(decoder.decode(result.canonical)).body,
         info:result.info,events:result.events,pcmHash:result.pcmHash},
       {voices:opts.dryVoices,maxBytes:opts.dryMaxBytes,maxMilliseconds:Math.min(opts.dryTimeoutMs ?? 10000,opts.timeoutMs ?? 120000)});
     } catch (error) { result.dryAnalysis = {status:'unavailable',reason:error.message,scope:'voice_out_pre_fx'}; }
@@ -481,7 +485,7 @@ function terminalDiscovery(result) {
 
 function terminalReport(result) {
   const pick = (value,names) => Object.fromEntries(names.filter(name => value?.[name] !== undefined).map(name => [name,value[name]]));
-  const summary = {...pick(result,['verdict','code','verified','verification','mode','recordSha256','documentSha256','metadata','pcmHash','rendererRelease',
+  const summary = {...pick(result,['verdict','code','verified','verification','mode','recordSha256','documentSha256','metadata','tlVersion','engineCompatibilityVersion','documentHeader','pcmHash','rendererRelease',
     'execution','site','release','development','manifestSha256','offline','revocationChecked','outputFiles','quality','canonicalBytes','eventCount',
     'spatialStatus','spatialError','eventsError'])};
   if (result.info) summary.dimensions = {sampleRate:result.sampleRate,channels:result.channels,

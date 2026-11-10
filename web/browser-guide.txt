@@ -376,3 +376,10 @@ The current TL and engine compatibility counters are both 1; newer required
 versions are refused. Existing headerless files remain valid. Score JSON may
 include an explicit metadata object; unknown model/genre/tempo stays unknown.
 Metadata declarations never replace explicit publication consent.
+
+Player Facts shows the TL version, engine compatibility version, header status
+and embedded declarations. Headerless files show the inferred legacy version 1.
+Catalog Load and Notes inspection verify the complete file against its document
+checksum, or its existing file/song checksum for older catalogs. Body-based song
+IDs stay unchanged. Standalone links remain usable offline; catalog labels found
+later are attached only when their complete-file checksum also agrees.

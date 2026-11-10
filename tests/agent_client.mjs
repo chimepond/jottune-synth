@@ -24,8 +24,8 @@ const setup = options => setupKept({...options,allowDevelopment:development});
 const exampleCatalog = {version:1,songs:[
   {id:'alpha',title:'Alpha',collection:'Tests',variants:[
     {kind:'keys',path:'songs/alpha-keys.tl',bytes:100,duration_seconds:24},
-    {kind:'standard',path:'songs/alpha.tl',bytes:100,duration_seconds:24,record_sha256:'a'.repeat(64),
-      discovery:{record_sha256:'a'.repeat(64),metadata:{genre:{value:'test-style',source:'retained-score'},
+    {kind:'standard',path:'songs/alpha.tl',bytes:100,duration_seconds:24,record_sha256:'a'.repeat(64),document_sha256:'b'.repeat(64),
+      discovery:{record_sha256:'a'.repeat(64),document_sha256:'b'.repeat(64),metadata:{genre:{value:'test-style',source:'retained-score'},
         tempo:{min_bpm:96,max_bpm:108,source:'retained-score'}}}}]},
   {id:'beta',title:'Beta',collection:'Tests',variants:[
     {kind:'standard',path:'songs/beta.tl',bytes:1000001,duration_seconds:24},
@@ -133,14 +133,18 @@ try {
     assert.match(answer.artifacts.svg,/<svg/); assert.match(answer.artifacts['link.txt'],/#v1\./);
     const saved = JSON.parse(answer.artifacts['verification.json']);
     assert.equal(saved.verified,true);
+    assert.equal(answer.result.tlVersion,1);assert.equal(answer.result.engineCompatibilityVersion,1);
+    assert.equal(answer.result.documentHeader,parseDocument(example).header?'present':'legacy-headerless');
     assert.equal(saved.site,site); assert.equal(saved.release,engine.id); assert.equal(saved.manifestSha256,context.manifestSha256);
     assert.equal(saved.offline,false); assert.equal(saved.revocationChecked,true); assert.deepEqual(saved.outputFiles,[]);
   });
   await check('portable TL metadata survives verified client export with stable body identity',async()=>{
     const metadata={title:'Portable client check',made_by:'agent',model:{id:'fixture/v1',source:'client-reported'}};
-    const portable=composeDocument(example,metadata),answer=await execute(context,'verify',portable,{formats:['tl','wav','json']});
+    const portable=composeDocument(parseDocument(example).body,metadata),answer=await execute(context,'verify',portable,{formats:['tl','wav','json']});
     assert.equal(answer.result.verified,true);assert.equal(answer.result.recordSha256,await bodySha256(example));
     assert.equal(answer.result.documentSha256,sha(Buffer.from(portable)));assert.deepEqual(answer.result.metadata,metadata);
+    assert.equal(answer.result.tlVersion,1);assert.equal(answer.result.engineCompatibilityVersion,1);
+    assert.equal(answer.result.documentHeader,'present');
     assert.equal(Buffer.from(answer.artifacts.tl).toString(),portable);
     assert.match(Buffer.from(answer.artifacts.wav).toString('utf8'),/song_metadata/);
     const future=await execute(context,'verify',portable.replace('# jottune-tl 1 1','# jottune-tl 1 2'),{formats:['tl']});
@@ -266,6 +270,7 @@ try {
     assert.deepEqual(new Set(examples.songs.map(song => song.id)),new Set(['alpha','beta','delta']));
     const alpha = examples.songs.find(song => song.id === 'alpha'), beta = examples.songs.find(song => song.id === 'beta');
     assert.equal(alpha.variant,'standard'); assert.equal(alpha.url,site + 'songs/alpha.tl');
+    assert.equal(alpha.recordSha256,'a'.repeat(64));assert.equal(alpha.documentSha256,'b'.repeat(64));
     assert.equal(alpha.metadata.genre.value,'test-style'); assert.equal(alpha.metadata.genre.source,'retained-score');
     assert.equal(alpha.metadata.tempo.max_bpm,108); assert.equal(beta.variant,'keys'); assert.deepEqual(beta.metadata,{});
     assert.deepEqual(JSON.parse(await fs.readFile(stem + '.discovery.json','utf8')).examples,examples);

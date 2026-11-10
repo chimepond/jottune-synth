@@ -5,7 +5,7 @@ import {parseDocument} from './tl-document.mjs';
 import {limits, options, selectEngine, checkRecord, checkInspection, verification} from './policy.mjs';
 import {fetchRecord, isRecordLink, resolveLink, portableLink, libraryLink, linkProblem} from './links.mjs';
 import {openQr, closeQr} from './qr-view.mjs';
-import {createCatalog, catalogJSON} from './catalog.mjs';
+import {createCatalog, catalogJSON, checkCatalogDocument} from './catalog.mjs';
 import {songPreview} from './song-preview.mjs';
 import {createInstrumentView} from './instrument-view.mjs';
 import {createSpatialSampler} from './spatial.mjs';
@@ -934,12 +934,20 @@ function show(result) {
   $('facts').replaceChildren();
   if (result.info) {
     const values = {...(result.verdict !== 'valid' ? {'Render result': 'Refused. Measurements below are diagnostic; no canonical export was accepted.'} : {}),
+      ...(Number.isInteger(result.tlVersion) ? {'TL version':String(result.tlVersion) + (result.documentHeader === 'legacy-headerless' ? ' (legacy, inferred)' : ''),
+        'Engine compatibility version':String(result.engineCompatibilityVersion),
+        'Document header':result.documentHeader === 'present' ? 'Portable metadata' : 'Legacy headerless'} : {}),
       ...(result.metadata?.title?{'Song title':result.metadata.title}:{}),
+      ...(result.metadata?.collection?{'Collection (declared)':result.metadata.collection}:{}),
       ...(result.metadata?.author?{'Author (declared)':result.metadata.author}:{}),
       ...(result.metadata?.made_by?{'Author kind (declared)':result.metadata.made_by}:{}),
       ...(result.metadata?.model?{'Model (declared)':result.metadata.model.id+' · '+result.metadata.model.source}:{}),
       ...(result.metadata?.genre?{'Genre (declared)':result.metadata.genre}:{}),
       ...(result.metadata?.tempo?{'Tempo (declared)':result.metadata.tempo.min_bpm+'–'+result.metadata.tempo.max_bpm+' BPM'}:{}),
+      ...(result.metadata?.license?{'License (declared)':result.metadata.license}:{}),
+      ...(result.metadata?.utc_day?{'UTC day (declared)':result.metadata.utc_day}:{}),
+      ...(result.metadata?.prompt_id?{'Prompt ID (declared)':result.metadata.prompt_id}:{}),
+      ...(result.metadata?.renderer_release?{'Renderer release (declared)':result.metadata.renderer_release}:{}),
       'Technical verification': label(result), 'Record SHA-256': result.recordSha256 || '—', ...(result.documentSha256 && result.documentSha256 !== result.recordSha256 ? {'Document SHA-256':result.documentSha256}:{}), 'PCM hash': result.pcmHash || '—',
       'Engine': result.engineIdentity || '—', 'Release': result.rendererRelease || 'Local development build',
       'Build': result.engineId || '—', 'Mode': result.mode,
@@ -1012,6 +1020,7 @@ function validDiscovery(variant) {
   const text = value => typeof value === 'string' && !!value.trim() && !/[\x00-\x1f]/.test(value);
   const token = value => typeof value === 'string' && /^[A-Za-z0-9._:+/@-]{1,160}$/.test(value);
   if (variant.record_sha256 !== undefined && !hash(variant.record_sha256)) return false;
+  if (variant.document_sha256 !== undefined && !hash(variant.document_sha256)) return false;
   if (variant.technical !== undefined) {
     const info = variant.technical;
     if (!keys(info, ['source','channels','route','allocated_voices','events']) || info.source !== 'native-inspect'
@@ -1022,8 +1031,10 @@ function validDiscovery(variant) {
   }
   const item = variant.discovery;
   if (item === undefined) return true;
-  if (!keys(item, ['record_sha256','source','metadata','provenance','featured','showcase'])
+  if (!keys(item, ['record_sha256','document_sha256','source','metadata','provenance','featured','showcase'])
       || !hash(item.record_sha256) || item.record_sha256 !== variant.record_sha256
+      || (item.document_sha256 !== undefined && (!hash(item.document_sha256)
+        || variant.document_sha256 !== undefined && item.document_sha256 !== variant.document_sha256))
       || !text(item.source) || item.source.startsWith('/') || item.source.includes('\\')
       || item.source.split('/').some(part => !part || part === '.' || part === '..')) return false;
   if (item.metadata !== undefined && !keys(item.metadata, ['genre','tempo'])) return false;
@@ -1302,7 +1313,8 @@ $('song-load').onclick = async () => {
   playerStatus('Loading ' + song.title + '…');
   const pending = {song,variant,controller:new AbortController()}; pendingSongLoad = pending; updateTransport(false);
   try {
-    const text = await fetchRecord(new URL(variant.path, assetBase), undefined, {signal:pending.controller.signal});
+    const text = await checkCatalogDocument(await fetchRecord(new URL(variant.path, assetBase), undefined,
+      {signal:pending.controller.signal}),variant);
     if (requestGeneration !== generation || selectedSong() !== song || selectedVariant() !== variant) return;
     checkRecord(text); $('record').value = text; expectedRecordSha = variant.record_sha256 || null;
     loadedSong = {song,variant}; loadedIdentity = {title:song.title,version:variantLabels[variant.kind] || variant.kind};
@@ -1333,6 +1345,8 @@ $('song-preview').onclick = async () => {
     const [recordText,registry] = await Promise.all([fetchRecord(new URL(variant.path, assetBase), undefined, {signal}),registryPromise]);
     if (request !== previewSequence) return;
     checkRecord(recordText);
+    await checkCatalogDocument(recordText,variant);
+    if (request !== previewSequence) return;
     const engine = selectEngine(registry, new URL(location.href).searchParams.get('release') || undefined);
     const worker = new Worker(new URL('worker.mjs',assetBase),{type:'module'}); previewWorker = worker;
     worker.onmessage = ({data}) => {
@@ -1393,7 +1407,7 @@ async function loadFile(file) {
     checkRecord(text); $('record').value = text; loadedIdentity = {title:parseDocument(text).metadata.title || file.name.replace(/\.tl$/i,''),version:'Local file · as saved'};
     const result = await preparePlayback(text);
     if (lastResult === result && result?.verdict === 'valid' && result.recordSha256) {
-      linkedMetadata = {path:null,sha:result.recordSha256,match:catalog.cached(null,result.recordSha256),controller:new AbortController(),timer:null};
+      linkedMetadata = {path:null,sha:result.recordSha256,recordText:text,match:catalog.cached(null,result.recordSha256),controller:new AbortController(),timer:null};
       reconcileLinkedIdentity();
     }
     return result;
@@ -1417,10 +1431,18 @@ function surfaceLinkedSelection(match = null) {
 // hash naming one song (legacy path), in a validated packaged catalog can label
 // a successfully prepared linked record.
 function reconcileLinkedIdentity() {
-  const context = linkedMetadata; if (!context) return;
+  const context = linkedMetadata; if (!context || context.catalogMismatch) return;
   context.match ||= catalog.cached(context.path, context.sha);
   if (!context.match || lastResult?.verdict !== 'valid'
       || ![lastResult.recordSha256,lastResult.sourceRecordSha256].includes(context.sha)) return;
+  const checksum=context.match.variant.document_sha256 ?? context.match.variant.record_sha256;
+  if (checksum && context.checkedDocumentSha !== checksum) {
+    if (!context.documentCheck) context.documentCheck=checkCatalogDocument(context.recordText,context.match.variant).then(()=>{
+      context.checkedDocumentSha=checksum;
+      if(context===linkedMetadata)reconcileLinkedIdentity();
+    }).catch(()=>{context.catalogMismatch=true;context.match=null;});
+    return;
+  }
   loadedSong = context.match;
   loadedIdentity = {title:loadedSong.song.title,version:variantLabels[loadedSong.variant.kind] || loadedSong.variant.kind};
   songLibrary = librarySelection.map(item => item.song);
@@ -1454,12 +1476,16 @@ async function loadLink(value) {
     catch (error) { if (current()) error.linkMessage = linkProblem(error); throw error; }
     if (!current()) throw Error('Loading cancelled.');
     checkRecord(loaded.recordText);
+    const cachedMatch=loaded.libraryPath && loaded.recordSha256 ? catalog.cached(loaded.libraryPath,loaded.recordSha256) : null;
+    if(cachedMatch)await checkCatalogDocument(loaded.recordText,cachedMatch.variant);
+    if (!current()) throw Error('Loading cancelled.');
     invalidate(); linkedSelectionActive = true; surfaceLinkedSelection(); linkGenerations.set(loaded, generation);
     $('record').value = loaded.recordText; expectedRecordSha = loaded.recordSha256 || null; loadedRelease = loaded.release;
     loadedIdentity = {title:'Linked song',version:'Linked saved version'};
     if (loaded.libraryPath && loaded.recordSha256) {
       linkedMetadata = {path:loaded.libraryPath,sha:loaded.recordSha256,hint:loaded.catalogPage,
-        controller:new AbortController(),timer:null,match:null};
+        controller:new AbortController(),timer:null,recordText:loaded.recordText,match:cachedMatch,
+        checkedDocumentSha:cachedMatch?.variant.document_sha256 ?? cachedMatch?.variant.record_sha256};
       void hydrateLinkedIdentity(linkedMetadata);
     }
     playerStatus('Record loaded. Listen or verify.');

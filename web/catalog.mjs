@@ -2,10 +2,26 @@
 // SPDX-License-Identifier: Apache-2.0
 // A visit reads bounded static pages, never the complete song manifest. Cursors
 // retain positions, not old result pages; the caller can continue empty chunks.
+import {documentSha256} from './tl-document.mjs';
 const documentLimit = 262144;
 const pagePath = value => typeof value === 'string' && /^catalog\/[a-z0-9-]+-\d+\.json$/.test(value);
 const check = (condition, message = 'Invalid song catalog.') => {if (!condition) throw Error(message);};
 const count = value => Number.isSafeInteger(value) && value >= 0 && value <= 1000000;
+const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
+export async function checkCatalogDocument(text, variant) {
+  const nested=variant.discovery?.document_sha256;
+  check(nested === undefined || digest(nested), 'Invalid song document checksum.');
+  check(variant.document_sha256 === undefined || digest(variant.document_sha256), 'Invalid song document checksum.');
+  check(variant.document_sha256 === undefined || nested === undefined || variant.document_sha256 === nested,
+    'Song document checksums disagree.');
+  const expected=variant.document_sha256 ?? nested ?? variant.record_sha256;
+  if (expected !== undefined) {
+    check(digest(expected), 'Invalid song document checksum.');
+    check(await documentSha256(text) === expected,
+      'Selected song document checksum does not match the catalog.');
+  }
+  return text;
+}
 export async function catalogJSON(base, path, signal) {
   check(path === 'catalog/index.json' || path === 'catalog/summary.json' || pagePath(path));
   const response = await fetch(new URL(path, base), {signal});
@@ -41,23 +57,32 @@ export function createCatalog(base, validDiscovery) {
     check(row && typeof row.id === 'string' && row.id && typeof row.title === 'string'
       && typeof row.collection === 'string' && (row.revision === undefined || typeof row.revision === 'string'));
     // Flat defaults remain readable on older packaged catalogs.
-    const variants = row.variants || [{kind:row.variant, id:row.id, path:row.path, bytes:row.bytes,
+    let variants = row.variants || [{kind:row.variant, id:row.id, path:row.path, bytes:row.bytes,
       duration_seconds:row.duration_seconds, record_sha256:row.record_sha256, technical:row.technical,
+      ...(row.document_sha256 !== undefined ? {document_sha256:row.document_sha256} : {}),
       ...((row.metadata || row.provenance) ? {discovery:{record_sha256:row.record_sha256, source:'catalog',
         ...(row.metadata ? {metadata:row.metadata} : {}), ...(row.provenance ? {provenance:row.provenance} : {})}} : {})}];
     check(Array.isArray(variants) && variants.length >= 1 && variants.length <= 3);
+    variants=variants.map(variant=>{
+      const top=variant?.document_sha256,nested=variant?.discovery?.document_sha256;
+      check((top===undefined || digest(top)) && (nested===undefined || digest(nested))
+        && (top===undefined || nested===undefined || top===nested));
+      return top===undefined && nested!==undefined ? {...variant,document_sha256:nested} : variant;
+    });
     const kinds = new Set();
     for (const variant of variants) {
       check(variant && ['standard','keys','mirror'].includes(variant.kind) && !kinds.has(variant.kind)
         && typeof variant.path === 'string' && /^songs\/(?:[A-Za-z0-9._-]+\/)*[A-Za-z0-9._-]+\.tl$/.test(variant.path)
         && !variant.path.split('/').some(part => part === '.' || part === '..')
         && Number.isSafeInteger(variant.bytes) && variant.bytes >= 0 && Number.isFinite(variant.duration_seconds) && variant.duration_seconds >= 0
+        && (variant.document_sha256 === undefined || digest(variant.document_sha256))
         && validDiscovery(variant));
       kinds.add(variant.kind);
     }
     check(kinds.has(row.variant));
     const selected = variants.find(variant => variant.kind === row.variant);
-    check(selected.path === row.path && selected.record_sha256 === row.record_sha256);
+    check(selected.path === row.path && selected.record_sha256 === row.record_sha256
+      && (row.document_sha256 === undefined || selected.document_sha256 === row.document_sha256));
     return {...row, id:variants.find(item => item.kind === 'standard')?.path || variants[0].path,
       defaultKind:row.variant, variants};
   }
