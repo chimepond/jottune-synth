@@ -8,7 +8,7 @@ import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
 import {toWav, toSvg, provenance, analyzeSpectrogram, fftPlan, transformFFT} from '../web/media.mjs';
 import {limits, checkRecord, checkInspection, selectEngine} from '../web/policy.mjs';
-import {resolveLink, portableLink, libraryLink, isRecordLink} from '../web/links.mjs';
+import {resolveLink, portableLink, libraryLink, isRecordLink, linkProblem} from '../web/links.mjs';
 import {checkCatalogDocument as checkCatalogDocumentActual} from '../web/catalog.mjs';
 import {composeDocument,bodySha256,documentSha256} from '../web/tl-document.mjs';
 
@@ -2173,6 +2173,35 @@ test('prepareLink renders a named service record silently and preserves its expe
   ['/preview/api/records/' + 'a'.repeat(64)]: {record_sha256: 'a'.repeat(64), renderer_release: 'test', record_url: 'r/song.tl'},
   '/preview/r/song.tl': 'service record',
 }}));
+
+test('pending and failed hosted descriptors stop before protected raw downloads with clear safe status', async () => {
+  const sha='a'.repeat(64),url='https://player.invalid/preview/r/'+sha;
+  for (const [verification,expected] of [
+    [{status:'pending'},/waiting for independent technical verification/],
+    [{status:'failed',failure:'silent-render'},/completely silent \(silent-render\)/],
+    [{status:'failed',failure:'reader-refused'},/native reader refused/],
+    [{status:'failed',failure:'private native error secret'},/failed independent technical verification\. Its share link/],
+  ]) await withPage(async page => {
+    page.get('record').value='my current draft';
+    await assert.rejects(page.api.loadLink(url),expected);
+    assert.match(page.get('status').textContent,expected);
+    assert(!page.get('status').textContent.includes('private native error secret'));
+    assert.equal(page.get('record').value,'my current draft');
+    assert.equal(page.workers.length,0);assert.equal(page.audioCreations(),0);
+    assert(!page.requests.some(value=>value.endsWith('/preview/r/song.tl')));
+  },{network:{['/preview/api/records/'+sha]:{record_sha256:sha,renderer_release:'test',record_url:'r/song.tl',
+    verified:false,details_withheld:true,verification},'/preview/r/song.tl':()=>{throw Error('Protected raw bytes must not be requested');}}});
+  const failed=Object.assign(Error('private raw error'),{verificationStatus:'failed',verificationFailure:'unknown-internal-error'});
+  assert.doesNotMatch(linkProblem(failed),/private|unknown-internal/);
+});
+
+test('verified hosted links remain playable while approval and advisory warnings affect no direct download',()=>withPage(async page=>{
+  const loaded=await page.api.loadLink('https://player.invalid/preview/r/'+'a'.repeat(64));
+  assert.equal(loaded.recordText,'verified minimal song');
+  assert(page.requests.some(url=>url.endsWith('/preview/r/song.tl')));
+},{network:{['/preview/api/records/'+'a'.repeat(64)]:{record_sha256:'a'.repeat(64),renderer_release:'test',record_url:'r/song.tl',
+  verified:true,listed:false,review:{required:true,status:'pending'},verification:{status:'verified',review_warnings:['low-note-count','clipping']}},
+  '/preview/r/song.tl':'verified minimal song'}}));
 
 test('an unknown shared song clears an unrelated library selection while leaving Play available',()=>withPage(async page=>{
   assert.notEqual(selectedSongId(page),'');

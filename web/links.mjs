@@ -43,6 +43,23 @@ export async function fetchRecord(value, base, {signal} = {}) {
 // Plain-language text for a link that could not be opened. The thrown error
 // keeps its technical detail for programmatic callers.
 export function linkProblem(error) {
+  if (error?.verificationStatus === 'pending')
+    return 'This publication is waiting for independent technical verification. Its share link is not ready for playback. Check again later.';
+  if (error?.verificationStatus === 'failed') {
+    const reasons = {
+      'silent-render':'the rendered audio is completely silent (silent-render)',
+      'reader-refused':'the native reader refused the song',
+      'profile-refused':'the song does not meet the publication profile',
+      'hash-mismatch':'the rendered audio did not match its saved identity',
+      'noncanonical':'the saved record was not canonical',
+      'declared-mismatch':'the rendered audio did not match the declared audio facts',
+      'render-timeout':'the independent render timed out',
+      'render-failed':'the independent render failed',
+    };
+    return 'This publication failed independent technical verification' +
+      (Object.hasOwn(reasons, error.verificationFailure) ? ' because ' + reasons[error.verificationFailure] : '') +
+      '. Its share link is not available for playback.';
+  }
   if (error?.status === 404 || error?.status === 410)
     return 'This link points to a song that is not available. It may have been removed, or the link may be incomplete.';
   if (error?.status) return 'The linked song could not be fetched just now. Try the link again later.';
@@ -122,6 +139,13 @@ export async function resolveLink(value, base) {
   const recordURL = httpURL(descriptor.record_url, serviceBase);
   if (recordURL.origin !== endpoint.origin || !recordURL.pathname.startsWith(serviceBase.pathname))
     throw Error('Record descriptors must reference their own service origin and path prefix.');
+  const verificationStatus = descriptor.verification?.status;
+  if (verificationStatus === 'pending' || verificationStatus === 'failed') {
+    const error = Object.assign(Error(), {verificationStatus, verificationFailure:descriptor.verification.failure});
+    error.message = linkProblem(error); throw error;
+  }
+  if (verificationStatus !== undefined && verificationStatus !== 'verified')
+    throw Error('The service returned an invalid verification status.');
   return {recordText: await fetchRecord(recordURL), recordSha256: descriptor.record_sha256,
     release: namedRelease, submissionId: submission?.[2]};
 }
