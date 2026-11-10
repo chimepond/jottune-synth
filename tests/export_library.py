@@ -73,6 +73,9 @@ class Exports(unittest.TestCase):
         variant = manifest['songs'][0]['variants'][0]
         self.assertEqual(variant['record_sha256'], body_variant['record_sha256'])
         self.assertEqual(variant['document_sha256'], hashlib.sha256(portable).hexdigest())
+        self.assertEqual(variant['discovery']['document_sha256'], variant['document_sha256'])
+        archived = json.loads((self.output / 'songs.json').read_text())['songs'][0]['variants'][0]
+        self.assertEqual(archived['discovery']['document_sha256'], archived['document_sha256'])
         self.assertEqual((self.output / variant['path']).read_bytes(), portable)
         self.assertEqual(variant['discovery']['provenance']['model'], 'reported/v1')
         self.assertEqual(variant['discovery']['metadata']['tempo']['source'], 'creator-declared')
@@ -667,6 +670,41 @@ class Exports(unittest.TestCase):
         self.assertEqual(row['provenance'], discovery['provenance'])
         self.assertEqual(exporter.catalog_summary(manifest)['version_coverage']['model']['unknown'], 1)
         self.assertIsNone(general['next'])
+
+    def test_browser_portable_checksums_keep_legacy_discovery_shape_and_complete_archive(self):
+        manifest = self.browser_manifest()
+        for variant, body in zip(manifest['songs'][0]['variants'],
+                                 [self.sine.encode(), (self.root / 'bell.tl').read_bytes()]):
+            portable = exporter.document.compose_document(body, {'title':'Synthetic song', 'collection':'Synthetic collection'})
+            variant.update(bytes=len(portable), record_sha256=hashlib.sha256(body).hexdigest(),
+                           document_sha256=hashlib.sha256(portable).hexdigest())
+            variant['discovery'] = {'record_sha256':variant['record_sha256'],
+                'document_sha256':variant['document_sha256'], 'source':'library.json',
+                'metadata':{'genre':{'value':'experimental', 'source':'creator-declared'}},
+                'provenance':{'model':'reported/v1', 'model_source':'client-reported'},
+                'featured':{'order':1 if variant['kind'] == 'standard' else 2, 'note':'Curated version'}}
+        archive = copy.deepcopy(manifest)
+        documents = {name:json.loads(data) for name, data in exporter.catalog_documents(manifest).items()}
+        versions = {variant['kind']:variant for variant in archive['songs'][0]['variants']}
+        legacy_fields = {'record_sha256', 'source', 'metadata', 'provenance', 'featured', 'showcase'}
+        for page in documents.values():
+            for row in page.get('items', []):
+                self.assertEqual(row['document_sha256'], versions[row['variant']]['document_sha256'])
+                self.assertEqual(row['record_sha256'], versions[row['variant']]['record_sha256'])
+                self.assertNotEqual(row['document_sha256'], row['record_sha256'])
+                for variant in row['variants']:
+                    expected = versions[variant['kind']]
+                    self.assertEqual(variant['document_sha256'], expected['document_sha256'])
+                    self.assertEqual(variant['record_sha256'], expected['record_sha256'])
+                    self.assertLessEqual(set(variant['discovery']), legacy_fields)
+                    self.assertEqual(variant['discovery'], {key:value for key, value in expected['discovery'].items()
+                                                           if key != 'document_sha256'})
+        self.assertEqual(manifest, archive, 'Browser compatibility must not rewrite full songs.json declarations.')
+        identity = hashlib.sha256(json.dumps(archive, ensure_ascii=False, sort_keys=True,
+            separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+        self.assertEqual(documents['catalog/summary.json']['as_of'], {'source':'songs.json', 'sha256':identity})
+        for variant in manifest['songs'][0]['variants']:
+            self.assertEqual(variant['discovery']['document_sha256'], variant['document_sha256'])
 
     def test_short_native_exports_remain_complete_with_empty_refreshable_browser(self):
         manifest = self.export()

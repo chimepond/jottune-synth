@@ -398,6 +398,18 @@ def catalog_summary(manifest):
 
 def catalog_documents(manifest):
     """Small static browsing pages; references existing TLs, never copies audio."""
+    def browser_variant(saved):
+        result = {key: saved[key] for key in
+                  ('kind', 'id', 'path', 'bytes', 'duration_seconds', 'record_sha256',
+                   'technical', 'discovery', 'levels', 'document_sha256') if key in saved}
+        if 'discovery' in result:
+            # Older installed players accept a closed discovery shape. Keep
+            # transport integrity at variant level in this browser projection;
+            # the complete archive retains its original discovery declarations.
+            result['discovery'] = {key: value for key, value in result['discovery'].items()
+                                   if key != 'document_sha256'}
+        return result
+
     def item(song, variant, note=None):
         result = {key: song[key] for key in ('title', 'collection', 'revision')}
         result['id'] = variant['id']
@@ -411,10 +423,7 @@ def catalog_documents(manifest):
         for key in ('metadata', 'provenance'):
             if key in discovery:
                 result[key] = discovery[key]
-        result['variants'] = [{key: saved[key] for key in
-                               ('kind', 'id', 'path', 'bytes', 'duration_seconds', 'record_sha256',
-                                'technical', 'discovery', 'levels', 'document_sha256') if key in saved}
-                              for saved in song['variants']]
+        result['variants'] = [browser_variant(saved) for saved in song['variants']]
         if note:
             result['note'] = note
         return result
