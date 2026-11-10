@@ -82,7 +82,9 @@ def root_inventory(api, store, root, kinds):
     files, counts = {}, dict(operations=0, pending_operations=0, takes=0)
     def add(relative, identity=None):
         info = file_info(api, root, relative)
-        api.require(identity is None or info['sha256'] == identity, 'session artifact digest mismatch', 5)
+        actual = (api.body_sha256(api.tl_document_module().read_bounded(safe_file(api, root, relative)))
+                  if relative.startswith('records/') else info['sha256'])
+        api.require(identity is None or actual == identity, 'session artifact digest mismatch', 5)
         files[relative] = info
     if kinds['operations']:
         add('operations.tsv')

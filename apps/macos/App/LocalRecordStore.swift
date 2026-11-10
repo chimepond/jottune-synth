@@ -13,8 +13,9 @@ struct LocalRecordFailure: Error, CustomStringConvertible {
     init(_ text: String) { description = text }
 }
 
-/// Original TL bytes are immutable private copies. Titles are optional metadata;
-/// legacy hash-named imports remain discoverable without an index migration.
+/// Original TL bytes are immutable private copies. New entries use canonical
+/// music-body IDs and retain a separate full-file checksum in the local index.
+/// Legacy full-file hash names remain discoverable without a migration.
 struct LocalRecordStore: Sendable {
     let directory: URL
     static func digest(_ data: Data) -> String {
@@ -26,53 +27,82 @@ struct LocalRecordStore: Sendable {
         }
         return directory.appendingPathComponent(id + ".tl")
     }
-    private func titles() throws -> [String: String] {
+    private struct StoredRecord: Codable {
+        let title: String
+        let fullfilechecksum: String?
+    }
+    private func metadata() throws -> [String: StoredRecord] {
         let url = directory.appendingPathComponent("titles.json")
         if !FileManager.default.fileExists(atPath: url.path) { return [:] }
-        return try JSONDecoder().decode([String: String].self, from: Data(contentsOf: url))
+        let bytes = try Data(contentsOf: url)
+        if let records = try? JSONDecoder().decode([String: StoredRecord].self, from: bytes) { return records }
+        return try JSONDecoder().decode([String: String].self, from: bytes).mapValues {
+            StoredRecord(title: $0, fullfilechecksum: nil)
+        }
     }
-    private func saveTitles(_ value: [String: String]) throws {
+    private func saveMetadata(_ value: [String: StoredRecord]) throws {
         let encoder = JSONEncoder(); encoder.outputFormatting = [.sortedKeys]
         try encoder.encode(value).write(to: directory.appendingPathComponent("titles.json"), options: .atomic)
     }
     func entries() throws -> [LocalRecordEntry] {
         if !FileManager.default.fileExists(atPath: directory.path) { return [] }
-        let names = (try? titles()) ?? [:]
+        let records = (try? metadata()) ?? [:]
         return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey])
             .compactMap { url -> LocalRecordEntry? in
                 guard url.pathExtension == "tl", (try? file(url.deletingPathExtension().lastPathComponent)) != nil else { return nil }
                 let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
                 guard values.isRegularFile == true, values.isSymbolicLink != true else { return nil }
                 let id = url.deletingPathExtension().lastPathComponent
-                return LocalRecordEntry(id: id, title: names[id] ?? "Imported song " + id.prefix(8))
+                return LocalRecordEntry(id: id, title: records[id]?.title ?? "Imported song " + id.prefix(8))
             }.sorted { $0.title == $1.title ? $0.id < $1.id : $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
-    @discardableResult func insert(_ bytes: Data, title: String) throws -> LocalRecordEntry {
+    /// canonicalBody is supplied only after the production reader and checked
+    /// renderer validate the complete imported document. nil retains legacy use.
+    @discardableResult func insert(_ bytes: Data, title: String, canonicalBody: Data? = nil) throws -> LocalRecordEntry {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let id = Self.digest(bytes), url = try file(id)
-        let metadata = try? titles()
-        var names = metadata ?? [:]
+        let originalID = Self.digest(bytes)
+        // Reimporting an existing legacy source keeps its established local ID.
+        let id = FileManager.default.fileExists(atPath: try file(originalID).path)
+            ? originalID : Self.digest(canonicalBody ?? bytes)
+        let url = try file(id)
+        let previous = try? metadata()
+        var records = previous ?? [:]
+        guard previous != nil || id == originalID else {
+            throw LocalRecordFailure("The local library index is unreadable. Restore it before importing a portable TL.")
+        }
+        let retained: Data
         if FileManager.default.fileExists(atPath: url.path) {
-            guard try read(id) == bytes else { throw LocalRecordFailure("The retained song differs from its original bytes.") }
-        } else { try bytes.write(to: url, options: .atomic) }
-        if names[id] == nil { names[id] = title.isEmpty ? "Imported song" : title; if metadata != nil { try saveTitles(names) } }
-        return LocalRecordEntry(id: id, title: names[id]!)
+            retained = try read(id)
+            if canonicalBody == nil && retained != bytes {
+                throw LocalRecordFailure("The retained song differs from its original bytes.")
+            }
+        } else {
+            try bytes.write(to: url, options: .atomic)
+            retained = bytes
+        }
+        let name = records[id]?.title ?? (title.isEmpty ? "Imported song" : title)
+        records[id] = StoredRecord(title: name, fullfilechecksum: Self.digest(retained))
+        if previous != nil { try saveMetadata(records) }
+        return LocalRecordEntry(id: id, title: name)
     }
     func read(_ id: String) throws -> Data {
         let url = try file(id)
         let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
         guard values.isRegularFile == true, values.isSymbolicLink != true else { throw LocalRecordFailure("The retained song is not a regular local file.") }
         let bytes = try Data(contentsOf: url)
-        guard Self.digest(bytes) == id else { throw LocalRecordFailure("The retained song has changed. Remove this copy and import the original TL again.") }
+        let checksum = Self.digest(bytes)
+        guard checksum == id || (try? metadata()[id]?.fullfilechecksum) == checksum else {
+            throw LocalRecordFailure("The retained song has changed or its checksum is unavailable. Remove this copy and import the original TL again.")
+        }
         return bytes
     }
     func url(_ id: String) throws -> URL { _ = try read(id); return try file(id) }
     func remove(_ id: String) throws {
         let url = try file(id)
-        let metadata = try? titles()
-        var names = metadata ?? [:]
+        let previous = try? metadata()
+        var records = previous ?? [:]
         // Only this validated hash-named private copy is removed, never a source.
         if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
-        names.removeValue(forKey: id); if metadata != nil { try saveTitles(names) }
+        records.removeValue(forKey: id); if previous != nil { try saveMetadata(records) }
     }
 }

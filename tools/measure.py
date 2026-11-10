@@ -179,7 +179,7 @@ def execute(fm, files=None, *, text=None, harness=None, start_ns=0, end_ns=None)
     measured = measure_wav(fm, accepted["_wav_bytes"], fs=accepted["fs"],
                            channels=accepted["channels"], frames=accepted["samples"],
                            length_ns=lengths[0], start_ns=start_ns, end_ns=end_ns)
-    keys = ("version", "ok", "exit", "native", "record_sha256", "canonical", "hash",
+    keys = ("version", "ok", "exit", "native", "record_sha256", "document_sha256", "metadata", "canonical", "hash",
             "expected", "match", "block_indep", "clipped", "checks", "checks_pass")
     return dict({key: accepted[key] for key in keys}, operation="measure_section",
                 checks_scope="full_record", **measured)
@@ -568,9 +568,10 @@ def execute_sections(fm, files=None, *, text=None, harness=None, sections):
                 if runner.processes and runner.processes[-1]["native_returncode"] == 0:
                     raise fm.ToolError("native metadata cannot be verified: " + str(error), 5) from error
                 raise
-            record = Path(temporary) / "canonical.tl"
+            record, body_path = Path(temporary) / "canonical.tl", Path(temporary) / "body.tl"
+            expected_header = fm.document_header(inputs)
             _admit(fm, native, inputs)
-            result = native.run(["--play", "--metrics", "--merged", record, "--", *inputs])
+            result = native.run(["--play", "--metrics", "--merged", record, "--merged-body", body_path, "--", *inputs])
             if result.returncode not in (0, 3):
                 raise fm.ToolError("native render failed", result.returncode,
                                    refusals=[fm.refusal(result.stderr)])
@@ -584,11 +585,13 @@ def execute_sections(fm, files=None, *, text=None, harness=None, sections):
                 data = stream.read(MAX_CANONICAL + 1)
             fm.require(len(data) <= MAX_CANONICAL, "native canonical exceeds text capture limit", 5)
             try:
-                rows = native.metadata.canonical(data)
+                body = fm.read_native_document(body_path)
+                document = fm.verify_native_document(data, body, expected_header)
+                rows = native.metadata.canonical(body)
                 canonical = data.decode("utf-8")
             except (fm.ToolError, UnicodeError, ValueError, TypeError, KeyError) as error:
                 raise fm.ToolError("native canonical cannot be verified: " + str(error), 5) from error
-            accepted["record_sha256"] = fm.sha(data)
+            accepted.update(record_sha256=fm.sha(body), document_sha256=fm.sha(data), metadata=document["metadata"])
             lengths = [row["raw"]["NS"] for row in rows if row["id"] == "header_length_ns"]
             rates = [row["raw"]["HZ"] for row in rows if row["id"] == "header_fs"]
             fm.require(len(lengths) == 1 and type(lengths[0]) is int,
@@ -625,7 +628,7 @@ def execute_sections(fm, files=None, *, text=None, harness=None, sections):
 
 def outcome_sections(fm, full, arguments, operation, *, voice=False):
     """Exact full evidence with a bounded, explicitly lossy compact view."""
-    keys = ("version", "ok", "exit", "operation", "record_sha256", "hash", "native_returncode",
+    keys = ("version", "ok", "exit", "operation", "record_sha256", "document_sha256", "hash", "native_returncode",
             "full_result_sha256", "full_result_bytes", "section_count")
     if voice:
         keys += ("stage", "sample_format", "full_mix_complete", "dry_complete", "canonical_complete",
@@ -955,7 +958,9 @@ def execute_voice_sections(fm, files=None, *, text=None, harness=None, voices, s
                 data = stream.read(MAX_CANONICAL + 1)
             fm.require(len(data) <= MAX_CANONICAL, "native canonical exceeds text capture limit", 5)
             fm.require(native is not None and play is not None, "canonical has no verified native PLAY", 5)
-            rows = native.metadata.canonical(data)
+            body = fm.read_native_document(record.with_name("body.tl"))
+            document = fm.verify_native_document(data, body, expected_header)
+            rows = native.metadata.canonical(body)
             def unique(identifier, field):
                 values = [row["raw"][field] for row in rows if row["id"] == identifier]
                 fm.require(len(values) == 1, "canonical has no unique " + identifier, 5)
@@ -970,7 +975,8 @@ def execute_voice_sections(fm, files=None, *, text=None, harness=None, voices, s
                        and sorted(row["INDEX"] for row in declared) == list(range(play["voices"])),
                        "canonical voice map differs", 5)
             voice_map = {row["INDEX"]: row["PATCH"] for row in declared}
-            evidence.update(canonical_complete=True, canonical=data.decode("utf-8"), record_sha256=fm.sha(data),
+            evidence.update(canonical_complete=True, canonical=data.decode("utf-8"), record_sha256=fm.sha(body),
+                            document_sha256=fm.sha(data), metadata=document["metadata"],
                             length_ns=length, voice_map=[dict(voice=i, patch=voice_map[i]) for i in sorted(voice_map)])
         except FileNotFoundError as error:
             if process.get("native_returncode") is not None:
@@ -982,10 +988,12 @@ def execute_voice_sections(fm, files=None, *, text=None, harness=None, voices, s
     try:
         with fm.input_files(files, text) as inputs, tempfile.TemporaryDirectory(prefix="fm-voice-sections-") as temporary:
             record, failure, result = Path(temporary) / "canonical.tl", None, None
+            expected_header = fm.document_header(inputs)
             try:
                 native = StemNative(harness)
                 _admit(fm, native, inputs)
-                result = native.run(["--play", "--metrics", "--merged", record, "--", *inputs])
+                result = native.run(["--play", "--metrics", "--merged", record,
+                                     "--merged-body", record.with_name("body.tl"), "--", *inputs])
             except (fm.ToolError, OSError, UnicodeError, ValueError, TypeError, KeyError, subprocess.SubprocessError) as error:
                 failure = error
             errors, play, voice_map, length = collect(record)

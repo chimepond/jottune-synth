@@ -57,7 +57,7 @@ class Packages(unittest.TestCase):
                 for name in pkg.MODULES}})
 
     def agent(self):
-        for name in ('agent.mjs','worker.mjs','policy.mjs','media.mjs','links.mjs','analysis-worker.mjs'):
+        for name in ('agent.mjs','worker.mjs','policy.mjs','media.mjs','links.mjs','analysis-worker.mjs','tl-document.mjs'):
             (self.root / 'web' / name).write_text('// fixture static module\n')
 
     def test_agent_manifest_binds_all_transitive_assets_and_excludes_rewritten_and_bulk_content(self):
@@ -487,7 +487,7 @@ class Packages(unittest.TestCase):
         git('commit', '-q', '--allow-empty', '-m', 'one')
         head = git('rev-parse', 'HEAD')
         # origin is a private predecessor; the public repository is reachable under other names and URL forms.
-        remotes = {'origin': 'https://example.invalid/private/jottune-synth.git',
+        remotes = {'origin': 'https://example.invalid/nested/jottune-synth.git',
                    'public': 'git@EXAMPLE.invalid:jottune-synth.git', 'mirror': 'ssh://git@example.invalid/jottune-synth/',
                    'web': 'https://example.invalid/jottune-synth', 'local': str(self.root)}
         for name, url in remotes.items():
@@ -497,7 +497,7 @@ class Packages(unittest.TestCase):
         for ref, published in (('origin/main', False), ('public/main', True), ('mirror/main', True),
                                ('web/main', True), ('local/main', False), ('unconfigured/main', False)):
             self.assertEqual(REAL_PUBLISHED(self.root, head, ref, REPO), published, ref)
-        self.assertTrue(REAL_PUBLISHED(self.root, head, 'origin/main', 'https://example.invalid/private/jottune-synth'))
+        self.assertTrue(REAL_PUBLISHED(self.root, head, 'origin/main', 'https://example.invalid/nested/jottune-synth'))
         self.assertFalse(REAL_PUBLISHED(self.root, head, 'web/main', REPO + '-fork'))
         self.assertFalse(REAL_PUBLISHED(self.root, head, 'web/main', 'https://example.invalid/JotTune-Synth'))
 

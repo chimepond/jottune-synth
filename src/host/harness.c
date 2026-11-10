@@ -10,11 +10,11 @@
  *   harness [--fs HZ] --emit DIR
  *   harness --gen-params
  *   harness --gen-events [--] FILE...
- *   harness --gen-soak [--merged PATH] [--] FILE...
- *   harness --play [--pcm-limit BYTES] [--wav PATH] [--merged PATH] [--stems WAV] [--metrics] [--ref] [--chunk N|random] [--] FILE...
- *   harness --play-once [--wav PATH] [--merged PATH] [--stems WAV] [--metrics] [--] FILE...
+ *   harness --gen-soak [--merged PATH] [--merged-body PATH] [--] FILE...
+ *   harness --play [--pcm-limit BYTES] [--wav PATH] [--merged PATH] [--merged-body PATH] [--stems WAV] [--metrics] [--ref] [--chunk N|random] [--] FILE...
+ *   harness --play-once [--wav PATH] [--merged PATH] [--merged-body PATH] [--stems WAV] [--metrics] [--] FILE...
  *   harness --engine | --inspect [--] FILE... | --events [--] FILE...
- *   harness --play --wav-fd N --pcm-limit BYTES [--merged PATH] [--metrics] [--chunk N|random] [--] FILE...
+ *   harness --play --wav-fd N --pcm-limit BYTES [--merged PATH] [--merged-body PATH] [--metrics] [--chunk N|random] [--] FILE...
  *   harness --fxref [--] FILE...
  *   harness --field-test | --field-cost
  *
@@ -1135,15 +1135,15 @@ static int stem_paths_same(const stem_path_t *a, const stem_path_t *b)
         || (a->exists && b->exists && a->st.st_dev == b->st.st_dev && a->st.st_ino == b->st.st_ino);
 }
 
-static int output_paths_check(const char *wav, const char *merged, const char *stem,
+static int output_paths_check(const char *wav, const char *merged, const char *stem, const char *merged_body,
                               char **files, int nf, const char *source_stems)
 {
-    stem_path_t destinations[3], input;
-    const char *names[3] = { wav, merged, stem };
+    stem_path_t destinations[4], input;
+    const char *names[4] = { wav, merged, stem, merged_body };
     int i, j, rc = 0;
     memset(destinations, 0, sizeof destinations);
-    for (i = 0; i < 3 && !rc; ++i) if (names[i]) rc = stem_path_get(names[i], 1, &destinations[i]);
-    for (i = 0; i < 3 && !rc; ++i) for (j = i + 1; j < 3 && !rc; ++j)
+    for (i = 0; i < 4 && !rc; ++i) if (names[i]) rc = stem_path_get(names[i], 1, &destinations[i]);
+    for (i = 0; i < 4 && !rc; ++i) for (j = i + 1; j < 4 && !rc; ++j)
         if (names[i] && names[j] && stem_paths_same(&destinations[i], &destinations[j])) {
             fprintf(stderr, "output destinations identify the same file\n"); rc = 2;
         }
@@ -1151,13 +1151,13 @@ static int output_paths_check(const char *wav, const char *merged, const char *s
         const char *name = j < nf ? files[j] : source_stems;
         rc = stem_path_get(name, 0, &input);
         if (!rc) {
-            for (i = 0; i < 3 && !rc; ++i) if (names[i] && stem_paths_same(&destinations[i], &input)) {
+            for (i = 0; i < 4 && !rc; ++i) if (names[i] && stem_paths_same(&destinations[i], &input)) {
                 fprintf(stderr, "output destination identifies an input: %s\n", name); rc = 2;
             }
             free(input.resolved);
         }
     }
-    for (i = 0; i < 3; ++i) free(destinations[i].resolved);
+    for (i = 0; i < 4; ++i) free(destinations[i].resolved);
     return rc;
 }
 
@@ -7539,6 +7539,7 @@ static int probe_fb(uint32_t fs, const char *outdir)
 #define TL_MAX_TOK     (FM_OPS * (FM_OPS - 1) + 4 > 24 ? FM_OPS * (FM_OPS - 1) + 4 : 24)   /* a route with every edge fits */
 #define TL_NAME        32
 #define TL_LINE        1024
+#define TL_DOCUMENT_BYTES 1000000u
 
 typedef struct {
     uint64_t t_ns;
@@ -7604,6 +7605,11 @@ typedef struct {
 } tl_wt_t;
 
 typedef struct {
+    /* Host document data owns its allocation. Scratch value copies borrow it;
+     * body-only writers never inspect it. No document data reaches DSP state. */
+    char       *document_header;
+    size_t      document_header_bytes, document_input_bytes[2];
+    unsigned    document_inputs[2], document_seen[2];
     int         have_timeline, have_engine, have_hash, have_space;
     int         decodable;                        /*  reader profile, not an effect bit */
     int         draft;                            /* 1, or 2 with the spatial statements (docs/INSTRUMENT.md) */
@@ -10140,25 +10146,123 @@ append_event:
  * pass 1 reads the header statements, pass 2 the events. */
 /* The stream belongs to the caller, including its read/close error handling.
  * File and in-memory imports share this exact line/token path. */
+/* Reserve these marker names even when misspelled framing would otherwise be
+ * discarded as an ordinary comment. JSON payload validation belongs to hosts. */
+static int tl_document_marker(const char *line)
+{
+    const char *s = line;
+    while (*s == ' ' || *s == '\t' || *s == '\r') ++s;
+    if (*s++ != '#') return 0;
+    while (*s == ' ' || *s == '\t' || *s == '\r') ++s;
+    if (!strncmp(s, "jottune-tl", 10)) return 1;
+    if (!strncmp(s, "end-jottune-tl", 14)) return 2;
+    return 0;
+}
+
+static int tl_document_version(const char **text, uint32_t *version)
+{
+    const char *s = *text;
+    uint64_t n = 0;
+    if (*s < '1' || *s > '9') return 1;
+    do {
+        n = n * 10u + (unsigned)(*s++ - '0');
+        if (n > UINT32_MAX) return 1;
+    } while (*s >= '0' && *s <= '9');
+    *version = (uint32_t)n;
+    *text = s;
+    return 0;
+}
+
+static int tl_document_append(tl_t *tl, const char *line, size_t n, const char *path, unsigned ln)
+{
+    char *next;
+    if (n > TL_DOCUMENT_BYTES - tl->document_header_bytes)
+        return tl_err(path, ln, "portable TL exceeds %u bytes", TL_DOCUMENT_BYTES);
+    next = (char *)realloc(tl->document_header, tl->document_header_bytes + n + 1u);
+    if (!next) return tl_host_error(path, ln, "out of memory");
+    tl->document_header = next;
+    memcpy(next + tl->document_header_bytes, line, n);
+    tl->document_header_bytes += n;
+    next[tl->document_header_bytes] = 0;
+    return 0;
+}
+
 static int tl_read_stream(tl_t *tl, FILE *f, const char *path, int pass)
 {
-    char line[TL_LINE], *tok[TL_MAX_TOK];
-    unsigned ln = 0;
-    int nt, rc = 0;
+    /* One extra byte accepts a 1022-byte content line with either LF or CRLF. */
+    char line[TL_LINE + 1], framed[TL_LINE + 1], *tok[TL_MAX_TOK];
+    unsigned ln = 0, input = tl->document_inputs[pass - 1]++;
+    size_t header_offset = 0;
+    int nt, rc = 0, in_header = 0, payload = 0;
     while (!rc) {
-        size_t used = sizeof line;
+        size_t used = sizeof line, n, content;
+        int marker;
         if (FM_HOST_CANCELLED()) return 6;
         memset(line, 0xff, sizeof line);
         if (!fgets(line, sizeof line, f)) break;
         ln++;
-        /* fgets wrote a final NUL even if the input itself contains NULs.
-         * Its index is the last byte before the untouched 0xff suffix. */
+        /* fgets wrote a final NUL even if the input itself contains NULs. */
         while (used && (unsigned char)line[used - 1u] == 0xffu) used--;
         if (!used || strlen(line) != used - 1u) { rc = tl_err(path, ln, "NUL byte in line"); break; }
+        n = used - 1u;
+        content = n;
+        if (content && line[content - 1u] == '\n') {
+            --content;
+            if (content && line[content - 1u] == '\r') --content;
+        }
         if (ln == 1 && !strncmp(line, "\xef\xbb\xbf", 3)) {
             rc = tl_err(path, ln, "byte-order mark; save as UTF-8 without one"); break;
         }
-        if (!strchr(line, '\n') && !feof(f)) { rc = tl_err(path, ln, "line longer than %d bytes", TL_LINE - 2); break; }
+        if ((!strchr(line, '\n') && !feof(f)) ||
+            (content > TL_LINE - 2u && (strchr(line, '\n') || tl->document_seen[pass - 1]))) {
+            rc = tl_err(path, ln, "line longer than %d bytes", TL_LINE - 2); break;
+        }
+        /* Saturate accounting for unbounded legacy local input. The portable
+         * bound applies as soon as its reserved first-line marker is present. */
+        if (tl->document_input_bytes[pass - 1] <= TL_DOCUMENT_BYTES) {
+            size_t *bytes = &tl->document_input_bytes[pass - 1];
+            *bytes = n > TL_DOCUMENT_BYTES - *bytes ? TL_DOCUMENT_BYTES + 1u : *bytes + n;
+        }
+        memcpy(framed, line, content); framed[content] = 0;
+        marker = tl_document_marker(framed);
+        if (marker == 1) {
+            const char *versions = framed + 13;
+            uint32_t tl_version, engine_version;
+            if (ln != 1 || input || in_header || tl->document_seen[pass - 1] ||
+                strncmp(framed, "# jottune-tl ", 13) ||
+                tl_document_version(&versions, &tl_version) || *versions++ != ' ' ||
+                tl_document_version(&versions, &engine_version) || *versions) {
+                rc = tl_err(path, ln, "malformed, repeated or misplaced jottune-tl header"); break;
+            }
+            if (tl_version > JOTTUNE_TL_VERSION || engine_version > JOTTUNE_ENGINE_VERSION) {
+                rc = tl_err(path, ln, "unsupported TL/engine requirement %u/%u; this build supports %u/%u",
+                    tl_version, engine_version, JOTTUNE_TL_VERSION, JOTTUNE_ENGINE_VERSION); break;
+            }
+            tl->document_seen[pass - 1] = 1;
+            in_header = 1;
+        } else if (marker == 2) {
+            if (!in_header || strcmp(framed, "# end-jottune-tl") || !payload) {
+                rc = tl_err(path, ln, "malformed or misplaced end-jottune-tl header"); break;
+            }
+            in_header = 0;
+        } else if (in_header) {
+            if (strncmp(framed, "# ", 2)) {
+                rc = tl_err(path, ln, "metadata payload line must start with '# '"); break;
+            }
+            payload = 1;
+        }
+        if (tl->document_seen[pass - 1] && tl->document_input_bytes[pass - 1] > TL_DOCUMENT_BYTES) {
+            rc = tl_err(path, ln, "portable TL exceeds %u bytes", TL_DOCUMENT_BYTES); break;
+        }
+        if (in_header || marker == 2) {
+            if (pass == 1) rc = tl_document_append(tl, line, n, path, ln);
+            else if (n > tl->document_header_bytes - header_offset ||
+                     memcmp(line, tl->document_header + header_offset, n))
+                rc = tl_err(path, ln, "metadata header changed between reader passes");
+            if (rc) break;
+            header_offset += n;
+            continue;
+        }
         nt = tl_split(line, tok);
         if (nt < 0) rc = tl_err(path, ln, "more than %d tokens", TL_MAX_TOK);
         else if (nt == 0) continue;
@@ -10168,6 +10272,11 @@ static int tl_read_stream(tl_t *tl, FILE *f, const char *path, int pass)
         }
         else if (pass == 1) rc = tl_header(tl, path, ln, tok, nt);
     }
+    if (!rc && in_header) rc = tl_err(path, ln, "unterminated jottune-tl header");
+    if (!rc && pass == 2 && !input && tl->document_header && !header_offset)
+        rc = tl_err(path, ln, "metadata header changed between reader passes");
+    if (!rc && pass == 2 && header_offset && header_offset != tl->document_header_bytes)
+        rc = tl_err(path, ln, "metadata header changed between reader passes");
     return rc;
 }
 
@@ -10510,6 +10619,27 @@ static int tl_write_f(FILE *f, const tl_t *tl, uint64_t hash)
     return ferror(f) ? 1 : 0;
 }
 
+/* Portable exports retain the original supported header verbatim. All other
+ * canonical users (descriptors, patches and song identity) call tl_write_f. */
+static int tl_write_document_f(FILE *f, const tl_t *tl, uint64_t hash)
+{
+    long start = 0, end;
+    int rc;
+    if (tl->document_header) {
+        start = ftell(f);
+        if (start < 0) return tl_host_error(NULL, 0, "cannot measure portable TL output");
+        if (fwrite(tl->document_header, 1, tl->document_header_bytes, f) != tl->document_header_bytes) return 1;
+    }
+    rc = tl_write_f(f, tl, hash);
+    if (!rc && tl->document_header) {
+        end = ftell(f);
+        if (end < start) return tl_host_error(NULL, 0, "cannot measure portable TL output");
+        if ((unsigned long)(end - start) > TL_DOCUMENT_BYTES)
+            return tl_err(NULL, 0, "portable TL output exceeds %u bytes", TL_DOCUMENT_BYTES);
+    }
+    return rc;
+}
+
 /* Native schema coverage. This enumerates actual canonical writer output, not a second TL parser.
  * The snapshots exercise writer branches only; they do not initialize a
  * voice, render audio, or claim these arbitrary hashes identify audio. */
@@ -10779,13 +10909,19 @@ done:
 }
 
 /* Atomic path wrapper; the stream form leaves ownership to its caller. */
-static int tl_write(const tl_t *tl, const char *path, uint64_t hash)
+static int tl_write(const tl_t *tl, const char *path, uint64_t hash, int body_only)
 {
     char *tmp;
     FILE *f = io_open_tmp(path, "w", &tmp);
     int bad;
     if (!f) return HOST_ERROR;
-    bad = tl_write_f(f, tl, hash);
+    bad = body_only ? tl_write_f(f, tl, hash) : tl_write_document_f(f, tl, hash);
+    if (bad && !ferror(f)) {
+        /* A document capacity refusal is a format error, not failed I/O. */
+        if (fclose(f)) bad = io_fail(path, "write");
+        remove(tmp); free(tmp);
+        return bad;
+    }
     return io_finish_tmp(f, path, tmp, bad);
 }
 
@@ -11524,12 +11660,12 @@ static int gen_events(char **files, int nf)
     }
     if (!rc) printf("GEN_EVENTS count=%llu\n", (unsigned long long)(r ? r->events : 0));
     if (!rc && ferror(stdout)) rc = tl_host_error(NULL, 0, "cannot write generated event manifest");
-    free(r); free(tl->ev); free(tl->ks_pool); free(tl); return rc;
+    free(r); free(tl->ev); free(tl->ks_pool); free(tl->document_header); free(tl); return rc;
 }
 
 /* The streaming audit accepts mono/no-effects sessions to keep storage
  * bounded independently of duration. Ordinary --play supports all routes. */
-static int gen_soak(char **files, int nf, const char *merged)
+static int gen_soak(char **files, int nf, const char *merged, const char *merged_body)
 {
     tl_t *tl = (tl_t *)calloc(1, sizeof *tl);
     tl_gen_audit_t *a = (tl_gen_audit_t *)malloc(sizeof *a);
@@ -11569,10 +11705,11 @@ static int gen_soak(char **files, int nf, const char *merged)
                 (double)a->restore_max * 1e6 / CLOCKS_PER_SEC, (unsigned long)sizeof a->pcm);
             if (clipped || a->failures) rc = 1;
             else if (tl->have_hash && tl->hash != a->hash) rc = 3;
-            if (!rc && merged) rc = tl_write(tl, merged, a->hash);
+            if (!rc && merged) rc = tl_write(tl, merged, a->hash, 0);
+            if (!rc && merged_body) rc = tl_write(tl, merged_body, a->hash, 1);
         }
     }
-    free(vs); free(tl->ev); free(tl->ks_pool); free(tl); free(a); return rc;
+    free(vs); free(tl->ev); free(tl->ks_pool); free(tl->document_header); free(tl); free(a); return rc;
 }
 
 /* ---- --play --metrics and --ref (PLAN  step 1) ---- */
@@ -11743,7 +11880,7 @@ static int fx_diff_input(char **files, int nf, const char *stems);
  * does; a stereo record, a field route or a generator session without
  * effects, which no double model covers, exits 2 before rendering. */
 static int play(char **files, int nf, const char *wav, const char *merged, const char *stems, int metrics, int ref, int partition,
-                int wav_fd, uint64_t pcm_limit, const char *stems_out, int stems_fd, int once)
+                int wav_fd, uint64_t pcm_limit, const char *stems_out, int stems_fd, int once, const char *merged_body)
 {
     tl_t *tl = (tl_t *)calloc(1, sizeof *tl);
     fm_voice_t *vs = NULL;
@@ -11846,7 +11983,8 @@ static int play(char **files, int nf, const char *wav, const char *merged, const
                 rc = exit_merge(rc, tl_write_stems(tl, vs, stems_out, fd, partition));
             }
         }
-        if (merged) rc = exit_merge(rc, tl_write(tl, merged, h));
+        if (merged) rc = exit_merge(rc, tl_write(tl, merged, h, 0));
+        if (merged_body) rc = exit_merge(rc, tl_write(tl, merged_body, h, 1));
         if (!rc && tl->have_hash && tl->hash != h) rc = 3;
         if (ref && tl->fx.on) {
             fxr = rc == 0 || rc == 3;
@@ -11866,7 +12004,7 @@ static int play(char **files, int nf, const char *wav, const char *merged, const
 play_cleanup:
     if (stems_fd >= 0 && close(stems_fd)) rc = exit_merge(rc, io_fail("--stems-fd", "close"));
     if (wav_fd >= 0 && close(wav_fd)) rc = exit_merge(rc, io_fail("--wav-fd", "close"));
-    if (tl) { free(tl->ev); free(tl->stems); free(tl->ks_pool); }
+    if (tl) { free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl->document_header); }
     free(tl); free(vs); free(sp); free(fx); free(pcm); free(pcm1);
     if (fxr) {                                               /* --fxref's own read and renders, after these are freed */
         const int r = fx_diff_input(files, nf, stems);
@@ -12132,12 +12270,14 @@ static int keys_profile(char **files, int nf, const char *merged, int half_width
     if (rc) goto done;
     have_hash = tl->have_hash; expected_hash = tl->hash;
     rc = keys_transform(tl, half_width, mirror, bounded, &result);
+    /* Derived arrangements do not inherit exact-record declarations. */
+    free(tl->document_header); tl->document_header = NULL; tl->document_header_bytes = 0;
     if (result.source_valid)
         printf("PROFILE_SOURCE hash=%016llx hash_present=%d match=%s block_indep=yes\n",
                (unsigned long long)result.source.hash, have_hash,
                have_hash ? expected_hash == result.source.hash ? "yes" : "NO" : "unchecked");
     if (rc) goto done;
-    rc = tl_write(tl, merged, result.result.hash);
+    rc = tl_write(tl, merged, result.result.hash, 0);
     if (!rc) {
         int low, high;
         uint32_t p, op;
@@ -12154,7 +12294,7 @@ static int keys_profile(char **files, int nf, const char *merged, int half_width
         }
     }
 done:
-    free(tl->ev); free(tl->ks_pool); free(tl);
+    free(tl->ev); free(tl->ks_pool); free(tl->document_header); free(tl);
     return rc;
 }
 
@@ -12472,7 +12612,7 @@ static int fx_diff_input(char **files, int nf, const char *stems)
     }
 fx_cleanup:
     free(gen);
-    free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl); free(vs); free(v1); free(v2); free(sp); free(sp2); free(fx); free(pcm); free(dry); fxr_free(r);
+    free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl->document_header); free(tl); free(vs); free(v1); free(v2); free(sp); free(sp2); free(fx); free(pcm); free(dry); fxr_free(r);
     return rc;
 }
 
@@ -12544,7 +12684,7 @@ static int emit(uint32_t fs, const char *dir)
         render_a1_blocks(c, fs, pcm, n);
         h = fm_golden_hash(pcm, n);
         snprintf(path, sizeof path, "%s/%s.tl", dir, c->name);
-        rc = tl_write(tl, path, h);
+        rc = tl_write(tl, path, h, 0);
         if (!rc) printf("EMIT   %-8s hash=%016llx\n", c->name, (unsigned long long)h);
         free(tl); free(pcm);
         if (rc) return rc;
@@ -12700,7 +12840,8 @@ static int inspect_record(char **files, int nf, int events)
     if (rc) goto cleanup;
     ch = tl->route ? tl_field_ch(tl) : tl->space ? 2u : 1u;
     pcm = (uint64_t)tl->n * ch * 2u;
-    estimate = sizeof *tl + (uint64_t)tl->cap * sizeof *tl->ev
+    estimate = sizeof *tl + (uint64_t)tl->document_header_bytes + !!tl->document_header
+             + (uint64_t)tl->cap * sizeof *tl->ev
              + (uint64_t)tl->nvoices * sizeof(fm_voice_t) + 2u * pcm;
     if (tl->route) estimate += sizeof(sp_field_t);
     else if (tl->space) estimate += sizeof(sp_stereo_t);
@@ -12726,26 +12867,27 @@ static int inspect_record(char **files, int nf, int events)
         }
     }
 cleanup:
-    free(tl->ev); free(tl->ks_pool); free(tl);
+    free(tl->ev); free(tl->ks_pool); free(tl->document_header); free(tl);
     if (!rc && events) rc = gen_events(files, nf);
     return rc;
 }
 
 static int usage(FILE *stream, int status)
 {
-    fprintf(stream, "usage: harness --help | --version\n"
+    fprintf(stream, "usage: harness --help | --version | --tl-format\n"
                     "       harness [--fs HZ] [--out DIR] [--check [lfo|peg-bounds|fenv-bounds] | --retrig | --fb | --filter]\n"
                     "       harness [--fs HZ] --emit DIR\n"
                     "       harness --gen-params | --params | --params-check\n"
                     "       harness --engine | --inspect [--] FILE... | --events [--] FILE...\n"
                     "       harness --gen-events [--] FILE...\n"
                     "       harness --keys-profile 30|45|60|75|90 [--keys-mirror] [--keys-carrier-bound] --merged PATH [--] FILE...\n"
-                    "       harness --gen-soak [--merged PATH] [--] FILE...\n"
-                    "       harness --play [--pcm-limit BYTES] [--wav PATH] [--merged PATH] [--stems WAV] [--metrics] [--ref] [--chunk N|random] [--] FILE...   (at most %d files)\n"
-                    "       harness --play-once [--wav PATH] [--merged PATH] [--stems WAV] [--metrics] [--] FILE...\n"
+                    "       harness --gen-soak [--merged PATH] [--merged-body PATH] [--] FILE...\n"
+                    "       harness --play [--pcm-limit BYTES] [--wav PATH] [--merged PATH] [--merged-body PATH] [--stems WAV] [--metrics] [--ref] [--chunk N|random] [--] FILE...   (at most %d files)\n"
+                    "       harness --play-once [--wav PATH] [--merged PATH] [--merged-body PATH] [--stems WAV] [--metrics] [--] FILE...\n"
+                    "         --merged retains document metadata; --merged-body PATH writes canonical music only (both allowed)\n"
                     "         one render; block_indep=unchecked; no --ref, --chunk or stems output\n"
-                    "       harness --play --wav-fd N --pcm-limit BYTES [--merged PATH] [--metrics] [--chunk N|random] [--] FILE...\n"
-                    "       harness --play (--stems-out PATH | --stems-fd N) --pcm-limit BYTES [--merged PATH] [--metrics] [--chunk N|random] [--] FILE...\n"
+                    "       harness --play --wav-fd N --pcm-limit BYTES [--merged PATH] [--merged-body PATH] [--metrics] [--chunk N|random] [--] FILE...\n"
+                    "       harness --play (--stems-out PATH | --stems-fd N) --pcm-limit BYTES [--merged PATH] [--merged-body PATH] [--metrics] [--chunk N|random] [--] FILE...\n"
                     "         stems output: all pre-FX voices, exact signed PCM32/Q2.30 (two mix passes plus one dry pass)\n"
                     "         a piece: its session.tl and its stream files\n"
                     "       harness --fxref [--] FILE...\n"
@@ -12756,7 +12898,7 @@ static int usage(FILE *stream, int status)
 static int harness_run(int argc, char **argv)
 {
     uint32_t fs = 48000;
-    const char *outdir = NULL, *emitdir = NULL, *wav = NULL, *merged = NULL, *stems = NULL;
+    const char *outdir = NULL, *emitdir = NULL, *wav = NULL, *merged = NULL, *stems = NULL, *merged_body = NULL;
     char *files[TL_MAX_FILES];
     int a, check = 0, lcheck = 0, pbounds = 0, ebounds = 0, retrig = 0, fb = 0, filt = 0, playing = 0, manifest = 0, soak = 0, params = 0, allparams = 0, paramscheck = 0, nf = 0, fxref = 0, ftest = 0, fcost = 0;
     int pmetrics = 0, pref = 0, pchunk = 1, have_chunk = 0, fs_given = 0;
@@ -12773,6 +12915,10 @@ static int harness_run(int argc, char **argv)
         return usage(stdout, 0);
     if (argc == 2 && !strcmp(argv[1], "--version")) {
         printf("JotTune Synth %s\n", JOTTUNE_VERSION);
+        return 0;
+    }
+    if (argc == 2 && !strcmp(argv[1], "--tl-format")) {
+        printf("TL_FORMAT tl_version=%u engine_version=%u\n", JOTTUNE_TL_VERSION, JOTTUNE_ENGINE_VERSION);
         return 0;
     }
     for (a = 1; a < argc; a++) {
@@ -12839,7 +12985,14 @@ static int harness_run(int argc, char **argv)
             }
             have_pcm_limit = 1;
         }
-        else if (!strcmp(argv[a], "--merged") && a + 1 < argc) merged = argv[++a];
+        else if (!strcmp(argv[a], "--merged") && a + 1 < argc) {
+            if (merged) return usage(stderr, 2);
+            merged = argv[++a];
+        }
+        else if (!strcmp(argv[a], "--merged-body") && a + 1 < argc) {
+            if (merged_body) return usage(stderr, 2);
+            merged_body = argv[++a];
+        }
         else if (!strcmp(argv[a], "--stems") && a + 1 < argc) stems = argv[++a];
         else if (!strcmp(argv[a], "--metrics")) pmetrics = 1;
         else if (!strcmp(argv[a], "--ref")) pref = 1;
@@ -12868,6 +13021,7 @@ static int harness_run(int argc, char **argv)
         }
     }
     if (check + lcheck + pbounds + ebounds + retrig + fb + filt + !!emitdir + playing + params + allparams + paramscheck + ftest + fcost + engine_info > 1) return usage(stderr, 2);
+    if (merged_body && (!playing || inspecting || manifest || fxref || keys_width)) return usage(stderr, 2);
     if ((keys_mirror || keys_bounded) && !keys_width) return usage(stderr, 2);
     if (keys_width && (!merged || wav || stems || pref || pmetrics || have_chunk || have_pcm_limit || wav_fd >= 0 || stems_out || stems_fd >= 0)) return usage(stderr, 2);
     if ((fs_given || outdir) && (playing || params || allparams || paramscheck || ftest || fcost || engine_info)) return usage(stderr, 2);
@@ -12940,13 +13094,13 @@ static int harness_run(int argc, char **argv)
         return rc ? rc : tl_params_writer_check();
     }
     if (playing) {
-        if (wav || merged || stems_out) {
-            int path_rc = output_paths_check(wav, merged, stems_out, files, nf, stems);
+        if (wav || merged || merged_body || stems_out) {
+            int path_rc = output_paths_check(wav, merged, stems_out, merged_body, files, nf, stems);
             if (path_rc) return path_rc;
         }
         if (keys_width) return !nf ? usage(stderr, 2) : keys_profile(files, nf, merged, keys_width, keys_mirror, keys_bounded);
         if (inspecting) return !nf || wav || merged || stems ? usage(stderr, 2) : inspect_record(files, nf, events);
-        if (soak) return !nf || wav || stems ? usage(stderr, 2) : gen_soak(files, nf, merged);
+        if (soak) return !nf || wav || stems ? usage(stderr, 2) : gen_soak(files, nf, merged, merged_body);
         if (manifest) return !nf || wav || merged || stems ? usage(stderr, 2) : gen_events(files, nf);
         if (!nf) { fprintf(stderr, "--play needs at least one file\n"); if (stems_fd >= 0) close(stems_fd); return 2; }
         if (fxref) return wav || merged || stems ? usage(stderr, 2) : fx_diff(files, nf);
@@ -12963,12 +13117,12 @@ static int harness_run(int argc, char **argv)
                 close(pipe_fd);
                 return rc;
             }
-            rc = play(files, nf, wav, merged, stems, pmetrics, pref, pchunk, wav_fd, pcm_limit, stems_out, stems_fd, once);
+            rc = play(files, nf, wav, merged, stems, pmetrics, pref, pchunk, wav_fd, pcm_limit, stems_out, stems_fd, once, merged_body);
             if (sigaction(SIGPIPE, &previous, NULL))
                 rc = exit_merge(rc, io_fail(pipe_name, "restore pipe signal handler"));
             return rc;
         }
-        return play(files, nf, wav, merged, stems, pmetrics, pref, pchunk, -1, pcm_limit, stems_out, -1, once);
+        return play(files, nf, wav, merged, stems, pmetrics, pref, pchunk, -1, pcm_limit, stems_out, -1, once, merged_body);
     }
     for (ci = 0; ci < NCASE; ci++)
         if ((uint64_t)CASES[ci].len_ms * fs / 1000u > UINT32_MAX) {

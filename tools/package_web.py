@@ -23,6 +23,7 @@ NOTICES = ('wasi-libc-LICENSE', 'compiler-rt-LICENSE')
 HOSTED_DOCUMENTS = {
     'docs/INSTRUMENT.md': 'instrument.txt',
     'docs/INTERCHANGE.md': 'interchange.txt',
+    'docs/TL-FORMAT.md': 'tl-format.txt',
     'tools/README.md': 'local-tools.txt',
     'README.md': 'project.txt',
     'data/recipes.txt': 'reference/recipes.txt',
@@ -240,7 +241,7 @@ def agent_manifest(web):
     if len(entries) > 4096 or len({entry['path'].lower() for entry in entries}) != len(entries):
         raise ValueError('Too many or duplicate static client assets.')
     by_path = {entry['path']:entry for entry in entries}
-    for name in ('agent.mjs','engines.json','worker.mjs','runtime.mjs','policy.mjs','media.mjs','links.mjs'):
+    for name in ('agent.mjs','engines.json','worker.mjs','runtime.mjs','policy.mjs','media.mjs','links.mjs','tl-document.mjs'):
         if name not in by_path:
             raise ValueError('Static client is missing required asset: ' + name)
     registry = json.loads((web / 'engines.json').read_text())

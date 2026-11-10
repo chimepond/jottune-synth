@@ -4,6 +4,7 @@ import { runCLI, row, verdict } from './runtime.mjs';
 import { options, checkRecord, checkInspection, verification } from './policy.mjs';
 import {inspectSpatial,validateSpatial} from './spatial.mjs';
 import {compileScore,selectScoreStreams} from './authoring.mjs';
+import {parseDocument,preserveDocument,bodySha256,documentSha256} from './tl-document.mjs';
 const hex = bytes => [...new Uint8Array(bytes)].map(x => x.toString(16).padStart(2, '0')).join('');
 
 function spatialWorker(engine, recordText, inspection, timeoutMs) {
@@ -103,7 +104,7 @@ self.onmessage = async ({ data }) => {
       const events = listing.stdout.split('\n').filter(line => /^(EVENT|GEN_EVENT) /.test(line));
       if (events.length > 20000) throw Error('Note preview exceeds the 20,000-event display limit. Load the song to listen.');
       self.postMessage({type:'inspection', verdict:'valid', info, events:events.map(row), eventsError:null,
-        sourceRecordSha256:hex(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(recordText))),
+        sourceRecordSha256:await bodySha256(recordText),metadata:parseDocument(recordText).metadata,
         engineId:engine.id, engineIdentity:engine.identity});
       return;
     }
@@ -128,14 +129,14 @@ self.onmessage = async ({ data }) => {
       // transform itself then verifies both original partitions before editing.
       const source = await execute(module, ['--play-once', 'record.tl', '--merged', 'canonical.tl'], {'record.tl':recordText});
       if (source.code) { self.postMessage({...source, canonical:new Uint8Array(), pcm:null, verdict:verdict(source)}); return; }
-      sourceRecordSha256 = hex(await crypto.subtle.digest('SHA-256', source.canonical));
+      sourceRecordSha256 = await bodySha256(source.canonical);
       source.pcm = null;
       const arguments_ = ['--keys-profile', String(profile.halfWidth), '--merged', 'canonical.tl'];
       if (profile.mirror) arguments_.push('--keys-mirror');
       if (profile.levelPolicy === 'carrier-bound') arguments_.push('--keys-carrier-bound');
       const derived = await execute(module, [...arguments_, '--', 'record.tl'], {'record.tl':recordText});
       if (derived.code) { self.postMessage({...derived, canonical:new Uint8Array(), pcm:null, verdict:verdict(derived)}); return; }
-      renderText = new TextDecoder('utf-8', {fatal:true}).decode(derived.canonical);
+      renderText = new TextDecoder('utf-8', {fatal:true,ignoreBOM:true}).decode(derived.canonical);
       checkRecord(renderText);
       const summary = row(derived.stdout.split('\n').find(line => line.startsWith('PROFILE ')) || '');
       const sourceSummary = row(derived.stdout.split('\n').find(line => line.startsWith('PROFILE_SOURCE ')) || '');
@@ -173,9 +174,11 @@ self.onmessage = async ({ data }) => {
     const metricsLine = lines.find(x => x.startsWith('METRICS ')) || '';
     const play = row(playLine), metrics = row(metricsLine);
     if (verdict(result) !== 'valid') result.canonical = new Uint8Array();
-    const recordSha256 = result.canonical.length ? hex(await crypto.subtle.digest('SHA-256', result.canonical)) : null;
+    if (result.canonical.length) result.canonical = new TextEncoder().encode(preserveDocument(renderText,result.canonical));
+    const recordSha256 = result.canonical.length ? await bodySha256(result.canonical) : null;
+    const documentSha = result.canonical.length ? await documentSha256(result.canonical) : null;
     const value = { ...result, verdict: verdict(result), mode, info, play, metrics, playLine, metricsLine,
-      recordSha256, pcmHash: play.hash || null, engineIdentity: engine.identity, engineId: engine.id,
+      recordSha256, documentSha256:documentSha, metadata:parseDocument(renderText).metadata, pcmHash: play.hash || null, engineIdentity: engine.identity, engineId: engine.id,
       rendererRelease: engine.release_id || null, development: engine.development ?? !engine.release_id,
       ...(profile ? {profile:profileResult, sourceRecordSha256} : {}),
       events: listing.stdout.split('\n').filter(x => /^(EVENT|GEN_EVENT) /.test(x)).map(row),

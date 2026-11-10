@@ -107,7 +107,7 @@ enum InstrPatchIO {
     /// The third value is the canonical round-trip label check (instrDropped).
     @MainActor static func loadPatch0(paths: [String]) -> Result<(PatchLines, String, String), InstrError> {
         var err = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
-        let p = withCStrings(paths) { fms_player_open($0, Int32(paths.count), &err, err.count) }
+        let p = TLDocumentMetadata.open(paths: paths, error: &err)
         guard let p else { return .failure(InstrError(instrCStr(err))) }
         defer { fms_player_close(p) }
         var info = fms_info_t()
@@ -163,7 +163,7 @@ enum InstrPatchIO {
         let record = dir.appendingPathComponent("source.tl")
         try patchRecordBody(authored, name: name).write(to: record, atomically: true, encoding: .utf8)
         var err = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
-        guard let player = withCStrings([record.path], { fms_player_open($0, 1, &err, err.count) }) else { throw InstrError(instrCStr(err)) }
+        guard let player = TLDocumentMetadata.open(paths: [record.path], error: &err) else { throw InstrError(instrCStr(err)) }
         let canonical = PatchLines.read(player, 0, fs: patch.fs); fms_player_close(player)
         guard let original = canonical else { throw InstrError("The export source has no patch.") }
         let source = dir.appendingPathComponent("patch-lines.txt")
@@ -211,7 +211,7 @@ enum InstrPatchIO {
             catch { return "save: \(error.localizedDescription)" }
             defer { try? FileManager.default.removeItem(at: temp) }
             var err = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
-            guard let player = withCStrings([temp.path], { fms_player_open($0, 1, &err, err.count) }) else {
+            guard let player = TLDocumentMetadata.open(paths: [temp.path], error: &err) else {
                 return "save: " + instrCStr(err)
             }
             defer { fms_player_close(player) }
@@ -289,7 +289,7 @@ enum InstrPatchIO {
             if t.count == 2, t[0] == "hash" { expected = UInt64(t[1], radix: 16) }
         }
         var err = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
-        guard let p = withCStrings([url.path], { fms_player_open($0, 1, &err, err.count) }) else {
+        guard let p = TLDocumentMetadata.open(paths: [url.path], error: &err) else {
             return "refused: " + instrCStr(err)
         }
         let box = InstrPlayerBox(p)
@@ -329,7 +329,7 @@ enum InstrPatchIO {
             try Data(body.utf8).write(to: url, options: .atomic)
             defer { try? FileManager.default.removeItem(at: url) }
             var err = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
-            guard let p = withCStrings([url.path], { fms_player_open($0, 1, &err, err.count) }) else { throw InstrError(instrCStr(err)) }
+            guard let p = TLDocumentMetadata.open(paths: [url.path], error: &err) else { throw InstrError(instrCStr(err)) }
             defer { fms_player_close(p) }
             let (hash, _) = try renderChecked(p, chunk: 4096)
             return body + "hash " + String(format: "%016llx", hash) + "\n"
@@ -440,7 +440,7 @@ struct PatchWriteback: Sendable {
             throw InstrError("The source files changed; reopen the record before Write Back.")
         }
         var err = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
-        guard let player = InstrPatchIO.withCStrings(origin.paths, { fms_player_open($0, Int32(origin.paths.count), &err, err.count) }) else {
+        guard let player = TLDocumentMetadata.open(paths: origin.paths, error: &err) else {
             throw InstrError(instrCStr(err))
         }
         defer { fms_player_close(player) }
@@ -521,7 +521,7 @@ struct PatchWriteback: Sendable {
                 let url = dir.appendingPathComponent("\(i).tl"); try bytes.write(to: url); scratch.append(url.path)
             }
             var err = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
-            guard let p = InstrPatchIO.withCStrings(scratch, { fms_player_open($0, Int32(scratch.count), &err, err.count) }) else {
+            guard let p = TLDocumentMetadata.open(paths: scratch, error: &err) else {
                 throw InstrError("Candidate refused; no source files changed: " + instrCStr(err))
             }
             defer { fms_player_close(p) }

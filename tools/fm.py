@@ -101,6 +101,29 @@ def clean(value):
     return value
 
 
+def tl_document_module():
+    """Load the same reusable helper when fm itself was imported by path."""
+    name = "fm_tl_document"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, ROOT / "tools/tl_document.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules[name] = module
+    return sys.modules[name]
+
+
+def body_sha256(data):
+    document = tl_document_module()
+    try:
+        return document.body_sha256(data)
+    except document.DocumentError as error:
+        raise ToolError("invalid retained TL artifact: " + str(error), 5) from error
+
+
+def canonical_body(accepted):
+    return tl_document_module().parse_document(accepted["canonical"].encode("utf-8"))["body"].decode("utf-8")
+
+
 def receipts_module():
     name = "fm_operation_receipts"
     state_name = "_fm_operation_receipts_import_state"
@@ -136,7 +159,7 @@ def receipt_arguments(value):
 
 
 def operation_provenance(kwargs, operation=None):
-    sources = ("tools/fm.py", "tools/catalog.py", "tools/receipts.py", "tools/session.py",
+    sources = ("tools/fm.py", "tools/tl_document.py", "tools/catalog.py", "tools/receipts.py", "tools/session.py",
                "tools/music/analyze.py", "tools/music/compose.py", "data/recipes.txt",
                "tools/music/midi2tl.py", "data/tables.txt", "src/gen/params.def")
     if operation in ("compose", "score_inspect", "score_revise"):
@@ -541,26 +564,63 @@ def input_files(files=None, text=None):
             raise ToolError(logical(str(error)), error.exit, **logical(error.details)) from error
 
 
+def document_header(files):
+    """Validate bounded descriptive inputs before any native operation."""
+    document = tl_document_module()
+    try:
+        headers = [document.parse_document(document.read_bounded(path))["header"] for path in files]
+    except document.DocumentError as error:
+        raise ToolError(str(error), 2) from error
+    require(not any(headers[1:]), "TL document header must occur in the first input file", 2)
+    return headers[0] if headers else b""
+
+
+def read_native_document(path):
+    fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    with os.fdopen(fd, "rb") as stream:
+        require(stat.S_ISREG(os.fstat(stream.fileno()).st_mode), "native TL output is not a regular file", 5)
+        data = stream.read(tl_document_module().MAX_BYTES + 1)
+    require(len(data) <= tl_document_module().MAX_BYTES, "native TL output exceeds document limit", 5)
+    return data
+
+
+def verify_native_document(data, body, expected_header):
+    document = tl_document_module()
+    try:
+        parsed, parsed_body = document.parse_document(data), document.parse_document(body)
+    except document.DocumentError as error:
+        raise ToolError("invalid native TL output: " + str(error), 5) from error
+    require(not parsed_body["header"] and parsed["body"] == body,
+            "native canonical document/body outputs disagree", 5)
+    require(parsed["header"] == expected_header, "native output did not preserve the TL header", 5)
+    return parsed
+
+
 def native_render(native, files, want_wav=False):
     require(files, "render needs at least one input", 2)
+    document = tl_document_module()
+    expected_header = document_header(files)
     with tempfile.TemporaryDirectory(prefix="fm-") as temporary:
         directory = Path(temporary)
-        record, wav = directory / "canonical.tl", directory / "render.wav"
-        args = ["--play", "--metrics", "--merged", record]
+        record, body_path, wav = directory / "canonical.tl", directory / "body.tl", directory / "render.wav"
+        args = ["--play", "--metrics", "--merged", record, "--merged-body", body_path]
         if want_wav:
             args += ["--wav", wav]
         result = native.run([*args, "--", *files])
         if result.returncode not in (0, 3):
             raise ToolError("native render failed", result.returncode, refusals=[refusal(result.stderr)],
                             native=native.identity, stdout=result.stdout, stderr=result.stderr)
-        data = record.read_bytes()
-        rows = native.metadata.canonical(data)
+        data, body = read_native_document(record), read_native_document(body_path)
+        parsed_document = verify_native_document(data, body, expected_header)
+        rows = native.metadata.canonical(body)
         parsed = play_fields(result.stdout)
         reply = RenderReply(version=1, ok=True, exit=result.returncode, native=native.identity,
                             **parsed, record=None, wav=None,
-                            record_sha256=sha(data), wav_sha256=None, canonical=data.decode("utf-8"))
+                            record_sha256=sha(body), document_sha256=sha(data), metadata=parsed_document["metadata"],
+                            tl_version=parsed_document["tl_version"], engine_version=parsed_document["engine_version"],
+                            wav_sha256=None, canonical=data.decode("utf-8"))
         reply["_play"] = parsed
-        reply["_record_bytes"], reply["_rows"] = data, rows
+        reply["_record_bytes"], reply["_body_bytes"], reply["_rows"] = data, body, rows
         if want_wav:
             reply["_wav_bytes"] = wav.read_bytes()
             reply["wav_sha256"] = sha(reply["_wav_bytes"])
@@ -880,6 +940,7 @@ def artifact_read(directory, kind, digest, offset=0, length=8192, *, filename=No
         elif kind == "session_manifest":
             path, mime = Path(directory) / "manifest.json", "application/json"
     whole = hashlib.sha256()
+    record_chunks = [] if kind == "record" else None
     size, chunks, signature = 0, [], b""
     decoder = codecs.getincrementaldecoder("utf-8")("strict") if encoding == "utf8" else None
     invalid_utf8 = False
@@ -894,6 +955,9 @@ def artifact_read(directory, kind, digest, offset=0, length=8192, *, filename=No
             if size == 0:
                 signature = block[:8]
             whole.update(block)
+            if record_chunks is not None:
+                require(size + len(block) <= tl_document_module().MAX_BYTES, "retained TL exceeds document limit", 5)
+                record_chunks.append(block)
             if decoder is not None and not invalid_utf8:
                 try:
                     decoder.decode(block, final=False)
@@ -905,6 +969,8 @@ def artifact_read(directory, kind, digest, offset=0, length=8192, *, filename=No
             size += len(block)
     require(offset <= size, "offset exceeds artifact size", 2)
     require(whole.hexdigest() == digest, "retained artifact SHA256 differs", 5)
+    if record_chunks is not None:
+        body_sha256(b"".join(record_chunks))  # Validate framing/metadata; transport identity covers the complete file.
     require(kind != "png" or signature == b"\x89PNG\r\n\x1a\n", "retained artifact is not a PNG", 5)
     data = b"".join(chunks)
     if decoder is not None:
@@ -949,8 +1015,13 @@ def read_log(directory, verify=True):
                 continue
             require(re.fullmatch(r"[0-9a-f]{64}", digest), "invalid take artifact identity", 5)
             if verify:
-                data = workspace_path(directory / folder / (digest + suffix)).read_bytes()
-                require(sha(data) == digest, "take artifact digest mismatch: " + digest, 5)
+                path = workspace_path(directory / folder / (digest + suffix))
+                try:
+                    data = tl_document_module().read_bounded(path) if field == "record_sha256" else path.read_bytes()
+                except tl_document_module().DocumentError as error:
+                    raise ToolError("invalid retained TL artifact: " + str(error), 5) from error
+                actual = body_sha256(data) if field == "record_sha256" else sha(data)
+                require(actual == digest, "take artifact digest mismatch: " + digest, 5)
     return rows
 
 
@@ -1375,6 +1446,16 @@ def native_receipt_failure(full):
     return reply
 
 
+def record_artifact(reply):
+    """Keep body-keyed storage names while artifact digests identify full bytes."""
+    path = Path(reply["record"])
+    digest = reply.get("document_sha256", reply["record_sha256"])
+    locator = dict(directory=str(path.parent.parent), kind="record", digest=digest, encoding="utf8")
+    if digest != reply["record_sha256"]:
+        locator.update(directory=str(path.parent), filename=path.name)
+    return locator
+
+
 def native_outcome(full, arguments, operation):
     """Bound explicit native outcomes after the existing public error mapping.
 
@@ -1401,8 +1482,7 @@ def native_outcome(full, arguments, operation):
     omitted = ["canonical"] if "canonical" in full else []
     artifact = None
     if published:
-        artifact = dict(directory=str(Path(full["record"]).parent.parent), kind="record",
-                        digest=full["record_sha256"], encoding="utf8")
+        artifact = record_artifact(full)
     reply.update(detail="compact", canonical=None,
                  canonical_bytes=len(canonical.encode("utf-8")) if isinstance(canonical, str) else None,
                  full_result_sha256=sha(document), full_result_bytes=len(document),
@@ -1647,8 +1727,7 @@ def compose(score=None, *, source_ref=None, log, harness=None, parent_record=Non
         retained = retain(candidate, native, log=log, parent_record=parent_record, note_text=note_text)
         result.update(clean(retained))
         result.update(publication_state="complete", published=True,
-                      artifact=dict(directory=str(Path(retained["record"]).parent.parent), kind="record",
-                                    digest=retained["record_sha256"], encoding="utf8"))
+                      artifact=record_artifact(retained))
     except (Exception, SystemExit) as error:
         if module is not None and isinstance(error, module.ScoreError):
             result.update(ok=False, exit=2, message=str(error), **error.details)
@@ -1983,7 +2062,8 @@ def resolve_source(source, native, wav=False):
 
 def edit_canonical(accepted, changes):
     """Edit returned physical field references; native validation remains next."""
-    lines = [line.split() for line in accepted["canonical"].splitlines()]
+    document = tl_document_module().parse_document(accepted["canonical"].encode("utf-8"))
+    lines = [line.split() for line in document["body"].decode("utf-8").splitlines()]
     rows = {r["line_index"]: r for r in accepted.get("_rows", accepted.get("rows", []))}
     require(rows, "canonical editing needs the returned row inventory", 2)
     for change in changes:
@@ -2000,8 +2080,11 @@ def edit_canonical(accepted, changes):
             lines[index][token] = component + "=" + value
         else:
             lines[index][token] = value
-    return ("\n".join(" ".join(line) for i, line in enumerate(lines)
+    body = ("\n".join(" ".join(line) for i, line in enumerate(lines)
                        if rows.get(i, {}).get("id") != "header_hash") + "\n").encode("utf-8")
+    result = document["header"] + body
+    tl_document_module().parse_document(result)
+    return result
 
 
 def isolated_patch(native, accepted, patch, note=None, fs=None):
@@ -2026,7 +2109,7 @@ def isolated_patch(native, accepted, patch, note=None, fs=None):
     if not isinstance(mhz, int) or not analysis.BAND[0] * 1000 <= mhz < fs * 500:
         return dict(measured=False, profile=profile, values=None,
                     reason="note is outside the descriptor measurement band")
-    pairs = list(zip(rows, accepted["canonical"].splitlines()))
+    pairs = list(zip(rows, canonical_body(accepted).splitlines()))
     selected = [(r, line.split()) for r, line in pairs
                 if (r["section"] == "patch" and r["raw"].get("PATCH") == patch)
                 or r["section"] == "asset" or (r["section"] == "generator" and r["id"] != "gen_lane")]
@@ -2790,12 +2873,17 @@ def _find_describe_worker(harness, query):
         compose.build = lambda: None  # Native already verified the selected executable.
 
         def play(files, wav=None, merged=None):
-            args = ["--play"]
-            if wav:
-                args += ["--wav", wav]
-            if merged:
-                args += ["--merged", merged]
-            result = native.run([*args, "--", *files])
+            expected_header = document_header(files)
+            with tempfile.TemporaryDirectory(prefix="fm-find-body-") if merged else contextlib.nullcontext() as temporary:
+                args = ["--play"]
+                if wav:
+                    args += ["--wav", wav]
+                if merged:
+                    body_path = Path(temporary) / "body.tl"
+                    args += ["--merged", merged, "--merged-body", body_path]
+                result = native.run([*args, "--", *files])
+                if merged and result.returncode in (0, 3):
+                    verify_native_document(read_native_document(merged), read_native_document(body_path), expected_header)
             lines = [line for line in result.stdout.splitlines() if line.startswith("PLAY ")]
             if result.returncode == 5:
                 raise ToolError(result.stderr.strip() or "native render failed", 5)

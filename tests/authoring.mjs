@@ -45,6 +45,9 @@ const note = (at=0, duration=1, voice=0) => ({kind:'note',at,duration,voice,stre
   assert.throws(()=>selectScoreStreams(lane,{soloStreams:['first']},{engine}),/generator/);
 }
 const cases = [];
+const metadataCase=base();metadataCase.metadata={title:'Portable score',made_by:'agent',model:{id:'fixture/v1',source:'client-reported'},tempo:{min_bpm:90,max_bpm:120}};
+metadataCase.events=[note()];cases.push(metadataCase);
+
 for (const ramp of ['step','linear']) {
   for (const quarters of [4, '7/2', '1/4096']) {
     const s = base(); s.clock = {bars:3,meter:[{bar:1,quarters},{bar:3,quarters:3}],

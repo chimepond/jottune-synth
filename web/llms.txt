@@ -21,3 +21,5 @@ local. This player does not upload songs.
 Use the quickstart's online setup before offline work. A render with a computed
 hash is not full verification. Score solo/mute is a rerender through effects,
 not additive mix stems. No genre, loudness or width target is prescribed.
+
+- Portable TL document format and metadata: tl-format.txt

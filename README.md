@@ -90,3 +90,23 @@ retain their own notices, including the Michroma font's
 SIL Open Font License. Separately submitted music retains its declared terms.
 
 JotTune Synth was developed with AI assistance.
+
+## Portable song metadata
+
+A song can carry a bounded, versioned metadata header in the same readable TL
+file. Existing headerless records remain supported. The musical body determines
+the song ID; changing descriptive metadata changes the document checksum without
+creating another song. Both current compatibility counters are 1. Newer required
+TL or engine versions are refused, alongside the existing exact engine and saved
+audio checks. See [the portable TL format](docs/TL-FORMAT.md).
+
+```sh
+python3 -I -B tools/tl_document.py validate song.tl
+python3 -I -B tools/tl_document.py pack body.tl --metadata song.json --out portable.tl
+```
+
+The metadata JSON is optional input while authoring; the resulting portable TL
+needs no sidecar to play or retain those declarations. Score JSON accepts the
+same optional `metadata` object. `--merged` exports a complete document; the
+explicit `--merged-body` option exports native music only. Publication consent,
+moderation and withdrawal authority remain separate platform records.

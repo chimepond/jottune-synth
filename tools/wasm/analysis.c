@@ -37,7 +37,7 @@ int main(int argc, char **argv)
     }
     /* Full native verification precedes every diagnostic, including a second
      * block partition. The parent also compares PLAY hash to kept-render PCM. */
-    rc = play(files, 1, NULL, NULL, NULL, 0, 0, 1, -1, limit, NULL, -1, 0);
+    rc = play(files, 1, NULL, NULL, NULL, 0, 0, 1, -1, limit, NULL, -1, 0, NULL);
     if (rc) goto cleanup;
     if (fflush(stdout)) { rc = HOST_ERROR; goto cleanup; }
     if (tl->nev) qsort(tl->ev, tl->nev, sizeof *tl->ev, tl_cmp);
@@ -56,6 +56,6 @@ int main(int argc, char **argv)
     rc = tl_write_stems(tl, voices, "dry.wav", -1, 1);
 cleanup:
     free(voices);
-    if (tl) { free(tl->ev); free(tl->ks_pool); free(tl); }
+    if (tl) { free(tl->ev); free(tl->ks_pool); free(tl->document_header); free(tl); }
     return rc;
 }

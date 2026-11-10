@@ -17,7 +17,7 @@ async function boundedText(response) {
   const bytes = new Uint8Array(size);
   let offset = 0;
   for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
-  return new TextDecoder('utf-8', {fatal: true}).decode(bytes);
+  return new TextDecoder('utf-8', {fatal:true,ignoreBOM:true}).decode(bytes);
 }
 
 function httpURL(value, base) {

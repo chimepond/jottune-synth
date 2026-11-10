@@ -5,6 +5,7 @@
 // native harness: node --expose-gc tests/profile_worker.mjs --integration
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
+import {parseDocument,preserveDocument,bodySha256,documentSha256} from '../web/tl-document.mjs';
 import {readFileSync} from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
@@ -43,7 +44,7 @@ async function execute(responses, request = {profile}, configure = {}) {
   const source = readFileSync(new URL('../web/worker.mjs', import.meta.url), 'utf8')
     .replace(/^import .*;\n/gm, '')
     .replaceAll('import.meta.url', JSON.stringify('https://player.invalid/prefix/web/worker.mjs'));
-  const context = {self,options,checkRecord,checkInspection,verification,row,verdict,
+  const context = {parseDocument,preserveDocument,bodySha256,documentSha256,self,options,checkRecord,checkInspection,verification,row,verdict,
     compileScore,selectScoreStreams,validateSpatial,inspectSpatial:async()=>({spatial:null,spatialModule:null,spatialError:null}),
     TextEncoder,TextDecoder,URL,crypto:webcrypto, Uint8Array,setTimeout,clearTimeout,
     WebAssembly:{Module:WebAssembly.Module,compile: async () => ({testModule:true})},

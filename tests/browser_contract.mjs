@@ -2429,7 +2429,7 @@ test('Media Session mirrors the loaded song, and its actions use the same transp
 });
 
 test('browser profile bounds UTF-8 bytes and native-inspected duration', () => {
-  checkRecord('x'.repeat(limits.recordBytes));
+  checkRecord(('x'.repeat(999)+'\n').repeat(limits.recordBytes/1000));
   assert.throws(() => checkRecord('x'.repeat(limits.recordBytes + 1)), /1 MB/);
   assert.throws(() => checkRecord('€'.repeat(400000)), /1 MB/);
   const info = {length_ns: '300000000000', pcm_bytes: '1000', render_bytes_lower_bound: '3000'};

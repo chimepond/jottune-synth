@@ -907,6 +907,36 @@ private struct Probe {
             reopened.removeSelected()
             require(reopened.records.isEmpty, "remove retained copy")
             require(try Data(contentsOf: source) == bytes, "remove preserves original file")
+            let portableHeader = Data("# jottune-tl 1 1\n# {\"title\":\"Portable local test\"}\n# end-jottune-tl\n".utf8)
+            let portableSource = localDir.appendingPathComponent("portable.tl")
+            let portableBytes = portableHeader + bytes
+            try portableBytes.write(to: portableSource)
+            let bodyWork = try RecordWork()
+            let canonicalBody = try RecordDocument.canonical(data: portableBytes, work: bodyWork, bodyOnly: true)
+            if let task = local.importFile(portableSource) { await task.value }; await loaded()
+            require(local.records.count == 1 && local.records[0].id == LocalRecordStore.digest(canonicalBody), "portable import uses canonical body identity")
+            require(try Data(contentsOf: URL(fileURLWithPath: engine.loadedPaths[0])) == portableBytes, "portable import retains metadata bytes")
+            let portableExport = localDir.appendingPathComponent("portable-export.tl")
+            if let task = local.export(to: portableExport) { await task.value }
+            require(try Data(contentsOf: portableExport) == portableBytes, "portable export retains metadata bytes")
+            try (Data("# jottune-tl 1 1\n# {\"title\":\"Changed title\"}\n# end-jottune-tl\n".utf8) + bytes).write(to: portableSource)
+            if let task = local.importFile(portableSource) { await task.value }; await loaded()
+            require(local.records.count == 1 && local.records[0].id == LocalRecordStore.digest(canonicalBody), "metadata-only reimport keeps body identity")
+            require(try Data(contentsOf: URL(fileURLWithPath: engine.loadedPaths[0])) == portableBytes, "metadata-only reimport retains existing copy")
+            let portableSerial = engine.loadID
+            try (Data("# jottune-tl 1 2\n# {}\n# end-jottune-tl\n".utf8) + bytes).write(to: portableSource)
+            if let task = local.importFile(portableSource) { await task.value }
+            require(local.records.count == 1 && engine.loadID == portableSerial && local.status.hasPrefix("Import refused"), "future engine requirement cannot replace local song")
+            for payload in [#"{"title":"A","title":"B"}"#, #"{"extra":1}"#, #"{"title":"\#(String(repeating: "x", count: 61))"}"#] {
+                try (Data("# jottune-tl 1 1\n# \(payload)\n# end-jottune-tl\n".utf8) + bytes).write(to: portableSource)
+                if let task = local.importFile(portableSource) { await task.value }
+                require(local.records.count == 1 && engine.loadID == portableSerial && local.status.hasPrefix("Import refused"), "invalid metadata cannot replace local song")
+            }
+            engine.open(paths: [portableSource.path], title: "invalid metadata"); await loaded()
+            require(engine.info == nil && engine.errorText?.contains("metadata:") == true, "direct native record open validates metadata schema")
+            local.openSelected(); await loaded()
+            local.removeSelected()
+            require(local.records.isEmpty, "portable retained copy removes cleanly")
             if sourcePath == nil {
                 // A two-file piece (session.tl + notes.tl), built like tests/decode_cli.py.
                 let lines = try String(contentsOf: engine.recordsRoot.appendingPathComponent("tests/golden/48000/sine.tl"), encoding: .utf8)
@@ -922,6 +952,12 @@ private struct Probe {
                 require(engine.info != nil && engine.loadedPaths.count == 2 && events.count == 2, "two-file piece opens")
                 if let task = local.export(to: localDir.appendingPathComponent("piece-export.wav"), wav: true) { await task.value }
                 require(local.status == "Exported the record's offline WAV.", "two-file piece exports WAV: \(local.status)")
+                let sessionBytes = try Data(contentsOf: session)
+                try (portableHeader + sessionBytes).write(to: session)
+                engine.open(paths: [session.path, notes.path], title: "portable piece"); await loaded()
+                let pooledExport = localDir.appendingPathComponent("piece-export.tl")
+                if let task = local.export(to: pooledExport) { await task.value }
+                require(try Data(contentsOf: pooledExport).starts(with: portableHeader), "pooled TL export preserves one metadata header")
             }
         } catch { fail("LOCALFILES \(error)") }
         if !originalPaths.isEmpty {

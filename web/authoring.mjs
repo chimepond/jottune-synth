@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Nenad Micic
 // SPDX-License-Identifier: Apache-2.0
+import {parseDocument,composeDocument,validateMetadata} from './tl-document.mjs';
 // Score-v1 authoring adapter. Contracts: tools/score.py and tools/music/compose.py.
 // This writes TL; it never reads TL or substitutes for native validation.
 const encoder = new TextEncoder();
@@ -295,7 +296,8 @@ export function selectScoreStreams(input, selection, options = {}) {
 export function compileScore(input, {engine, statements} = {}) {
   const score = snapshot(input);
   requireValue(object(score) && score.version === 1, 'Only score version 1 is supported; versions 2 and 3 require the local compiler.', '/version');
-  closed(score, ['version', 'fs', 'clock', 'declarations', 'streams', 'voices', 'events'], '', ['name', 'about']);
+  closed(score, ['version', 'fs', 'clock', 'declarations', 'streams', 'voices', 'events'], '', ['name', 'about', 'metadata']);
+  if (Object.hasOwn(score,'metadata')) validateMetadata(score.metadata);
   requireValue([44100, 48000].includes(score.fs), 'fs must be 44100 or 48000.', '/fs');
   text(engine, '/engine', {single: true, nonempty: true});
   requireValue(!engine.includes('#'), 'Engine identity must be the selected renderer descriptor.', '/engine');
@@ -309,6 +311,7 @@ export function compileScore(input, {engine, statements} = {}) {
   requireValue(new Set(score.streams).size === score.streams.length, 'Streams must be distinct.', '/streams');
   const clock = clockOf(score.clock);
   const declarations = text(score.declarations, '/declarations').replaceAll('\r\n', '\n');
+  requireValue(!declarations.split('\n').some(line=>/^[ \t]*#[ \t]*(?:jottune-tl|end-jottune-tl)\b/.test(line)), 'Metadata belongs in score.metadata, before the native timeline.', '/declarations');
   requireValue(!declarations.includes('\r'), 'Declarations contain a lone CR.', '/declarations');
   if (statements !== undefined) requireValue(Array.isArray(statements), 'statements must be native STATEMENT rows.', '/statements');
   const allowed = new Set(statements === undefined ? DECLARATIONS : statements.filter(row => row.row === 'STATEMENT' && row.section !== 'event').map(row => row.name));
@@ -363,6 +366,10 @@ export function compileScore(input, {engine, statements} = {}) {
     bytes += encoder.encode(line + '\n').length;
     requireValue(bytes <= 4194304, 'Authored TL exceeds 4 MiB.', pointer);
     lines.push(line); sourceMap.push({line:lines.length, pointer, role, ...context});
+  }
+  if (Object.hasOwn(score,'metadata')) {
+    const header=parseDocument(composeDocument('timeline draft2\n',score.metadata)).header;
+    header.trimEnd().split('\n').forEach(line=>emit(line,'/metadata','metadata'));
   }
   emit('timeline draft2', '/version', 'owned'); emit('engine ' + engine, '', 'owned_engine');
   emit('fs ' + score.fs, '/fs', 'owned'); emit('length_ns ' + clock.length, '/clock', 'owned');

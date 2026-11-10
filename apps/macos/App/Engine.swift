@@ -517,11 +517,7 @@ struct OfflineBlock {
             l.title = title
             l.paths = paths
             var err = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
-            let cstrs = paths.map { strdup($0) }
-            defer { cstrs.forEach { free($0) } }
-            let p: OpaquePointer? = cstrs.map { UnsafePointer($0) }.withUnsafeBufferPointer { buf in
-                fms_player_open(buf.baseAddress, Int32(buf.count), &err, err.count)
-            }
+            let p = TLDocumentMetadata.open(paths: paths, error: &err)
             if let p {
                 l.player = p
                 Engine.inspect(p, into: l)
@@ -990,11 +986,7 @@ struct OfflineBlock {
         let expected = info?.have_hash != 0 ? info?.hash_expected : nil
         loader.async {
             var err = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
-            let cstrs = paths.map { strdup($0) }
-            defer { cstrs.forEach { free($0) } }
-            let p: OpaquePointer? = cstrs.map { UnsafePointer($0) }.withUnsafeBufferPointer { buf in
-                fms_player_open(buf.baseAddress, Int32(buf.count), &err, err.count)
-            }
+            let p = TLDocumentMetadata.open(paths: paths, error: &err)
             var hash: UInt64 = 0
             var ok = false
             var summary = ""
@@ -1068,11 +1060,7 @@ struct OfflineBlock {
 
     nonisolated private static func stereoPass(paths: [String], key: Int, window: UInt32, keep: Bool) -> (StereoStrip, [Int16]) {
         var err = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
-        let cstrs = paths.map { strdup($0) }
-        defer { cstrs.forEach { free($0) } }
-        let opened: OpaquePointer? = cstrs.map { UnsafePointer($0) }.withUnsafeBufferPointer { buf in
-            fms_player_open(buf.baseAddress, Int32(buf.count), &err, err.count)
-        }
+        let opened = TLDocumentMetadata.open(paths: paths, error: &err)
         guard let p = opened else {
             return (StereoStrip(key: key, window: window, fs: 0, frames: 0, rows: [], hash: 0, error: String(cString: err)), [])
         }

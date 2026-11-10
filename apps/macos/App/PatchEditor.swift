@@ -443,7 +443,7 @@ struct PatchEditor: View {
         panel.canChooseDirectories = false; panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
         var err = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
-        guard let p = InstrPatchIO.withCStrings([url.path], { fms_player_open($0, 1, &err, err.count) }) else {
+        guard let p = TLDocumentMetadata.open(paths: [url.path], error: &err) else {
             bankError = instrCStr(err); return
         }
         defer { fms_player_close(p) }

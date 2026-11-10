@@ -7,6 +7,7 @@
 // stored, and statements without typed controls stay in this same model.
 
 import Foundation
+import CoreFoundation
 
 struct PatchLines: Equatable, Sendable {
     struct Line: Equatable, Sendable {
@@ -485,5 +486,185 @@ extension PatchLines {
         let at = rows.firstIndex { $0.statement == "wtuse" || $0.statement == "ksource" } ?? rows.endIndex
         rows.insert(contentsOf: bankRows, at: at)
         validate(); return nil
+    }
+}
+
+
+/// Portable metadata is a host concern. The C reader remains authoritative for
+/// musical syntax, engine identity and PCM; this shared gate runs before every
+/// complete-record native open in the app, including patch/file imports.
+enum TLDocumentMetadata {
+    struct Failure: Error, CustomStringConvertible {
+        let description: String
+        init(_ description: String) { self.description = description }
+    }
+    private static let fields: Set<String> = ["title", "collection", "author", "made_by", "genre", "tempo", "model", "utc_day", "license", "renderer_release", "prompt_id"]
+    private static func require(_ accepted: Bool, _ message: String) throws {
+        if !accepted { throw Failure(message) }
+    }
+    private static func reserved(_ line: [UInt8]) -> Bool {
+        var i = 0
+        while i < line.count && [9, 13, 32].contains(line[i]) { i += 1 }
+        guard i < line.count, line[i] == 35 else { return false }
+        i += 1
+        while i < line.count && [9, 13, 32].contains(line[i]) { i += 1 }
+        return line[i...].starts(with: Array("jottune-tl".utf8)) || line[i...].starts(with: Array("end-jottune-tl".utf8))
+    }
+    @discardableResult static func validate(_ data: Data) throws -> Bool {
+        let lines = data.split(separator: 10, omittingEmptySubsequences: false).map { line -> [UInt8] in
+            var bytes = Array(line)
+            if bytes.last == 13 { bytes.removeLast() }
+            return bytes
+        }
+        // Preserve legacy local capacity behavior. A reserved marker anywhere
+        // activates the closed portable contract and cannot hide as a comment.
+        guard lines.contains(where: reserved) else { return false }
+        try require(data.count <= 1_000_000, "Portable TL exceeds 1000000 bytes.")
+        try require(!data.starts(with: [0xef, 0xbb, 0xbf]) && !data.contains(0) && String(data: data, encoding: .utf8) != nil,
+                    "Portable TL needs UTF-8 without BOM or NUL.")
+        try require(lines.allSatisfy { $0.count <= 1022 }, "Portable TL line exceeds 1022 bytes.")
+        let marker = String(bytes: lines[0], encoding: .utf8) ?? ""
+        let tokens = marker.split(separator: " ", omittingEmptySubsequences: false)
+        try require(tokens.count == 4 && tokens[0] == "#" && tokens[1] == "jottune-tl", "Malformed or misplaced portable TL header.")
+        for token in tokens.suffix(2) {
+            let digits = Array(token.utf8)
+            guard let first = digits.first, (49...57).contains(first), digits.allSatisfy({ (48...57).contains($0) }),
+                  let version = UInt32(token) else { throw Failure("TL requirements must be positive uint32 decimal integers.") }
+            try require(version <= 1, "Unsupported TL or engine compatibility requirement.")
+        }
+        var json = Data(), ended: Int?
+        for i in lines.indices.dropFirst() {
+            let line = lines[i]
+            if line == Array("# end-jottune-tl".utf8) { ended = i; break }
+            try require(!reserved(line) && line.starts(with: [35, 32]), "Malformed portable TL metadata framing.")
+            json.append(contentsOf: line.dropFirst(2)); json.append(10)
+        }
+        guard let ended else { throw Failure("Unterminated portable TL metadata header.") }
+        try require(!lines.dropFirst(ended + 1).contains(where: reserved), "Repeated or misplaced portable TL header.")
+        let value: Any
+        do { value = try JSONSerialization.jsonObject(with: json) }
+        catch { throw Failure("Invalid portable TL metadata JSON.") }
+        try uniqueKeys(json)
+        guard let metadata = value as? [String: Any] else { throw Failure("TL metadata must be one object.") }
+        try require(Set(metadata.keys).isSubset(of: fields), "Unknown TL metadata field.")
+        for (field, value) in metadata {
+            switch field {
+            case "title", "collection", "author":
+                guard let text = value as? String else { throw Failure("Invalid \(field) text.") }
+                try require((1...(field == "title" ? 60 : 200)).contains(text.unicodeScalars.count), "Invalid \(field) text length.")
+                try require(text == text.trimmingCharacters(in: .whitespacesAndNewlines) &&
+                            text.utf8.elementsEqual(text.precomposedStringWithCanonicalMapping.utf8),
+                            "\(field) must be NFC text without surrounding whitespace.")
+                try require(!text.unicodeScalars.contains { [.control, .surrogate, .lineSeparator, .paragraphSeparator].contains($0.properties.generalCategory) },
+                            "\(field) contains a control, surrogate or line separator.")
+            case "made_by":
+                try require((value as? String).map { ["agent", "human", "mixed"].contains($0) } == true, "Invalid made_by.")
+            case "genre", "license", "prompt_id":
+                if field == "genre", value is NSNull { continue }
+                try require(label(value), "Invalid \(field) label.")
+            case "renderer_release":
+                try require(label(value, release: true), "Invalid renderer_release.")
+            case "utc_day":
+                try require(validDay(value), "Invalid utc_day calendar date.")
+            case "model":
+                if value is NSNull { continue }
+                guard let model = value as? [String: Any] else { throw Failure("Invalid model object.") }
+                try require(Set(model.keys) == ["id", "source"] && label(model["id"] as Any) &&
+                            (model["source"] as? String).map { ["client-reported", "user-stated"].contains($0) } == true, "Invalid model fields.")
+            case "tempo":
+                if value is NSNull { continue }
+                guard let tempo = value as? [String: Any], Set(tempo.keys) == ["min_bpm", "max_bpm"],
+                      let low = number(tempo["min_bpm"]), let high = number(tempo["max_bpm"]) else { throw Failure("Invalid tempo object or number.") }
+                try require(low <= high, "Tempo minimum exceeds maximum.")
+            default: throw Failure("Unknown TL metadata field.")
+            }
+        }
+        return true
+    }
+    private static func label(_ value: Any, release: Bool = false) -> Bool {
+        guard let text = value as? String else { return false }
+        let bytes = Array(text.utf8)
+        let punctuation = Array((release ? "._-" : "._:+/@-").utf8)
+        return (1...(release ? 128 : 160)).contains(bytes.count) && bytes.allSatisfy {
+            (48...57).contains($0) || (65...90).contains($0) || (97...122).contains($0) || punctuation.contains($0)
+        }
+    }
+    private static func number(_ value: Any?) -> Double? {
+        guard let number = value as? NSNumber, CFGetTypeID(number) != CFBooleanGetTypeID() else { return nil }
+        let result = number.doubleValue
+        return result.isFinite && result > 0 && result <= 9007199254740991 ? result : nil
+    }
+    private static func validDay(_ value: Any) -> Bool {
+        guard let text = value as? String else { return false }
+        let bytes = Array(text.utf8)
+        guard bytes.count == 10, bytes[4] == 45, bytes[7] == 45,
+              bytes.enumerated().allSatisfy({ $0.offset == 4 || $0.offset == 7 || (48...57).contains($0.element) }),
+              let year = Int(text.prefix(4)), let month = Int(text.dropFirst(5).prefix(2)), let day = Int(text.suffix(2)),
+              year > 0, (1...12).contains(month) else { return false }
+        let leap = year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
+        let days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
+        return (1...days[month - 1]).contains(day)
+    }
+    /// Foundation validates JSON syntax, while this iterative token walk checks
+    /// keys before its dictionary conversion can discard duplicate declarations.
+    private static func uniqueKeys(_ json: Data) throws {
+        struct Frame { let object: Bool; var keys: Set<String> = []; var key = true }
+        let bytes = Array(json)
+        var stack: [Frame] = [], i = 0
+        while i < bytes.count {
+            switch bytes[i] {
+            case 123: stack.append(Frame(object: true)); i += 1
+            case 91: stack.append(Frame(object: false)); i += 1
+            case 125, 93:
+                let frame = stack.removeLast()
+                try require(!frame.object || !frame.key || frame.keys.isEmpty, "Trailing comma in TL metadata JSON.")
+                i += 1
+            case 44:
+                if let top = stack.indices.last, stack[top].object { stack[top].key = true }
+                i += 1
+            case 34:
+                let start = i; i += 1
+                while i < bytes.count {
+                    if bytes[i] == 92 { i += 2 }
+                    else if bytes[i] == 34 { i += 1; break }
+                    else { i += 1 }
+                }
+                if let top = stack.indices.last, stack[top].object && stack[top].key {
+                    let key = try JSONSerialization.jsonObject(with: Data(bytes[start..<i]), options: [.fragmentsAllowed]) as! String
+                    try require(stack[top].keys.insert(key).inserted, "Duplicate TL metadata key: \(key)")
+                    stack[top].key = false
+                }
+            default:
+                // Foundation also accepts a UTF-8 BOM and trailing commas;
+                // portable JSON follows the same strict syntax as JSON.parse.
+                try require(bytes[i] < 128 && (bytes[i] >= 32 || [9, 10, 13].contains(bytes[i])), "Invalid TL metadata JSON token.")
+                i += 1
+            }
+        }
+    }
+    static func validate(paths: [String]) throws {
+        var header = false, total = 0
+        for (index, path) in paths.enumerated() {
+            let bytes = try Data(contentsOf: URL(fileURLWithPath: path))
+            total = min(1_000_001, total + min(bytes.count, 1_000_001))
+            if try validate(bytes) {
+                try require(index == 0 && !header, "A record pool permits one metadata header in its first file.")
+                header = true
+            }
+        }
+        try require(!header || total <= 1_000_000, "Portable TL pool exceeds 1000000 bytes.")
+    }
+    static func open(paths: [String], error err: inout [CChar]) -> OpaquePointer? {
+        do { try validate(paths: paths) }
+        catch {
+            for i in err.indices { err[i] = 0 }
+            for (i, byte) in ("metadata: \(error)".utf8.prefix(max(0, err.count - 1))).enumerated() { err[i] = CChar(bitPattern: byte) }
+            return nil
+        }
+        let strings = paths.map { strdup($0) }
+        defer { strings.forEach { free($0) } }
+        return strings.map { UnsafePointer($0) }.withUnsafeBufferPointer {
+            fms_player_open($0.baseAddress, Int32($0.count), &err, err.count)
+        }
     }
 }

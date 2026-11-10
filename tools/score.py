@@ -13,6 +13,7 @@ from collections import defaultdict, deque
 from fractions import Fraction
 import decimal
 import hashlib
+import importlib.util
 import json
 import math
 from pathlib import Path
@@ -21,7 +22,7 @@ import tempfile
 from types import CodeType
 
 SOURCE_LIMIT = 1 << 20
-TL_LIMIT = 4 << 20
+TL_LIMIT = 1_000_000
 EVENT_LIMIT = 8192
 ROW_LIMIT = 16384
 QUARTER_LIMIT = 65536
@@ -221,6 +222,13 @@ def _ordinary_event(event, pointer, source, extent):
     return decoded
 
 
+def document_module():
+    spec = importlib.util.spec_from_file_location("score_tl_document", Path(__file__).with_name("tl_document.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def validate_score(score):
     """Validate closed source shape and cheap bounds without any native/helper work."""
     encoded = source_bytes(score)
@@ -228,7 +236,7 @@ def validate_score(score):
     version3 = type(score) is dict and type(score.get("version")) is int and score["version"] == 3
     phrase_version = type(score) is dict and type(score.get("version")) is int and score["version"] in (2, 3)
     required = ("version", "fs", "clock", "declarations", "streams", "voices", "events")
-    _closed(score, required + (("phrases",) if phrase_version else ()), "", ("name", "about", "regions") if version3 else ("name", "about"))
+    _closed(score, required + (("phrases",) if phrase_version else ()), "", ("name", "about", "regions", "metadata") if version3 else ("name", "about", "metadata"))
     version = 3 if version3 else 2 if phrase_version else 1
     _integer(score["version"], "/version", version, version)
     _integer(score["fs"], "/fs")
@@ -239,7 +247,15 @@ def validate_score(score):
         _require(type(score["about"]) is list, "must be an array", "/about")
         for i, text in enumerate(score["about"]):
             _text(text, "/about/" + str(i), single=True)
+    document = document_module()
+    if "metadata" in score:
+        try:
+            document.validate_metadata(score["metadata"])
+        except ValueError as error:
+            raise ScoreError(str(error), "/metadata") from error
     declarations = _text(score["declarations"], "/declarations").replace("\r\n", "\n")
+    _require(not any(document._recognized(line.encode("utf-8")) for line in declarations.split("\n")),
+             "document headers belong in score metadata, not declarations", "/declarations")
     _require("\r" not in declarations, "declarations contain a lone CR", "/declarations")
     for name, low, high in (("streams", 1, 16), ("voices", 1, 64)):
         _list(score[name], "/" + name, low, high)
@@ -813,7 +829,7 @@ def lower_score(validated, *, composer, engine, statements):
         nonlocal byte_count
         line = text + "\n"
         byte_count += len(line.encode("utf-8"))
-        _require(byte_count <= TL_LIMIT, "authored TL exceeds 4MiB", pointer, authored_tl_bytes=byte_count,
+        _require(byte_count <= TL_LIMIT, "authored TL exceeds 1000000 bytes", pointer, authored_tl_bytes=byte_count,
                  **(context if validated.expansion is not None else {}))
         lines.append(line)
         line_map.append({"line": len(lines), "pointer": pointer, "role": role, **context})
@@ -877,13 +893,24 @@ def lower_score(validated, *, composer, engine, statements):
             add("%d %s %d off" % (end, stream, event["voice"]), pointer, "off", **context)
             event_rows += 1
     text = "".join(lines)
+    document = document_module()
+    try:
+        encoded = (document.compose_document(text.encode("utf-8"), source["metadata"])
+                   if "metadata" in source else text.encode("utf-8"))
+        parsed_document = document.parse_document(encoded)
+    except ValueError as error:
+        raise ScoreError(str(error), "/metadata" if "metadata" in source else "") from error
+    header_lines = parsed_document["header"].count(b"\n")
+    line_map = ([dict(line=i + 1, pointer="/metadata", role="metadata") for i in range(header_lines)] +
+                [dict(row, line=row["line"] + header_lines) for row in line_map])
+    text, byte_count = encoded.decode("utf-8"), len(encoded)
     result = {"authored_tl": text, "authored_tl_bytes": byte_count,
             "authored_tl_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
             "source_sha256": validated.source_sha256, "source_bytes": len(validated.encoded),
             "line_map": line_map, "fs": source["fs"], "length_ns": length,
             "quarter_extent": str(validated.extent),
             "counts": {"input_events": len(validated.events), "authored_event_rows": event_rows,
-                       "authored_lines": len(lines), "expanded_declaration_lines": len(expanded_lines),
+                       "authored_lines": len(lines) + header_lines, "expanded_declaration_lines": len(expanded_lines),
                        "recipes": recipe_count, "streams": len(source["streams"]), "voices": len(source["voices"])}}
     if validated.expansion is not None:
         result.update(validated.expansion)
@@ -1357,6 +1384,7 @@ def score_schema():
                                                        "maximum": 65536 if field == "quarters" else 65537}, field: positive})}
     legacy = obj({"version": {"type": "integer", "const": 1}, "fs": {"type": "integer", "enum": [44100, 48000]},
                 "name": {**single, "minLength": 1}, "about": {"type": "array", "items": single},
+                "metadata": document_module().metadata_schema(),
                 "clock": obj({"bars": {"type": "integer", "minimum": 1, "maximum": QUARTER_LIMIT},
                               "meter": map_schema("quarters"), "tempo": map_schema("bpm"),
                               "ramp": {"type": "string", "enum": ["step", "linear"]},

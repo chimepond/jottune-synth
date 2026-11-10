@@ -11,6 +11,7 @@ Legacy exports without levels remain valid; catalog refresh never renders.
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
+import importlib.util
 import json
 import math
 from pathlib import Path, PurePosixPath
@@ -19,6 +20,10 @@ import shutil
 import subprocess
 import tempfile
 import unicodedata
+
+_spec = importlib.util.spec_from_file_location("export_tl_document", Path(__file__).with_name("tl_document.py"))
+document = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(document)
 
 ROOT = Path(__file__).resolve().parents[1]
 CATALOG_PAGE_SIZE = 24
@@ -49,10 +54,13 @@ def validate_discovery(value, root):
     Missing labels stay absent; a source label is not an independent assessment.
     """
     require(isinstance(value, dict) and {'record_sha256', 'source'} <= set(value) and
-            set(value) <= {'record_sha256', 'source', 'metadata', 'provenance', 'featured', 'showcase'},
+            set(value) <= {'record_sha256', 'document_sha256', 'source', 'metadata', 'provenance', 'featured', 'showcase'},
             'Invalid discovery fields.')
     require(isinstance(value['record_sha256'], str) and re.fullmatch('[a-f0-9]{64}', value['record_sha256']),
             'Discovery requires an exact canonical record SHA-256.')
+    if 'document_sha256' in value:
+        require(isinstance(value['document_sha256'], str) and re.fullmatch('[a-f0-9]{64}', value['document_sha256']),
+                'Discovery full-file checksum is invalid.')
     source = value['source']
     require(isinstance(source, str) and source and not PurePosixPath(source).is_absolute() and
             all(part not in ('', '.', '..') for part in source.split('/')) and '\\' not in source and
@@ -91,6 +99,52 @@ def validate_discovery(value, root):
                     type(editorial['order']) is int and 0 < editorial['order'] <= 9007199254740991 and
                     isinstance(editorial['note'], str) and editorial['note'].strip() and
                     not any(ord(c) < 32 for c in editorial['note']), 'Invalid editorial selection.')
+
+
+def resolve_discovery(song, variant, data, catalog_source):
+    """Keep catalog authority while filling absent declarations from a portable TL."""
+    parsed = document.parse_document(data)
+    existing = variant.get('discovery')
+    if not parsed['header']:
+        require(existing is None or 'document_sha256' not in existing or
+                existing['document_sha256'] == hashlib.sha256(data).hexdigest(),
+                'Discovery full-file checksum differs from TL.')
+        return existing
+    metadata = parsed['metadata']
+    result = json.loads(json.dumps(existing)) if existing is not None else {
+        'record_sha256':document.body_sha256(data), 'source':catalog_source}
+    external = {key:song[key] for key in ('title', 'collection')}
+    labels, provenance = result.get('metadata', {}), result.get('provenance', {})
+    if 'genre' in labels:
+        external['genre'] = labels['genre']['value']
+    if 'tempo' in labels:
+        external['tempo'] = {key:labels['tempo'][key] for key in ('min_bpm', 'max_bpm')}
+    if 'made_by' in provenance:
+        external['made_by'] = provenance['made_by']
+    if 'model' in provenance:
+        external['model'] = {'id':provenance['model'], 'source':provenance['model_source']}
+    for field in metadata.keys() & external.keys():
+        require(metadata[field] == external[field], 'Embedded metadata conflicts with external ' + field + '.')
+    checksum = hashlib.sha256(data).hexdigest()
+    require('document_sha256' not in result or result['document_sha256'] == checksum,
+            'Discovery full-file checksum differs from portable TL.')
+    result['document_sha256'] = checksum
+    labels = result.setdefault('metadata', {})
+    if metadata.get('genre') is not None:
+        labels.setdefault('genre', {'value':metadata['genre'], 'source':'creator-declared'})
+    if metadata.get('tempo') is not None:
+        labels.setdefault('tempo', {**metadata['tempo'], 'source':'creator-declared'})
+    if not labels:
+        result.pop('metadata', None)
+    provenance = result.setdefault('provenance', {})
+    if 'made_by' in metadata:
+        provenance.setdefault('made_by', metadata['made_by'])
+    if metadata.get('model') is not None:
+        provenance.setdefault('model', metadata['model']['id'])
+        provenance.setdefault('model_source', metadata['model']['source'])
+    if not provenance:
+        result.pop('provenance', None)
+    return result
 
 
 def catalog_entries(catalog, root):
@@ -202,7 +256,14 @@ def levels_from_play(play, variant):
 def render_variant(task, directory, harness):
     song, kind, filename, paths = task
     target = directory / filename
-    result = subprocess.run([str(harness), '--play-once', '--merged', str(target), '--', *map(str, paths)],
+    headers = [document.parse_document(path.read_bytes()) for path in paths]
+    portable = [parsed for parsed in headers if parsed['header']]
+    require(len(portable) <= 1, 'A merged variant may carry only one portable metadata header.')
+    body_target = directory / (filename + '.body')
+    command = [str(harness), '--play-once', '--merged', str(target)]
+    if portable:
+        command += ['--merged-body', str(body_target)]
+    result = subprocess.run([*command, '--', *map(str, paths)],
                             capture_output=True, text=True, timeout=600)
     require(result.returncode == 0, f'Native export refused {song}/{kind} (exit {result.returncode}): {result.stderr.strip()[:400]}')
     rows = [line for line in result.stdout.splitlines() if line.startswith('PLAY ')]
@@ -220,10 +281,20 @@ def render_variant(task, directory, harness):
     info = dict(item.split('=', 1) for item in rows[0].split()[1:])
     require(info.get('hash_present') == '1' and info.get('expected_hash') == play['hash'] and
             int(info['fs']) == fs and int(info['frames']) == samples, 'Native inspection disagrees with exported render.')
+    data = target.read_bytes()
+    parsed = document.parse_document(data)
+    require(parsed['header'] == (portable[0]['header'] if portable else b''),
+            'Native full export changed the portable metadata header.')
+    if portable:
+        require(body_target.is_file() and body_target.read_bytes() == parsed['body'],
+                'Native body-only export differs from full-document music body.')
+        body_target.unlink()
     technical = dict(source='native-inspect', channels=int(info['channels']), route=int(info['route']),
                      allocated_voices=int(info['voices']), events=int(info['events']))
     variant = dict(kind=kind, path='songs/' + filename, bytes=target.stat().st_size, duration_seconds=samples / fs,
-                   record_sha256=hashlib.sha256(target.read_bytes()).hexdigest(), technical=technical)
+                   record_sha256=hashlib.sha256(parsed['body']).hexdigest(), technical=technical)
+    if portable:
+        variant['document_sha256'] = hashlib.sha256(data).hexdigest()
     variant['levels'] = levels_from_play(play, variant)
     return song, variant
 
@@ -332,6 +403,8 @@ def catalog_documents(manifest):
         result['id'] = variant['id']
         result.update(variant=variant['kind'], **{key: variant[key] for key in
                       ('path', 'bytes', 'record_sha256', 'duration_seconds', 'technical')})
+        if 'document_sha256' in variant:
+            result['document_sha256'] = variant['document_sha256']
         if 'levels' in variant:
             result['levels'] = variant['levels']
         discovery = variant.get('discovery', {})
@@ -340,7 +413,7 @@ def catalog_documents(manifest):
                 result[key] = discovery[key]
         result['variants'] = [{key: saved[key] for key in
                                ('kind', 'id', 'path', 'bytes', 'duration_seconds', 'record_sha256',
-                                'technical', 'discovery', 'levels') if key in saved}
+                                'technical', 'discovery', 'levels', 'document_sha256') if key in saved}
                               for saved in song['variants']]
         if note:
             result['note'] = note
@@ -462,10 +535,12 @@ def export_library(catalog, output, harness, *, root=ROOT, jobs=1):
             for variant in song['variants']:
                 result = results[(song['id'], variant['kind'])]
                 result['id'] = variant['id']
-                if 'discovery' in variant:
-                    require(variant['discovery']['record_sha256'] == result['record_sha256'],
+                discovery = resolve_discovery(song, variant, (staged / result['path']).read_bytes(),
+                                              Path(catalog).resolve().relative_to(root).as_posix())
+                if discovery is not None:
+                    require(discovery['record_sha256'] == result['record_sha256'],
                             'Discovery identity does not match canonical variant: ' + song['id'] + '/' + variant['kind'])
-                    result['discovery'] = variant['discovery']
+                    result['discovery'] = discovery
         songs = [{**{key:song[key] for key in ('id','title','collection')},
                   'revision':song.get('revision', 'Published'),
                   'variants':[results[(song['id'], variant['kind'])] for variant in song['variants']]}
@@ -489,6 +564,8 @@ def check_output(catalog, output, *, root=ROOT, check_browse=True, check_discove
             isinstance(manifest['songs'], list) and len(manifest['songs']) == len(source['songs']),
             'Generated song catalog is incomplete or invalid.')
     filenames = {(song, kind):filename for song, kind, filename, _ in tasks}
+    source_headers = {(song, kind):[document.parse_document(path.read_bytes())['header'] for path in paths]
+                      for song, kind, _, paths in tasks}
     require((output / 'songs').is_dir() and {path.name for path in (output / 'songs').iterdir()} == set(filenames.values()),
             'Generated song files are incomplete or unexpected.')
     for song, generated in zip(source['songs'], manifest['songs']):
@@ -500,20 +577,33 @@ def check_output(catalog, output, *, root=ROOT, check_browse=True, check_discove
                 'Generated song metadata or variants differ from the source catalog.')
         for variant, generated_variant in zip(song['variants'], generated['variants']):
             fields = {'kind', 'id', 'path', 'bytes', 'duration_seconds', 'record_sha256', 'technical'}
-            if isinstance(generated_variant, dict) and 'discovery' in (variant if check_discovery else generated_variant):
+            path = output / 'songs' / filenames[(song['id'], variant['kind'])]
+            require(not path.is_symlink() and path.is_file(), 'Generated canonical TL is missing or a symlink.')
+            data = path.read_bytes()
+            parsed = document.parse_document(data)
+            headers = [header for header in source_headers[(song['id'], variant['kind'])] if header]
+            require(len(headers) <= 1 and parsed['header'] == (headers[0] if headers else b''),
+                    'Generated portable header differs from its source document.')
+            expected_discovery = resolve_discovery(song, variant, data, Path(catalog).resolve().relative_to(root).as_posix())
+            if isinstance(generated_variant, dict) and (expected_discovery is not None if check_discovery else 'discovery' in generated_variant):
                 fields.add('discovery')
+            if parsed['header']:
+                fields.add('document_sha256')
             require(isinstance(generated_variant, dict) and fields <= set(generated_variant) <= fields | {'levels'} and
                     generated_variant['kind'] == variant['kind'] and generated_variant['id'] == variant['id'] and
                     generated_variant['path'] == 'songs/' + filenames[(song['id'], variant['kind'])] and
-                    (not check_discovery or generated_variant.get('discovery') == variant.get('discovery')),
+                    (not check_discovery or generated_variant.get('discovery') == expected_discovery),
                     'Generated variant identity or discovery differs from the source catalog.')
             path = output / generated_variant['path']
             require(not path.is_symlink() and path.is_file(), 'Generated canonical TL is missing or a symlink.')
             data = path.read_bytes()
             require(type(generated_variant['bytes']) is int and generated_variant['bytes'] == len(data) and
-                    generated_variant['record_sha256'] == hashlib.sha256(data).hexdigest() and
+                    generated_variant['record_sha256'] == hashlib.sha256(parsed['body']).hexdigest() and
                     ('discovery' not in variant or variant['discovery']['record_sha256'] == generated_variant['record_sha256']),
                     'Generated canonical TL size or SHA-256 differs from its catalog identity.')
+            if parsed['header']:
+                require(generated_variant['document_sha256'] == hashlib.sha256(data).hexdigest(),
+                        'Generated portable TL full-file checksum differs.')
             if 'discovery' in generated_variant:
                 validate_discovery(generated_variant['discovery'], root)
                 require(generated_variant['discovery']['record_sha256'] == generated_variant['record_sha256'],
@@ -572,8 +662,10 @@ def refresh_metadata(catalog, output, *, root=ROOT):
     manifest = check_output(catalog, output, root=root, check_browse=False, check_discovery=False)
     for song, generated in zip(value['songs'], manifest['songs']):
         for variant, generated_variant in zip(song['variants'], generated['variants']):
-            if 'discovery' in variant:
-                generated_variant['discovery'] = variant['discovery']
+            discovery = resolve_discovery(song, variant, (output / generated_variant['path']).read_bytes(),
+                                          Path(catalog).resolve().relative_to(root).as_posix())
+            if discovery is not None:
+                generated_variant['discovery'] = discovery
             else:
                 generated_variant.pop('discovery', None)
     with tempfile.TemporaryDirectory(prefix='.metadata-export-', dir=output) as directory:

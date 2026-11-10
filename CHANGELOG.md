@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add portable TL metadata headers with uint32 format/engine requirements, strict bounded validation, stable music-body IDs and full-document preservation. Existing archive files and PCM hashes remain unchanged.
+
 - `wav2tl` exits 4 without claiming a written draft when its native budget stops
   before publication. Plain `transcribe` retains its partial-progress contract.
   Strict mode refuses a recipe fallback warning before another child can publish.

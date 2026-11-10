@@ -1026,7 +1026,7 @@ struct InstrPatchJournal {
     private func readPatch(_ url: URL, index: Int?, expectedName: String? = nil) -> Result<OpenedPatch?, InstrError> {
         var err = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
         let path = url.standardizedFileURL.path
-        guard let p = InstrPatchIO.withCStrings([path], { fms_player_open($0, 1, &err, err.count) }) else {
+        guard let p = TLDocumentMetadata.open(paths: [path], error: &err) else {
             return .failure(InstrError(instrCStr(err)))
         }
         defer { fms_player_close(p) }

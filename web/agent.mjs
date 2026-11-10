@@ -15,7 +15,7 @@ import {registerHooks} from 'node:module';
 const MAX_FILE = 64 * 1024 * 1024, MAX_TOTAL = 128 * 1024 * 1024;
 const MAX_MANIFEST = 2 * 1024 * 1024, MAX_CATALOG = 2 * 1024 * 1024, MAX_INPUT = 1000000;
 const SHA = /^[a-f0-9]{64}$/, ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-const decoder = new TextDecoder('utf-8', {fatal:true});
+const decoder = new TextDecoder('utf-8', {fatal:true,ignoreBOM:true});
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const json = value => JSON.stringify(value, null, 2) + '\n';
 const fail = message => { throw Error(message); };
@@ -50,7 +50,7 @@ export function parseManifest(bytes) {
       fail('Invalid or duplicate manifest entry.');
     files.set(name, {path:name,sha256:entry.sha256,bytes:entry.bytes}); folded.add(lower);
   }
-  for (const name of [value.entry,value.registry,'worker.mjs','runtime.mjs','policy.mjs','media.mjs','links.mjs'])
+  for (const name of [value.entry,value.registry,'worker.mjs','runtime.mjs','policy.mjs','media.mjs','links.mjs','tl-document.mjs'])
     if (!files.has(name)) fail('Manifest lacks required asset: ' + name);
   return {value,files};
 }
@@ -481,7 +481,7 @@ function terminalDiscovery(result) {
 
 function terminalReport(result) {
   const pick = (value,names) => Object.fromEntries(names.filter(name => value?.[name] !== undefined).map(name => [name,value[name]]));
-  const summary = {...pick(result,['verdict','code','verified','verification','mode','recordSha256','pcmHash','rendererRelease',
+  const summary = {...pick(result,['verdict','code','verified','verification','mode','recordSha256','documentSha256','metadata','pcmHash','rendererRelease',
     'execution','site','release','development','manifestSha256','offline','revocationChecked','outputFiles','quality','canonicalBytes','eventCount',
     'spatialStatus','spatialError','eventsError'])};
   if (result.info) summary.dimensions = {sampleRate:result.sampleRate,channels:result.channels,

@@ -333,6 +333,7 @@ def execute(fm, files=None, *, text=None, harness=None):
     try:
         with tempfile.TemporaryDirectory(prefix="fm-gen-events-") as temporary:
             paths = _snapshots(fm, Path(temporary), files, text, result["inputs"])
+            fm.document_header(paths)
             identity_rows = [{key: row[key] for key in ("ordinal", "bytes", "sha256")}
                              for row in result["inputs"]]
             result["input_set_sha256"] = fm.sha(fm.receipts_module().canonical_bytes(identity_rows))

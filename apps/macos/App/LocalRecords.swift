@@ -24,7 +24,7 @@ enum RecordDocument {
 
     /// Private players only. The production reader and checked renderer are
     /// also the authority for complete pooled-record exports.
-    static func canonical(paths: [String] = [], data: Data? = nil, work: RecordWork) throws -> Data {
+    static func canonical(paths: [String] = [], data: Data? = nil, work: RecordWork, bodyOnly: Bool = false) throws -> Data {
         var error = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
         let player = try open(paths: paths, data: data, work: work)
         defer { fms_player_close(player) }
@@ -39,10 +39,12 @@ enum RecordDocument {
             guard status == FMS_OK else { throw Refused(String(cString: error)) }
             guard written == count else { throw Refused("Record rendering stopped before its end.") }
         } while fms_player_position(player) < info.frames
-        let needed = fms_player_record_text(player, nil, 0)
+        let needed = bodyOnly ? fms_player_record_body_text(player, nil, 0) : fms_player_record_text(player, nil, 0)
         guard needed > 0 else { throw Refused("The complete verified record could not be exported.") }
         var text = [CChar](repeating: 0, count: needed)
-        guard fms_player_record_text(player, &text, text.count) == needed else {
+        let written = bodyOnly ? fms_player_record_body_text(player, &text, text.count)
+            : fms_player_record_text(player, &text, text.count)
+        guard written == needed else {
             throw Refused("The complete verified record could not be exported.")
         }
         return text.withUnsafeBytes { Data($0.dropLast()) }
@@ -66,6 +68,7 @@ enum RecordDocument {
         var error = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
         var player: OpaquePointer?
         if let data {
+            try TLDocumentMetadata.validate(data)
             let status = data.withUnsafeBytes { bytes in
                 fms_player_import(bytes.bindMemory(to: CChar.self).baseAddress, data.count,
                                   work.token, &player, &error, error.count)
@@ -73,11 +76,7 @@ enum RecordDocument {
             if status == FMS_CANCELLED { throw CancellationError() }
             guard status == FMS_OK else { throw Refused(String(cString: error)) }
         } else {
-            let strings = paths.map { strdup($0) }
-            defer { strings.forEach { free($0) } }
-            player = strings.map { UnsafePointer($0) }.withUnsafeBufferPointer {
-                fms_player_open($0.baseAddress, Int32($0.count), &error, error.count)
-            }
+            player = TLDocumentMetadata.open(paths: paths, error: &error)
         }
         guard let player else { throw Refused(String(cString: error)) }
         return player
@@ -155,13 +154,14 @@ enum RecordDocument {
                 let access = url.startAccessingSecurityScopedResource()
                 defer { if access { url.stopAccessingSecurityScopedResource() } }
                 do {
-                    let bytes = try await Task.detached(priority: .userInitiated) {
+                    let source = try await Task.detached(priority: .userInitiated) {
                         let bytes = try Data(contentsOf: url)
-                        _ = try RecordDocument.canonical(data: bytes, work: work)
-                        return bytes
+                        let body = try RecordDocument.canonical(data: bytes, work: work, bodyOnly: true)
+                        return (bytes: bytes, body: body)
                     }.value
                     try current(request, load, installed, allowPending: true)
-                    let record = try store.insert(bytes, title: url.lastPathComponent)
+                    let record = try store.insert(source.bytes, title: url.lastPathComponent, canonicalBody: source.body)
+                    let retainedEarlierCopy = try store.read(record.id) != source.bytes
                     reload(); selection = record.id
                     canCancel = false; status = "Opening retained local TL…"
                     engine.openReadOnly(path: try store.url(record.id).path, title: record.title)
@@ -174,7 +174,8 @@ enum RecordDocument {
                     guard generation == request, engine.loadID == serial, engine.info != nil else {
                         throw RecordDocument.Refused(engine.errorText ?? "The local record could not be opened.")
                     }
-                    status = "Imported locally. Press Play when ready."
+                    status = retainedEarlierCopy ? "This tune is already saved; retained the existing local TL. Press Play when ready."
+                        : "Imported locally. Press Play when ready."
                 } catch is CancellationError {
                     if generation == request { status = "Source changed or import cancelled." }
                 } catch { if generation == request { status = "Import refused: \(error)" } }

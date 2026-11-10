@@ -181,7 +181,7 @@ static int fms_init_state(fms_player_t *p)
 void fms_player_close(fms_player_t *p)
 {
     if (!p) return;
-    if (p->tl) { free(p->tl->ev); free(p->tl->stems); free(p->tl->ks_pool); }
+    if (p->tl) { free(p->tl->ev); free(p->tl->stems); free(p->tl->ks_pool); free(p->tl->document_header); }
     free(p->tl); free(p->vs); free(p->sp); free(p->fx); free(p->gen);
     free(p);
 }
@@ -339,17 +339,22 @@ fms_player_t *fms_player_open_live(const char *header_text, char *err, size_t er
 }
 
 /* tl_write into a string: the whole record of tl with hash. NULL on failure. */
-static char *fms_write_text(const tl_t *tl, uint64_t hash, size_t *len)
+static char *fms_write_text_mode(const tl_t *tl, uint64_t hash, size_t *len, int document)
 {
     char *txt = NULL;
     size_t n = 0;
     FILE *f = open_memstream(&txt, &n);
     int rc;
     if (!f) return NULL;
-    rc = tl_write_f(f, tl, hash);
+    rc = document ? tl_write_document_f(f, tl, hash) : tl_write_f(f, tl, hash);
     if (fclose(f) || rc) { free(txt); return NULL; }
     if (len) *len = n;
     return txt;
+}
+
+static char *fms_write_text(const tl_t *tl, uint64_t hash, size_t *len)
+{
+    return fms_write_text_mode(tl, hash, len, 0);
 }
 
 /* Copies the lines of txt whose first word is in keep (a NULL-ended list) to
@@ -653,7 +658,7 @@ static tl_t *fms_patch_lines_read(const char *lines, size_t n, uint32_t fs, char
     if (!tl) { fms_copy_err(err, cap, "oom"); return NULL; }
     fms_cap_begin(&capture);
     rc = tl_read_memory(tl, lines, n, "patch lines", 1);
-    if (!rc && (tl->npatches != 1 || tl->have_timeline || tl->have_engine || tl->have_hash ||
+    if (!rc && (tl->document_header || tl->npatches != 1 || tl->have_timeline || tl->have_engine || tl->have_hash ||
         tl->have_space || tl->fs || tl->length_ns || tl->nstreams || tl->nvoices || tl->block || tl->near ||
         tl->have_order || tl->have_pinna || tl->have_yaw || tl->have_panlaw || tl->fx.on || tl->decodable || tl->gen_lanes))
         rc = tl_err(NULL, 0, "patch lines need exactly one patch and its bank definitions, without record, spatial, effects or lane statements");
@@ -670,7 +675,7 @@ static tl_t *fms_patch_lines_read(const char *lines, size_t n, uint32_t fs, char
         }
     }
     if (!rc) {
-        free(tl->ev); free(tl->stems); free(tl->ks_pool);
+        free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl->document_header);
         memset(tl, 0, sizeof *tl);
         rc = tl_read_memory(tl, text, len, "patch lines", 1);
         if (!rc) rc = tl_check_header(tl);
@@ -681,7 +686,7 @@ static tl_t *fms_patch_lines_read(const char *lines, size_t n, uint32_t fs, char
     fms_cap_end(&capture, err, cap, NULL, NULL);
     free(text);
     if (rc) {
-        free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl);
+        free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl->document_header); free(tl);
         return NULL;
     }
     return tl;
@@ -691,7 +696,7 @@ int fms_patch_lines_check(const char *lines, size_t n, uint32_t fs, char *err, s
 {
     tl_t *tl = fms_patch_lines_read(lines, n, fs, err, cap);
     if (!tl) return 1;
-    free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl);
+    free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl->document_header); free(tl);
     return 0;
 }
 
@@ -710,7 +715,7 @@ uint32_t fms_midi_release_ms(const char *lines, uint32_t fs)
     if (!p->route.ops) release = p->op[0].release_ms;
     else for (i = 0; i < FM_OPS; i++)
         if ((p->route.carriers >> i & 1u) && p->op[i].release_ms > release) release = p->op[i].release_ms;
-    free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl);
+    free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl->document_header); free(tl);
     return release;
 }
 
@@ -729,7 +734,7 @@ uint32_t fms_midi_ctl_reads(const char *lines, uint32_t fs)
         if ((v.mod_active & (1u << i)) && source >= 16 && source < 16 + FM_CTL_INPUTS)
             mask |= 1u << (source - 16);
     }
-    free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl);
+    free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl->document_header); free(tl);
     return mask;
 }
 
@@ -1036,17 +1041,27 @@ int fms_player_render_checked(fms_player_t *p, int16_t *out, uint32_t frames,
     return FMS_OK;
 }
 
-size_t fms_player_record_text(const fms_player_t *p, char *out, size_t cap)
+static size_t fms_player_record_text_mode(const fms_player_t *p, char *out, size_t cap, int document)
 {
     char *text;
     size_t n;
     if (!p || p->live || !p->export_ready || p->render_error || p->pos != p->tl->n ||
         (p->tl->have_hash && p->tl->hash != p->h)) return 0;
-    text = fms_write_text(p->tl, p->h, &n);
+    text = fms_write_text_mode(p->tl, p->h, &n, document);
     if (!text) return 0;
     if (out && cap > n) memcpy(out, text, n + 1u);
     free(text);
     return n + 1u;
+}
+
+size_t fms_player_record_text(const fms_player_t *p, char *out, size_t cap)
+{
+    return fms_player_record_text_mode(p, out, cap, 1);
+}
+
+size_t fms_player_record_body_text(const fms_player_t *p, char *out, size_t cap)
+{
+    return fms_player_record_text_mode(p, out, cap, 0);
 }
 
 int fms_player_keys(const fms_player_t *source, uint32_t half_width, int mirror,
@@ -1200,7 +1215,7 @@ int fms_render_note(const char *lines, uint32_t fs, uint32_t freq_millihz,
             fm_render_i16(&v, out + first, frames - first);
         }
     }
-    free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl);
+    free(tl->ev); free(tl->stems); free(tl->ks_pool); free(tl->document_header); free(tl);
     return bad;
 }
 
@@ -1296,6 +1311,7 @@ fms_player_t *fms_host_swap(fms_host_t *h, fms_player_t *p)
     }
     if (prepared && p && p->live) {
         memcpy(&h->take_tl, p->tl, sizeof h->take_tl);
+        h->take_tl.document_header = NULL; h->take_tl.document_header_bytes = 0;
         h->take_src = p;
     }
     if (p && !p->published) {
@@ -1596,6 +1612,7 @@ void fms_host_record_start(fms_host_t *h)
     ST(h->have_take, 0);
     ST(h->take_started, 0); /* only the successful PREPARING owner starts a new outcome */
     memcpy(&h->take_tl, h->ui_cur->tl, sizeof h->take_tl);
+    h->take_tl.document_header = NULL; h->take_tl.document_header_bytes = 0;
     h->take_src = h->ui_cur;
     h->take_crush_head = LD(h->q_head);
     ST(h->take_state, TAKE_PENDING);

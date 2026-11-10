@@ -60,6 +60,9 @@ clean:
 .PHONY: all portable ubsan check macos clean
 
 quick: all check-catalog
+	python3 -I -B tests/tl_document.py --harness $(abspath $(B)/harness)
+	python3 -I -B tests/tl_document_native.py
+	node --test tests/tl_document.test.mjs
 	python3 -B tests/cli_safety.py
 	python3 -B tests/decode_cli.py
 	python3 -B tests/transcribe_robust.py
@@ -96,7 +99,7 @@ ifneq ($(SONG_OUTPUT_VALID),valid)
 .PHONY: web/songs.json
 endif
 endif
-web/songs.json: $(SONG_CATALOG) tools/export_library.py $(SONG_INPUTS) $(B)/harness
+web/songs.json: $(SONG_CATALOG) tools/export_library.py tools/tl_document.py $(SONG_INPUTS) $(B)/harness
 	python3 tools/export_library.py --root "$(TUNES_ROOT)" --catalog "$(SONG_CATALOG)" --harness $(B)/harness --jobs $(SONG_JOBS)
 songs: web/songs.json
 .PHONY: songs

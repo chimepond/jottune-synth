@@ -365,3 +365,14 @@ Optional Node smoke bridge from a source checkout (not a browser UI test):
   node tools/browser_render.mjs INPUT.tl [NEW_CANONICAL_OUTPUT.tl]
 It invokes the same Worker logic. A new canonical output is written only for a
 valid result. Use result.verified when a workflow requires saved-hash verification.
+
+Portable TL documents
+---------------------
+A TL may start with a bounded `# jottune-tl 1 1` metadata header. See
+`tl-format.txt` for its exact fields, version rules and limits. Keep that header
+with the native body when saving/sharing the file. Canonical music-body SHA-256
+is the song identity; document SHA-256 additionally covers metadata bytes.
+The current TL and engine compatibility counters are both 1; newer required
+versions are refused. Existing headerless files remain valid. Score JSON may
+include an explicit metadata object; unknown model/genre/tempo stays unknown.
+Metadata declarations never replace explicit publication consent.

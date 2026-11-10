@@ -177,10 +177,14 @@ int fms_player_import(const char *text, size_t n, const fms_cancel_t *cancel,
 int fms_player_render_checked(fms_player_t *p, int16_t *out, uint32_t frames,
                               const fms_cancel_t *cancel, uint32_t *written,
                               char *err, size_t cap);
-/* Canonical complete TL only after full successful checked render. Return
+/* Complete portable TL, preserving its optional supported metadata header,
+ * only after full successful checked render. Return
  * bytes INCLUDING NUL, zero if incomplete/cancelled/mismatched/live/OOM.
  * Sizing call: out=NULL. Too-small buffers remain untouched. No file I/O. */
 size_t fms_player_record_text(const fms_player_t *p, char *out, size_t cap);
+/* Explicit canonical musical body for stable song identity, omitting metadata.
+ * Same sizing, successful-render and buffer contracts as record_text. */
+size_t fms_player_record_body_text(const fms_player_t *p, char *out, size_t cap);
 /* Private derived player; source is unchanged. Reuse the CLI Keys worker:
  * half_width 30/45/60/75/90, mirror 0/1, carrier_bound 0(strict)/1(opt-in).
  * Import validates source saved hash during the transformation. Cancellation

@@ -48,6 +48,7 @@ def bounded_text(path):
     with path.open("rb") as handle:
         raw = handle.read(generator.MAX_INPUT + 1)
     fm.require(len(raw) <= generator.MAX_INPUT, "candidate/canonical exceeds 4MiB", 2)
+    fm.tl_document_module().parse_document(raw)
     return raw.decode("utf-8")
 
 
@@ -63,9 +64,13 @@ def position(time_ns, stream, voice, frequency, mirror):
 
 def project(canonical, manifest, mirror=False):
     """A narrow projection of native canonical text; native owns TL validation."""
+    document = fm.tl_document_module().parse_document(canonical.encode("utf-8"))
+    # An automatic arrangement does not declare the source's exact-record
+    # attribution, licence or other descriptive metadata for its new body.
+    canonical = document["body"].decode("utf-8")
     lines, removed, streams = [], [], None
     manual_count = 0
-    for number, line in enumerate(canonical.splitlines(), 1):
+    for number, line in enumerate(canonical.splitlines(), 1 + document["header"].count(b"\n")):
         words = line.split()
         if not words:
             lines.append(line)
@@ -228,7 +233,9 @@ def convert(files, *, harness, out, work, mirror=False, level_policy="strict"):
     def play(paths, merged, phase):
         nonlocal remaining
         result["failure_stage"] = phase
-        args = ["--play", "--merged", merged, "--", *paths]
+        expected_header = fm.document_header(paths)
+        body_path = merged.with_suffix(".body.tl")
+        args = ["--play", "--merged", merged, "--merged-body", body_path, "--", *paths]
         command = dict(phase=phase, argv=[str(native), *map(str, args)],
                        cwd=str(Path.cwd()), remaining_child_seconds=remaining)
         result["commands"].append(command)
@@ -245,7 +252,7 @@ def convert(files, *, harness, out, work, mirror=False, level_policy="strict"):
         fields = fm.play_fields(response.stdout)
         fm.require(fields.get("block_indep") is True and fields.get("match") is not False,
                    "native replay or block independence failed", 5)
-        bounded_text(merged)
+        fm.verify_native_document(fm.read_native_document(merged), fm.read_native_document(body_path), expected_header)
         # PLAY fields may contain -inf for silence; raw captures retain that
         # spelling while JSON records use the toolkit's finite projection.
         command["play"] = fm.clean(fields)

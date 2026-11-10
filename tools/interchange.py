@@ -58,7 +58,7 @@ def accepted_source(source, harness=None, wav=False, *, native=None):
 
 def source_identity(accepted):
     result = {k: accepted.get(k) for k in
-              ("native", "record_sha256", "hash", "expected", "match", "block_indep",
+              ("native", "record_sha256", "document_sha256", "hash", "expected", "match", "block_indep",
                "fs", "channels", "samples", "clipped")}
     if "source_files" in accepted:
         result["source_files"] = accepted["source_files"]
@@ -324,8 +324,17 @@ def verify_manifest(data, opened, names, sizes, expected_manifest_sha256):
             actual = stream_identity(stream, identity["bytes"])
         fm.require(actual == identity,
                    "artifact identity mismatch: " + name, 5)
-    fm.require(source["record_sha256"] == manifest["artifacts"]["source.tl"]["sha256"],
-               "source record identity disagrees with artifact", 5)
+    with opened("source.tl") as stream:
+        source_document = stream.read(fm.tl_document_module().MAX_BYTES + 1)
+    try:
+        source_body_identity = fm.body_sha256(source_document)
+    except ValueError as error:
+        raise fm.ToolError("invalid source TL document: " + str(error), 5) from error
+    fm.require(source["record_sha256"] == source_body_identity,
+               "source record identity disagrees with canonical body", 5)
+    if "document_sha256" in source:
+        fm.require(source["document_sha256"] == manifest["artifacts"]["source.tl"]["sha256"],
+                   "source document identity disagrees with artifact", 5)
     if manifest["profile"] == "sfz-bank":
         sample_source = report["samples"].get("source")
         fm.require(isinstance(sample_source, dict) and all(sample_source.get(k) == source.get(k)

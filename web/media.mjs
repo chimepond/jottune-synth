@@ -228,7 +228,9 @@ function infoChunk(key, value) {
 export function toWav(result, metadata = {}) {
   if (!result.pcm) throw Error('No rendered PCM is available.');
   const tags = provenance(metadata);
-  const comments = JSON.stringify({ record_sha256: result.recordSha256, pcm_hash: result.pcmHash, renderer_release: result.rendererRelease || null, ...tags });
+  const comments = JSON.stringify({ record_sha256: result.recordSha256, pcm_hash: result.pcmHash, renderer_release: result.rendererRelease || null,
+    ...(result.documentSha256?{document_sha256:result.documentSha256}:{}),
+    ...(result.metadata&&Object.keys(result.metadata).length?{song_metadata:result.metadata}:{}), ...tags });
   const chunks = [infoChunk('ISFT', 'JotTune Synth ' + result.engineIdentity + ' build=' + result.engineId),
     infoChunk('ICMT', comments), infoChunk('ICRD', tags.utc_day || new Date().toISOString().slice(0,10))];
   const infoSize = 4 + chunks.reduce((sum,c) => sum + c.length,0);

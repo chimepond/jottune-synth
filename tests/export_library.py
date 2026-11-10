@@ -58,6 +58,45 @@ class Exports(unittest.TestCase):
                               'allocated_voices':1, 'events':2}}
                 for kind, identifier, digest in [('standard','parted','a'), ('keys','bell','b')]]}]}
 
+    def test_portable_export_preserves_header_and_body_identity_and_derives_discovery(self):
+        initial = self.export()
+        body_variant = initial['songs'][0]['variants'][0]
+        body = (self.output / body_variant['path']).read_bytes()
+        metadata = {'title':'Fixture', 'collection':'Tests', 'made_by':'agent',
+                    'model':{'id':'reported/v1', 'source':'client-reported'},
+                    'genre':'experimental', 'tempo':{'min_bpm':90, 'max_bpm':95}}
+        portable = exporter.document.compose_document(body, metadata)
+        (self.root / 'portable.tl').write_bytes(portable)
+        self.value['songs'][0]['variants'][0]['paths'] = ['portable.tl']
+        self.save()
+        manifest = self.export()
+        variant = manifest['songs'][0]['variants'][0]
+        self.assertEqual(variant['record_sha256'], body_variant['record_sha256'])
+        self.assertEqual(variant['document_sha256'], hashlib.sha256(portable).hexdigest())
+        self.assertEqual((self.output / variant['path']).read_bytes(), portable)
+        self.assertEqual(variant['discovery']['provenance']['model'], 'reported/v1')
+        self.assertEqual(variant['discovery']['metadata']['tempo']['source'], 'creator-declared')
+        self.assertEqual(exporter.check_output(self.catalog, self.output, root=self.root), manifest)
+        exporter.refresh_metadata(self.catalog, self.output, root=self.root)
+        self.assertEqual((self.output / variant['path']).read_bytes(), portable)
+        self.value['songs'][0]['title'] = 'Conflicting title'
+        self.save()
+        before = self.snapshot()
+        with self.assertRaisesRegex(ValueError, 'conflicts with external title'):
+            self.export()
+        self.assertEqual(self.snapshot(), before)
+
+    def test_portable_model_null_refuses_external_model_and_license_is_not_inferred(self):
+        data = exporter.document.compose_document(b'timeline draft2\n', {'model':None})
+        song = {'title':'Fixture', 'collection':'Tests'}
+        variant = {'discovery':{'record_sha256':exporter.document.body_sha256(data), 'source':'catalog.json',
+                               'provenance':{'model':'reported/v1', 'model_source':'client-reported'}}}
+        with self.assertRaisesRegex(ValueError, 'conflicts with external model'):
+            exporter.resolve_discovery(song, variant, data, 'catalog.json')
+        result = exporter.resolve_discovery(song, {}, data, 'catalog.json')
+        self.assertNotIn('provenance', result)
+        self.assertNotIn('license', result)
+
     def test_merge_flat_outputs_replay_alone_and_preserve_sources(self):
         before = {path.name:path.read_bytes() for path in self.root.glob('*.tl')}
         manifest = self.export()
@@ -553,6 +592,7 @@ class Exports(unittest.TestCase):
     def make_fixture(self):
         (self.root / 'tools').mkdir()
         shutil.copyfile(ROOT / 'tools/export_library.py', self.root / 'tools/export_library.py')
+        shutil.copyfile(ROOT / 'tools/tl_document.py', self.root / 'tools/tl_document.py')
         (self.root / 'music').mkdir()
         shutil.copyfile(self.catalog, self.root / 'music/library.json')
         source = (ROOT / 'Makefile').read_text()

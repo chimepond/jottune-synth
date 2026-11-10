@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Nenad Micic
 // SPDX-License-Identifier: Apache-2.0
 // Browser admission consumes native inspection results, never TL statements.
+import {parseDocument} from './tl-document.mjs';
 export const limits = Object.freeze({recordBytes: 1000000, durationSeconds: 300,
   outputBytes: 16777216, renderSeconds: 120, drawingEvents: 20000,
   wasmMemoryBytes: 268435456, fragmentCharacters: 12 * 1024 * 1024});
@@ -36,6 +37,7 @@ export function checkRecord(text) {
   if (typeof text !== 'string') throw Error('A TL record must be text.');
   if (new TextEncoder().encode(text).length > limits.recordBytes)
     throw Error('Record exceeds the 1 MB browser input limit. Use the local CLI for larger records.');
+  return parseDocument(text);
 }
 
 export function checkInspection(info, mode = 'verify') {

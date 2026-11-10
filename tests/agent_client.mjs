@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: Apache-2.0
 // Real Wasm, loopback HTTP and a temporary cache; no external network or builds.
 import assert from 'node:assert/strict';
+import {composeDocument,parseDocument,bodySha256} from '../web/tl-document.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
@@ -74,7 +75,7 @@ try {
   assert.ok(engine && !engine.withdrawn,'Tests require an available renderer.');
   development = engine.development === true;
   assets.set('engines.json',Buffer.from(JSON.stringify({format:1,default:engine.id,engines:[engine]})));
-  for (const name of ['worker.mjs','runtime.mjs','policy.mjs','media.mjs','links.mjs','spatial.mjs'])
+  for (const name of ['worker.mjs','runtime.mjs','policy.mjs','media.mjs','links.mjs','spatial.mjs','tl-document.mjs'])
     assets.set(name,await fs.readFile(path.join(root,'web',name)));
   assets.set('agent.mjs',await fs.readFile(own));
   assets.set('reference/recipes.txt',await fs.readFile(path.join(root,'data/recipes.txt')));
@@ -134,6 +135,16 @@ try {
     assert.equal(saved.verified,true);
     assert.equal(saved.site,site); assert.equal(saved.release,engine.id); assert.equal(saved.manifestSha256,context.manifestSha256);
     assert.equal(saved.offline,false); assert.equal(saved.revocationChecked,true); assert.deepEqual(saved.outputFiles,[]);
+  });
+  await check('portable TL metadata survives verified client export with stable body identity',async()=>{
+    const metadata={title:'Portable client check',made_by:'agent',model:{id:'fixture/v1',source:'client-reported'}};
+    const portable=composeDocument(example,metadata),answer=await execute(context,'verify',portable,{formats:['tl','wav','json']});
+    assert.equal(answer.result.verified,true);assert.equal(answer.result.recordSha256,await bodySha256(example));
+    assert.equal(answer.result.documentSha256,sha(Buffer.from(portable)));assert.deepEqual(answer.result.metadata,metadata);
+    assert.equal(Buffer.from(answer.artifacts.tl).toString(),portable);
+    assert.match(Buffer.from(answer.artifacts.wav).toString('utf8'),/song_metadata/);
+    const future=await execute(context,'verify',portable.replace('# jottune-tl 1 1','# jottune-tl 1 2'),{formats:['tl']});
+    assert.equal(future.result.verdict,'refused');assert.equal(future.artifacts.tl,undefined);
   });
   await check('draft canonical replay reports four real passes',async () => {
     const answer = await execute(context,'verify',example.replace(/^hash .*\n/m,''),{formats:['tl']});

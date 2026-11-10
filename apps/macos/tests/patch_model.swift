@@ -111,8 +111,72 @@ import Foundation
         let staleText = stale.text; stale.editRow(999, text: "filter")
         check(stale.text == staleText, "stale raw row binding is ignored")
         metadataControls(raw, parameters, check)
+        metadataChecks(check)
         print("MODEL \(bad == 0 ? "ok" : "FAIL") records=\(paths.count) patches=\(patches) audio_frames=0")
         exit(bad == 0 ? 0 : 1)
+    }
+
+    static func metadataChecks(_ check: (Bool, String) -> Void) {
+        var count = 0
+        func test(_ accepted: Bool, _ label: String) { count += 1; check(accepted, "portable metadata: " + label) }
+        func document(_ json: String, versions: String = "1 1") -> Data {
+            Data("# jottune-tl \(versions)\n# \(json)\n# end-jottune-tl\ntimeline fixture\n".utf8)
+        }
+        func refuse(_ bytes: Data, _ label: String) {
+            do { try TLDocumentMetadata.validate(bytes); test(false, label) }
+            catch { test(true, label) }
+        }
+        let valid = document(#"{"title":"Été","collection":"Collection","author":"Composer","made_by":"agent","genre":"ambient/drone","tempo":{"min_bpm":90,"max_bpm":120.5},"model":{"id":"reported/model-v1","source":"client-reported"},"utc_day":"2024-02-29","license":"CC-BY-4.0","renderer_release":"2026-11-10-abcdef0","prompt_id":"suite:one"}"#)
+        test((try? TLDocumentMetadata.validate(valid)) == true, "all supported declarations")
+        test((try? TLDocumentMetadata.validate(Data(String(decoding: valid, as: UTF8.self).replacingOccurrences(of: "\n", with: "\r\n").utf8))) == true, "CRLF framing")
+        test((try? TLDocumentMetadata.validate(document(#"{"genre":null,"tempo":null,"model":null}"#))) == true, "nullable unknowns")
+        test((try? TLDocumentMetadata.validate(document("{}"))) == true, "empty metadata object")
+        for (key, limit) in [("title", 60), ("collection", 200), ("author", 200)] {
+            let accepted = #"{"\#(key)":"\#(String(repeating: "é", count: limit))"}"#
+            test((try? TLDocumentMetadata.validate(document(accepted))) == true, "\(key) scalar boundary")
+            refuse(document(#"{"\#(key)":"\#(String(repeating: "é", count: limit + 1))"}"#), "\(key) excessive scalars")
+        }
+        for json in [#"{"title":"e\u0301"}"#, #"{"title":" padded"}"#, #"{"title":"a\u2028b"}"#,
+                     #"{"title":"a\u0000b"}"#, #"{"author":"a\tb"}"#, #"{"title":"\ud800"}"#,
+                     #"{"title":null}"#, #"{"made_by":"unknown"}"#, #"{"genre":"space label"}"#,
+                     #"{"license":"©"}"#, #"{"prompt_id":"free prompt"}"#, #"{"renderer_release":"bad/release"}"#,
+                     #"{"utc_day":"2025-02-29"}"#, #"{"utc_day":"0000-01-01"}"#, #"{"utc_day":"1900-02-29"}"#,
+                     #"{"utc_day":"2024-2-29"}"#, #"{"model":{"id":"x","source":"inferred"}}"#,
+                     #"{"model":{"id":"x","source":"user-stated","extra":0}}"#,
+                     #"{"tempo":{"min_bpm":true,"max_bpm":2}}"#, #"{"tempo":{"min_bpm":2,"max_bpm":1}}"#,
+                     #"{"tempo":{"min_bpm":0,"max_bpm":1}}"#, #"{"tempo":{"min_bpm":1,"max_bpm":9007199254740992}}"#,
+                     #"{"tempo":{"min_bpm":1,"max_bpm":1e999}}"#, #"{"extra":1}"#, "[]", "null", "{",
+                     #"{"title":"x",}"#, #"{"model":{"id":"x","source":"user-stated",}}"#,
+                     #"{"title":"A","title":"B"}"#, #"{"title":"A","ti\u0074le":"B"}"#,
+                     #"{"model":{"id":"x","id":"y","source":"user-stated"}}"#,
+                     #"{"tempo":{"min_bpm":1,"min_bpm":2,"max_bpm":3}}"#] {
+            refuse(document(json), json)
+        }
+        for versions in ["0 1", "1 0", "2 1", "1 2", "4294967296 1", "1 4294967296", "99999999999999999999999 1", "01 1", "1 01", "+1 1", "1 -1"] {
+            refuse(document("{}", versions: versions), "version " + versions)
+        }
+        refuse(Data("\n".utf8) + valid, "misplaced header")
+        refuse(valid + valid, "repeated header")
+        refuse(Data("# jottune-tl 1 1\n# {}\n".utf8), "unterminated header")
+        refuse(Data(String(decoding: valid, as: UTF8.self).replacingOccurrences(of: "# jottune-tl", with: "#jottune-tl").utf8), "malformed reserved marker")
+        refuse(valid + Data([0xff]), "invalid UTF-8 body")
+        refuse(document("\u{feff}{}"), "BOM inside JSON payload")
+        refuse(document("{\u{0b}}"), "non-JSON whitespace")
+        refuse(valid + Data(repeating: 35, count: 1023), "physical line byte bound")
+        refuse(valid + Data(repeating: 10, count: 1_000_000), "whole document byte bound")
+        let family = String(repeating: "👨‍👩‍👧‍👦", count: 10)
+        refuse(document(#"{"title":"\#(family)"}"#), "scalar count differs from grapheme count")
+        test((try? TLDocumentMetadata.validate(Data(repeating: 10, count: 1_000_001))) == false, "larger headerless legacy input")
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("jottune-schema-\(UUID().uuidString).tl")
+        defer { try? FileManager.default.removeItem(at: scratch) }
+        do {
+            try document(#"{"title":"A","title":"B"}"#).write(to: scratch)
+            var error = [CChar](repeating: 0, count: Int(FMS_ERR_LEN))
+            let player = TLDocumentMetadata.open(paths: [scratch.path], error: &error)
+            test(player == nil && String(cString: error).contains("Duplicate"), "shared native-open gate rejects duplicate JSON")
+            if let player { fms_player_close(player) }
+        } catch { test(false, "temporary host-open fixture") }
+        print("TL_METADATA_MODEL checks=\(count) duplicate_keys=refused schema=closed title=scalars versions=uint32 legacy=retained")
     }
 
     static func metadataControls(_ raw: String, _ catalog: NativeParams, _ check: (Bool, String) -> Void) {

@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Nenad Micic
 // SPDX-License-Identifier: Apache-2.0
 import {toSvg, toWav, spectrogram, songStructure, songStructureText} from './media.mjs';
+import {parseDocument} from './tl-document.mjs';
 import {limits, options, selectEngine, checkRecord, checkInspection, verification} from './policy.mjs';
 import {fetchRecord, isRecordLink, resolveLink, portableLink, libraryLink, linkProblem} from './links.mjs';
 import {openQr, closeQr} from './qr-view.mjs';
@@ -933,7 +934,13 @@ function show(result) {
   $('facts').replaceChildren();
   if (result.info) {
     const values = {...(result.verdict !== 'valid' ? {'Render result': 'Refused. Measurements below are diagnostic; no canonical export was accepted.'} : {}),
-      'Technical verification': label(result), 'Record SHA-256': result.recordSha256 || '—', 'PCM hash': result.pcmHash || '—',
+      ...(result.metadata?.title?{'Song title':result.metadata.title}:{}),
+      ...(result.metadata?.author?{'Author (declared)':result.metadata.author}:{}),
+      ...(result.metadata?.made_by?{'Author kind (declared)':result.metadata.made_by}:{}),
+      ...(result.metadata?.model?{'Model (declared)':result.metadata.model.id+' · '+result.metadata.model.source}:{}),
+      ...(result.metadata?.genre?{'Genre (declared)':result.metadata.genre}:{}),
+      ...(result.metadata?.tempo?{'Tempo (declared)':result.metadata.tempo.min_bpm+'–'+result.metadata.tempo.max_bpm+' BPM'}:{}),
+      'Technical verification': label(result), 'Record SHA-256': result.recordSha256 || '—', ...(result.documentSha256 && result.documentSha256 !== result.recordSha256 ? {'Document SHA-256':result.documentSha256}:{}), 'PCM hash': result.pcmHash || '—',
       'Engine': result.engineIdentity || '—', 'Release': result.rendererRelease || 'Local development build',
       'Build': result.engineId || '—', 'Mode': result.mode,
       'Declared duration': (Number(result.info.length_ns) / 1e9).toFixed(6) + ' s',
@@ -1381,9 +1388,9 @@ async function loadFile(file) {
   playerStatus('Loading ' + file.name + '…');
   try {
     if (file.size > limits.recordBytes) throw Error('Record exceeds the 1 MB input limit.');
-    const text = await file.text();
+    const text = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(await file.arrayBuffer());
     if (requestGeneration !== generation) return;
-    checkRecord(text); $('record').value = text; loadedIdentity = {title:file.name.replace(/\.tl$/i,''),version:'Local file · as saved'};
+    checkRecord(text); $('record').value = text; loadedIdentity = {title:parseDocument(text).metadata.title || file.name.replace(/\.tl$/i,''),version:'Local file · as saved'};
     const result = await preparePlayback(text);
     if (lastResult === result && result?.verdict === 'valid' && result.recordSha256) {
       linkedMetadata = {path:null,sha:result.recordSha256,match:catalog.cached(null,result.recordSha256),controller:new AbortController(),timer:null};

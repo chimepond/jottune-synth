@@ -58,8 +58,9 @@ def _selected(accepted, native, patch):
     fm.require(isinstance(identity, dict) and all(identity.get(k) == native.identity.get(k)
                for k in ("sha256", "engine")), "source and selected native identities differ", 5)
     data = accepted.get("_record_bytes")
-    fm.require(isinstance(data, bytes) and fm.sha(data) == accepted.get("record_sha256"),
+    fm.require(isinstance(data, bytes) and fm.body_sha256(data) == accepted.get("record_sha256"),
                "source canonical byte identity differs", 5)
+    data = fm.tl_document_module().parse_document(data)["body"]
     rows = native.metadata.canonical(data)
     fm.require(rows == accepted.get("_rows"), "source canonical metadata differs", 5)
     fm.require(isinstance(patch, str) and bool(re.fullmatch(r"[A-Za-z0-9_.-]{1,31}", patch)),
