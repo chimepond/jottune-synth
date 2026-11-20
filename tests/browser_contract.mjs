@@ -6,6 +6,7 @@ import assert from 'node:assert/strict';
 import {setImmediate as nextTurn} from 'node:timers/promises';
 import {readFileSync} from 'node:fs';
 import vm from 'node:vm';
+import {createHash} from 'node:crypto';
 import {toWav, toSvg, provenance, analyzeSpectrogram, fftPlan, transformFFT} from '../web/media.mjs';
 import {limits, checkRecord, checkInspection, selectEngine} from '../web/policy.mjs';
 import {resolveLink, portableLink, libraryLink, isRecordLink, linkProblem} from '../web/links.mjs';
@@ -175,6 +176,7 @@ async function withPage(run, configuration = {}) {
   }));
   install('window', {addEventListener: (type, listener) => listeners.set(type, listener), dispatchEvent: event => pageEvents.push(event)});
   install('CustomEvent', class {constructor(type, value) {this.type = type; this.detail = value.detail;}});
+  install('FormData', class extends FormData {constructor() {super();}}); // The mock provenance form has no entries.
   install('location', new URL(configuration.href || 'https://player.invalid/'));
   const navigation = {onLine:configuration.online ?? true, clipboard: {writeText: async text => {if(configuration.clipboardDenied)throw Error('Permission denied'); copied.push(text); }}};
   if (configuration.serviceWorker) navigation.serviceWorker = configuration.serviceWorker;
@@ -354,6 +356,45 @@ test('Cached audio analysis retains buffers and reports exact result identity', 
   const report=await promise;assert.equal(report.recordSha256,result.recordSha256);assert.deepEqual(result.pcm,before);
   assert.equal(page.api.result(),result);assert.equal(page.audioCreations(),0);assert.equal(worker.terminated,true);
   assert.equal(page.get('analysis-download').disabled,false);
+}));
+test('clipboard reports native levels immediately and bound completed measurements without changing analysis',()=>withPage(async page=>{
+  const rows=Array.from({length:24},(_,i)=>i);
+  const result=await complete(page,'score',validResult({engineId:'test',
+    play:{match:'yes',block_indep:'yes',peak:'12000',peak_dbfs:'-8.73',rms_dbfs:'-20.00',clipped:'0',samples:'2'},
+    authoring:{counts:{voices:1},advisories:rows.map(i=>({kind:'retrigger',event_index:i}))}}));
+  async function copy() {
+    await page.get('agent-report').click();
+    return JSON.parse(page.copied.at(-1));
+  }
+  const before=await copy();
+  assert.equal(before.song.play.peak,'12000');assert.equal(before.song.play.peak_dbfs,'-8.73');
+  assert.equal(before.song.play.clipped,'0');assert.equal(before.song.play.samples,'2');
+  assert.match(before.analysisStatus,/Not run.*LUFS/);assert(!before.analysis);
+  assert.equal(before.song.authoring.advisory_count,24);assert.equal(before.song.authoring.advisories.length,8);
+  assert.equal(page.api.summary().authoring.advisories.length,24);assert.equal(page.analysisWorkers.length,0);
+  const pending=page.api.analyze(result);await nextTurn();
+  const worker=page.analysisWorkers.at(-1);
+  assert.match((await copy()).analysisStatus,/running/);assert.equal(worker.terminated,false);
+  const section={name:'Hook',start_seconds:1,end_seconds:2,rms_dbfs:-17,sample_peak_dbfs:-3,
+    true_peak_dbtp:-2.8,loudness:{integrated_lufs:-15},per_channel:rows};
+  const stream={stream:'bells',voices:[0,1],peak_db_q30_unity:-5,rms_db_q30_unity:-18,loudness:{integrated_lufs:-19}};
+  const raw={pcm:{sample_peak:12000,full_scale_samples:0,trailing_digital_silence_seconds:0.25,
+    loudness:{integrated_lufs:-15,true_peak_dbtp:-2.8},stereo:{correlation:0.4},per_channel:rows,
+    sections:rows.map(()=>section),windows:rows.map(()=>section)},events:{voices:rows},
+    dry:{scope:'voice_out_pre_fx',status:'available',streams:rows.map(()=>stream),voices:rows}};
+  worker.reply({result:raw});const full=await pending, measured=(await copy()).analysis;
+  assert.equal(measured.recordSha256,result.recordSha256);assert.equal(measured.pcm.sample_peak,12000);
+  assert.equal(measured.pcm.trailing_digital_silence_seconds,0.25);assert.equal(measured.pcm.stereo.correlation,0.4);
+  assert.equal(measured.pcm.loudness.integrated_lufs,-15);assert.equal(measured.pcm.loudness.true_peak_dbtp,-2.8);
+  assert.equal(measured.pcm.window_count,24);assert.equal(measured.pcm.section_count,24);
+  assert.equal(measured.pcm.sections.length,8);assert.equal(measured.pcm.sections[0].integrated_lufs,-15);
+  assert.equal(measured.dry.voice_count,24);assert.equal(measured.dry.stream_count,24);
+  assert.equal(measured.dry.streams.length,8);assert.equal(measured.dry.streams[0].dual_mono_integrated_lufs,-19);
+  for(const key of ['windows','per_channel','events','voices'])assert(!page.copied.at(-1).includes('"'+key+'": ['));
+  assert(Buffer.byteLength(page.copied.at(-1))<9000);
+  page.get('analysis-download').click();
+  assert.deepEqual(JSON.parse(await page.downloaded.at(-1).text()),full);assert.equal(full.pcm.windows.length,24);
+  assert.equal(page.analysisWorkers.length,1);
 }));
 test('Edits cancel pending analysis and discard its display', () => withPage(async page => {
   const result=await complete(page,'saved',validResult({engineId:'test'}));
@@ -580,6 +621,8 @@ test('local portable and legacy files show compatibility versions and declared m
       assert.match(facts,/TL version\n1/);assert.match(facts,/Engine compatibility version\n1/);
       assert.match(facts,portable?/Document header\nPortable metadata/:/1 \(legacy, inferred\)\nEngine compatibility version\n1\nDocument header\nLegacy headerless/);
       if(portable)for(const value of Object.values(metadata))assert.ok(facts.includes(value),value);
+      assert.equal(page.get('loaded-song').textContent,portable ? metadata.title : 'version-check');
+      assert.equal(page.get('score-download').hidden,true);
       assert.equal(page.get('play').disabled,false);assert.equal(page.audioCreations(),0);
     });
   }
@@ -2459,6 +2502,26 @@ test('sharing a saved library version uses its short link, while a modified resu
 }, {catalog:{version:1,songs:[{id:'one',title:'One',collection:'Local',variants:[{
   kind:'standard',path:'songs/first-standard.tl',duration_seconds:20,bytes:20,record_sha256:'a'.repeat(64)}]}]}}));
 
+test('metadata-only edits export portable links that reopen the complete edited document',async()=>{
+  const body='timeline draft1\n', published=composeDocument(body,{title:'Published version'});
+  const edited=composeDocument(body,{title:'Edited title 🎵'}),recordSha256=await bodySha256(published);
+  const catalog={version:1,songs:[{id:'one',title:'Published version',collection:'Local',variants:[{
+    kind:'standard',path:'songs/first-standard.tl',duration_seconds:20,bytes:Buffer.byteLength(published),
+    record_sha256:recordSha256,document_sha256:await documentSha256(published)}]}]};
+  await withPage(async page=>{
+    for(const [text,fragment] of [[published,'#song='],[edited,'#v1.']]) {
+      const result=await complete(page,text,validResult({rendererRelease:'test',canonical:new TextEncoder().encode(text),
+        recordSha256,documentSha256:await documentSha256(text)}));
+      const url=await page.api.toLink(result),part=await page.api.exportChunk(result,{format:'link'});
+      assert(new URL(url).hash.startsWith(fragment));assert.equal(part.nextOffset,null);
+      assert.equal(Buffer.from(part.base64,'base64').toString('utf8'),url);
+      await page.get('share').click();assert.equal(page.copied.at(-1),url);
+      const reopened=await resolveLink(url,document.baseURI);
+      assert.equal(reopened.recordText,text);assert.equal(await documentSha256(reopened.recordText),result.documentSha256);
+    }
+  },{catalog,network:{'/web/songs/first-standard.tl':published}});
+});
+
 test('touch devices share the song link through the native sheet, and the clipboard stays the fallback', async () => {
   const catalog = {version:1,songs:[{id:'one',title:'One',collection:'Local',variants:[{
     kind:'standard',path:'songs/first-standard.tl',duration_seconds:20,bytes:20,record_sha256:'a'.repeat(64)}]}]};
@@ -2559,8 +2622,8 @@ test('free prompt hashes cannot enter WAV provenance', () => {
   assert.equal(provenance({prompt_id: 'suite-v1-01'}).prompt_id, 'suite-v1-01');
 });
 
-test('service worker isolates prefixes and excludes live records while caching engine dependencies', async () => {
-  const handlers = new Map(), stores = new Map(), removed = [], fetched = [];
+test('service worker revalidates the player, retains offline snapshots and isolates archived engines', async () => {
+  const handlers = new Map(), stores = new Map(), removed = [], fetched = [], cacheModes = [];
   const ownOld = 'intfm-workbench-%2Fpreview-a%2F-old';
   const other = 'intfm-workbench-%2Fpreview-b%2F-old';
   stores.set(ownOld, new Map()); stores.set(other, new Map());
@@ -2572,7 +2635,11 @@ test('service worker isolates prefixes and excludes live records while caching e
       if (!storageAvailable) throw Error('Storage unavailable');
       if (!stores.has(name)) stores.set(name, new Map());
       const entries = stores.get(name);
-      return {match: async request => entries.get(request.url)?.clone(),
+      return {match: async (request, options) => {
+          const key = new URL(request.url);
+          if (options?.ignoreSearch) key.search = '';
+          return entries.get(key.href)?.clone();
+        },
         put: async (request, response) => {if(!writable)throw Error('Quota exceeded'); entries.set(request.url, response.clone()); }};
     },
   };
@@ -2580,17 +2647,21 @@ test('service worker isolates prefixes and excludes live records while caching e
     URL, Request, Response, caches,
     self: {location: new URL('https://player.invalid/preview-a/sw.js'),
       addEventListener: (name, listener) => handlers.set(name, listener), clients: {claim: async () => {}}},
-    fetch: async request => {
+    fetch: async (request, init) => {
       if (offline) throw Error('offline');
+      cacheModes.push(init?.cache ?? request.cache);
+      if (new URL(request.url).pathname.endsWith('/removed.txt')) return new Response('removed', {status:410});
       fetched.push(request.url); return new Response('revision-' + fetched.length);
     },
   });
   let activating;
   handlers.get('activate')({waitUntil: value => { activating = value; }}); await activating;
   assert.deepEqual(removed, [ownOld]); assert(stores.has(other));
-  const request = path => {
+  const request = (path, mode) => {
     let pending;
-    handlers.get('fetch')({request: new Request('https://player.invalid' + path), respondWith: value => { pending = value; }});
+    const input = new Request('https://player.invalid' + path);
+    if (mode) Object.defineProperty(input, 'mode', {value:mode});
+    handlers.get('fetch')({request:input, respondWith: value => { pending = value; }});
     return pending;
   };
   for (const path of ['/sw.js', '/preview-b/engine.wasm', '/preview-a/api/records/id', '/preview-a/r/song.tl', '/preview-a/s/id'])
@@ -2611,6 +2682,22 @@ test('service worker isolates prefixes and excludes live records while caching e
   assert.equal(await (await request('/preview-a/engines/uncached-when-full/browser.wasm')).text(),'revision-4');
   storageAvailable = false;
   assert.equal(await (await request('/preview-a/engines/storage-denied/browser.wasm')).text(),'revision-5');
+
+  // Deploy B while build A's worker and complete offline snapshot still control the page.
+  writable = true; storageAvailable = true;
+  const shell = await caches.open('intfm-workbench-%2Fpreview-a%2F-development');
+  for (const name of ['', 'app.mjs', 'reference.txt', 'removed.txt'])
+    await shell.put(new Request('https://player.invalid/preview-a/' + name), new Response('build A ' + name));
+  const fresh = await request('/preview-a/?release=pin', 'navigate');
+  assert.equal(await fresh.text(), 'revision-6');
+  assert.equal(await (await request('/preview-a/app.mjs')).text(), 'revision-7');
+  assert.equal(await (await request('/preview-a/reference.txt')).text(), 'revision-8');
+  assert.deepEqual(cacheModes.slice(-3), ['no-cache','no-cache','no-cache']);
+  assert.equal((await request('/preview-a/removed.txt')).status, 410);
+  offline = true;
+  assert.equal(await (await request('/preview-a/?release=pin', 'navigate')).text(), 'build A ');
+  assert.equal(await (await request('/preview-a/app.mjs')).text(), 'build A app.mjs');
+  assert.equal(await (await request('/preview-a/reference.txt')).text(), 'build A reference.txt');
 });
 
 function wavChunks(bytes, start = 12, end = bytes.length) {
@@ -2676,6 +2763,40 @@ test('compact result helpers preserve identity and exactly match UI sharing with
   await assert.rejects(page.api.toLink(result,{unknown:true}),/pinRelease/);
   assert.equal(page.audioCreations(),0);
 }));
+test('chunk exports preserve exact TL and URL bytes and bind each reply to the saved document',()=>withPage(async page=>{
+  const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
+  const canonical=new TextEncoder().encode('a'.repeat(5999)+'🎵'+ ' text'.repeat(1400)+'\n');
+  const checksum=digest(canonical), result=await complete(page,'export fixture',validResult({canonical,documentSha256:checksum,rendererRelease:'test'}));
+  assert(page.api.describe().operations.includes('exportChunk'));
+  assert(page.api.describe().operationDetails.exportChunk);
+  const url=await page.api.toLink(result), requests=page.requests.length;
+  for(const [format,expected] of [['tl',Buffer.from(canonical)],['link',Buffer.from(url)]]) {
+    const parts=[];let offset=0;
+    do {
+      const reply=await page.api.exportChunk(result,{format,offset,bytes:format==='tl'?6000:53});
+      const bytes=Buffer.from(reply.base64,'base64');parts.push(bytes);
+      assert.equal(reply.format,format);assert.equal(reply.offset,offset);assert.equal(reply.totalBytes,expected.length);
+      assert.equal(reply.encoding,'base64');assert.equal(reply.documentSha256,checksum);
+      assert.equal(reply.payloadSha256,digest(expected));assert.equal(reply.chunkSha256,digest(bytes));
+      const end=offset+bytes.length;assert.equal(reply.nextOffset,end===expected.length?null:end);
+      offset=reply.nextOffset;
+    } while(offset!==null);
+    assert.deepEqual(Buffer.concat(parts),expected);
+    assert.notEqual(digest(Buffer.concat([...parts].reverse())),digest(expected),'Swapped chunks must fail the whole-payload checksum');
+    const final=await page.api.exportChunk(result,{format,offset:expected.length});
+    assert.equal(final.base64,''); assert.equal(final.nextOffset,null);assert.equal(final.chunkSha256,digest(Buffer.alloc(0)));
+    await assert.rejects(page.api.exportChunk(result,{format,offset:expected.length+1}),/exceeds/);
+  }
+  const first=await page.api.exportChunk();assert.equal(Buffer.from(first.base64,'base64').length,6000);
+  const damaged=Buffer.from(first.base64,'base64');damaged[0]^=1;assert.notEqual(digest(damaged),first.chunkSha256);
+  for(const opts of [null,[],{format:'wav'},{offset:-1},{offset:0.5},{offset:Number.MAX_SAFE_INTEGER+1},{bytes:0},{bytes:7201},{bytes:'2'},{unexpected:true}])
+    await assert.rejects(page.api.exportChunk(result,opts));
+  await assert.rejects(page.api.exportChunk({...result,verdict:'refused'}),/valid song/);
+  await assert.rejects(page.api.exportChunk({...result,documentSha256:null}),/checksum/);
+  const modified=new Uint8Array(canonical);modified[0]^=1;
+  await assert.rejects(page.api.exportChunk({...result,canonical:modified}),/SHA-256 differs/);
+  assert.equal(page.requests.length,requests);assert.equal(page.downloaded.length,0);assert.equal(page.copied.length,0);assert.equal(page.audioCreations(),0);
+}));
 test('phone score file import and pasted score compile and prepare silently with advisory report',()=>withPage(async page=>{
   page.ready({default:'test',engines:[{id:'test',identity:'int-fm-synth 1'}]});
   const score=JSON.parse(readFileSync(new URL('../web/starter.score.json',import.meta.url),'utf8'));
@@ -2727,6 +2848,67 @@ test('invalid score imports provide actionable pointer errors without native wor
     if(text.includes('3'))assert.equal(report.inputError.pointer,'/version');
   }
   assert.equal(page.audioCreations(),0);
+}));
+test('editable score, title and export names survive verification of different canonical bytes',()=>withPage(async page=>{
+  page.ready({default:'test',engines:[{id:'test',identity:'int-fm-synth 1'}]});
+  const score=JSON.parse(readFileSync(new URL('../web/starter.score.json',import.meta.url),'utf8'));
+  score.metadata={title:'Two lanterns',license:'CC0-1.0'};
+  const source='  '+JSON.stringify(score,null,3)+'\r\n';
+  // File input also exercises exact source preservation independent of textarea newline normalization.
+  page.get('file').files=[new File([source],'untitled.score.json')];
+  const preparing=page.get('file').onchange();await nextTurn();
+  const draft=page.workers.at(-1).request.recordText;
+  const saved=composeDocument('canonical fixture\n',score.metadata);
+  const result={canonical:new TextEncoder().encode(saved),metadata:score.metadata,engineId:'test'};
+  assert.notEqual(draft,saved);
+  page.workers.at(-1).reply(validResult({...result,play:{match:'-',block_indep:'unchecked'}}));await preparing;
+  function checkTitle() {
+    assert.equal(page.get('loaded-song').textContent,'Two lanterns');
+    assert.equal(page.get('mobile-song').textContent,'Two lanterns');
+    assert.match(page.get('rail-loaded-song').textContent,/Loaded: Two lanterns/);
+    assert.match(document.title,/^Two lanterns · /);
+    for(const extension of ['tl','wav']) {
+      page.get(extension+'-download').click();
+      assert.equal(page.filenames.at(-1),'Two lanterns-saved.'+extension);
+    }
+    assert.equal(page.get('score-download').hidden,false);
+    page.get('score-download').click();
+    assert.equal(page.filenames.at(-1),'Two lanterns-source.score.json');
+    assert.equal(page.downloaded.at(-1).type,'application/json');
+  }
+  checkTitle();assert.equal(await page.downloaded.at(-1).text(),source);
+  const replay=page.get('verify-saved').click();await nextTurn();
+  assert.equal(page.workers.at(-1).request.recordText,saved);
+  page.workers.at(-1).reply(validResult(result));await replay;
+  assert.equal(page.api.result().verified,true);
+  checkTitle();assert.equal(await page.downloaded.at(-1).text(),source);
+  const replacement=page.api.listen('different headerless song');await nextTurn();
+  assert.equal(page.get('score-download').hidden,true);
+  page.api.cancel();await assert.rejects(replacement,/cancelled/i);
+  assert(!page.get('loaded-song').textContent.includes('Two lanterns'));
+  assert(!document.title.includes('Two lanterns'));
+  await complete(page,'unrelated refusal',{verdict:'refused',code:2,stderr:'Native syntax error'});
+  assert.equal(page.get('score-download').hidden,true);assert.equal(page.get('tl-download').disabled,true);
+  assert(!page.get('loaded-song').textContent.includes('Two lanterns'));
+}));
+test('portable linked TL uses its declared title and never offers an invented editable score',()=>withPage(async page=>{
+  const title='From the record',text=composeDocument('canonical fixture\n',{title});
+  const url=await portableLink(text,'https://player.invalid/');
+  await page.api.loadLink(url);
+  const pending=page.get('prepare-input').click();
+  await prepared(page,pending,text,validResult({metadata:{title},play:{match:'yes',block_indep:'unchecked'}}));
+  assert.equal(page.get('loaded-song').textContent,title);assert.match(document.title,/^From the record · /);
+  assert.equal(page.get('score-download').hidden,true);
+}));
+test('an incomplete JSON file remains available as an exact, unverified score draft',()=>withPage(async page=>{
+  const source='{\n  "version":';
+  page.get('file').files=[new File([source],'unfinished.score.json')];
+  await page.get('file').onchange();
+  assert.match(page.get('status').textContent,/incomplete or invalid/);
+  page.get('draft-download').click();
+  assert.equal(page.filenames.at(-1),'draft-unverified.score.json');
+  assert.equal(page.downloaded.at(-1).type,'application/json');assert.equal(await page.downloaded.at(-1).text(),source);
+  assert.equal(page.get('score-download').hidden,true);assert.equal(page.workers.length,0);
 }));
 test('late file reads cannot replace a newer file and denied clipboard offers plain report text',()=>withPage(async page=>{
   const slow=deferred();page.ready();

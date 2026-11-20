@@ -2,34 +2,32 @@ Copyright (c) 2026 Nenad Micic
 SPDX-License-Identifier: Apache-2.0
 
 JOTTUNE AGENT QUICK CARD
-All references are relative to this player prefix. Details: agent-start.txt.
-Reader only: write score JSON; the person opens/pastes it in the player and
-returns Copy report for your agent. Rendering is silent; Play needs a tap.
-Connected browser: use IntFM below. Node: agent.mjs plus its complete runtime
-cache; offline bundle when available. Session network/execution limits vary.
+Read the index in the player: await (await fetch('llms.txt')).text().
+IntFM.recipes() lists sounds. See authoring.txt for score and FX syntax.
+Reader only: send editable score JSON to open/paste. The person taps Play and
+returns Copy report for your agent. Browser API renders silently.
 
-Preserve metadata.license through compose/export. For contributions whose author
-approved CC0, set it to "CC0-1.0". Never silently relicense. The header supplies
-no separate CC0/dataset/rights/age/history consent or publication permission.
-Private drafts may omit license. name/about/mark comments are not preserved.
-
-Minimal syntax exercise (write your own song):
+Replace example metadata with known facts. Omit unknowns. Preserve
+metadata.license. Use "CC0-1.0" only with the author's explicit CC0 approval.
+Private drafts may omit it. The header grants no publication permission or
+separate CC0/dataset/rights/age/history consent. Never silently relicense.
 ```json
-{"version":1,"fs":48000,"metadata":{"title":"Syntax exercise"},
+{"version":1,"fs":48000,"metadata":{"title":"Syntax exercise","made_by":"agent","model":{"id":"example","source":"client-reported"},"genre":null,"utc_day":"2026-01-01","tempo":{"min_bpm":96,"max_bpm":96}},
 "clock":{"bars":2,"meter":[{"bar":1,"quarters":4}],"tempo":[{"bar":1,"bpm":96}],"ramp":"step","tail_ns":2000000000},
 "declarations":"space stereo\nblock 64\nnear 100\nrecipe lead marimba\n",
 "streams":["lead"],"voices":["lead"],"events":[{"kind":"note","at":0,"duration":1,"stream":"lead","voice":0,"pitch":{"note":"C5"},"velocity_q15":22000}]}
 ```
 ```js
-const d=await IntFM.compose(score);
-const t=await IntFM.listen(d.draftText,{release:d.rendererRelease});
+const d=await IntFM.compose(score), opts={release:d.rendererRelease};
+const t=await IntFM.listen(d.draftText,opts);
 if(t.verdict!=='valid') throw Error(t.stderr||t.verdict);
-const s=await IntFM.verify(IntFM.toText(t),{release:d.rendererRelease});
+const a=await IntFM.analyze(t,{sections:[{name:'start',startSeconds:0,endSeconds:1}],dryVoices:true});
+const s=await IntFM.verify(IntFM.toText(t),opts);
 if(!s.verified) throw Error(s.stderr||s.verification);
-console.log(IntFM.summary(s)); // JSON-safe; no PCM/events
-const url=await IntFM.toLink(s); // pins release; same URL as share control
+const url=await IntFM.toLink(s);
 ```
-Node 22.15+, SITE=player base with trailing slash:
-node agent.mjs "$SITE" compose song.score.json --mode listen --out take
-node agent.mjs "$SITE" verify take.tl --analysis --out final --formats tl,json,wav,link
-Browser: <=1,000,000 TL bytes, <=300 s. Save canonical TL plus editable score.
+Read a.pcm.sections and, when available, a.dry.streams (whole song, pre-FX).
+Dry bytes = frames * all voices * 4. See analysis.txt for budgets. Master gain
+precedes limiter. Keep verified TL, link and score. Include WAV if transferable.
+Browser limits: 1,000,000 TL bytes, 300 s. For Node
+22.15+ see agent-start.txt for agent.mjs, its runtime cache and offline bundle.

@@ -1,0 +1,5 @@
+# JotTune agent documentation
+
+Open the [complete index](llms.txt) beside this file. Start with the
+[quick card](agent-quick.txt) for a working score and the
+[TL format](tl-format.txt) for portable metadata.

@@ -1,7 +1,11 @@
 # JotTune Synth
 
 Compose, render, analyze and export locally from this player URL.
-No MCP server or repository checkout required. Start here:
+To make a song, read the [quick card](agent-quick.txt) and follow the
+[authoring workflow](agent-start.txt). Return the verified .tl file and a
+playable, release-pinned song URL. Keep the editable .score.json. Include WAV
+when your environment can transfer audio. If you can only read pages, hand off
+the score to the player and use its verification report before claiming success.
 
 Preserve `score.metadata.license` through revisions and canonical export. The
 portable field is `license`, not `licence`. For an original contribution whose
@@ -14,6 +18,7 @@ consent. Private drafts may omit license; the teaching starter stays Apache-2.0.
 - [Official client](agent.mjs): Node 22.15+, built-ins only, pinned local runtime.
 - [Authoring](authoring.txt): score v1, recipes, musical time and native declarations.
 - [Starter score](starter.score.json): editable teaching arrangement.
+- [Portable TL document and metadata](tl-format.txt): versions, header fields, bounds and song identity.
 - [Native TL](native-reference.txt): complete native syntax.
 - [Parameters](reference/params.txt): generated units/ranges/dependencies.
 - [Recipe catalog](reference/recipes.txt): complete presets, tweak units and spectral guidance.
@@ -30,5 +35,3 @@ with a complete trusted bundle when supplied. A bundle can initialize a cold
 cache without network setup. Offline use cannot establish current revocation.
 A render with a computed hash is not full verification. Score solo/mute is a rerender through effects,
 not additive mix stems. No genre, loudness or width target is prescribed.
-
-- Portable TL document format and metadata: tl-format.txt

@@ -20,23 +20,30 @@ self.addEventListener('fetch',event=>{
   const relative=url.pathname.slice(BASE.pathname.length);
   if(/^(api|r|s)\//.test(relative))return;
   event.respondWith((async()=>{
-    const engine=relative.startsWith('engines/');let cache,cached;
-    try{cache=await caches.open(engine?ENGINES:CACHE);cached=await cache.match(event.request);}
-    catch{return fetch(event.request).catch(unavailable);}
-    if(relative==='engines.json'){
-      try{const response=await fetch(event.request);if(response.ok)await cache.put(event.request,response.clone()).catch(()=>{});return response;}
-      catch{if(cached)return cached;return unavailable();}
-    }
-    if(cached){
-      // Precache follows HTML redirects, but navigations use redirect:manual.
-      // Return the document bytes without the followed-redirect metadata.
+    const engine=relative.startsWith('engines/');
+    const playerDocument=event.request.mode==='navigate'&&(relative===''||relative==='index.html');
+    let cache,cached;
+    try{
+      cache=await caches.open(engine?ENGINES:CACHE);
+      cached=await cache.match(event.request,{ignoreSearch:playerDocument});
+    }catch{/* The online player also works when browser storage is unavailable. */}
+    if(engine&&cached)return cached;
+    try{
+      // A returning page can still have yesterday's worker. Revalidate its
+      // mutable shell, modules and references on first use after a deploy.
+      const revalidate=!engine&&(playerDocument||cached)&&event.request.cache==='default';
+      const response=revalidate?await fetch(event.request,{cache:'no-cache'}):await fetch(event.request);
+      if(response.ok&&cache&&(engine||relative==='engines.json'))
+        await cache.put(event.request,response.clone()).catch(()=>{});
+      return response;
+    }catch{
+      // Only the installer replaces the shell snapshot, so offline startup can
+      // use the last complete install. A real HTTP error remains authoritative.
+      if(!cached)return unavailable();
+      // A navigation cannot use a followed-redirect response from the precache.
       if(event.request.mode==='navigate'&&cached.redirected)
         return new Response(cached.body,{status:cached.status,statusText:cached.statusText,headers:cached.headers});
       return cached;
     }
-    try{const response=await fetch(event.request);
-      if(response.ok&&engine)await cache.put(event.request,response.clone()).catch(()=>{});
-      return response;
-    }catch{return unavailable();}
   })());
 });

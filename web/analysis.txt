@@ -128,6 +128,20 @@ their gate has no duration. These facts do not rank composition quality.
 
 DRY SOURCES
 
+To compare parts before effects, pass dryVoices:true to IntFM.analyze(take).
+Read dry.status first. A successful report has dry.voices and dry.streams for
+whole-song source levels. pcm.sections always describes the final mix. For a
+per-section table of individual parts through the effects, see the solo recipe
+in browser-guide.txt. For a larger song, estimate the work before requesting it:
+
+  const bytes = Number(take.info.frames) * Number(take.info.voices) * 4;
+  // Opt in to this much processing and up to one minute of dry work.
+  if (bytes >= 44 && bytes <= 2 ** 31) {
+    const report = await IntFM.analyze(take, {dryVoices:true,
+      dryMaxBytes:bytes, dryTimeoutMs:60000, timeoutMs:120000});
+    console.log(report.dry.status, report.dry.reason ?? report.dry.streams);
+  }
+
 analysis-runtime.mjs exports:
   analyzeDryVoices({module, recordText, info, events, pcmHash}, options)
 

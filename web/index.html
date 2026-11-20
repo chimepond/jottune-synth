@@ -5,6 +5,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="theme-color" content="#101a20">
+  <link rel="help" type="text/plain" href="llms.txt" title="Agent documentation index">
+  <link rel="help" type="text/plain" href="tl-format.txt" title="Portable TL format and metadata">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="style.css">
@@ -18,6 +20,14 @@
     <nav class="resource-nav" aria-label="Resources"><a href="agent-quick.txt">Agent quick card</a><a href="browser-guide.txt">Guide</a></nav>
     <button id="section-toggle" class="section-toggle" aria-controls="section-nav" aria-expanded="false" hidden>Sections <span aria-hidden="true">☰</span></button>
   </header>
+  <nav class="agent-entry" aria-label="Make a song with an agent">
+    <strong>Make a song</strong>
+    <a href="llms.txt">Agent index (llms.txt)</a>
+    <a href="agent-quick.txt">agent-quick.txt</a>
+    <a href="agent-start.txt">agent-start.txt</a>
+    <a href="tl-format.txt">tl-format.txt</a>
+    <span>Write an instrumental score. Return the verified .tl and its playable link.</span>
+  </nav>
   <div class="app-shell">
     <nav id="section-nav" class="section-nav" aria-label="Page sections">
       <div class="section-nav-heading"><span>Sections</span><button id="section-close" aria-label="Close sections" hidden>Close</button></div>
@@ -49,7 +59,6 @@
     </nav>
   <main>
     <h1 class="sr-only">JotTune Synth player</h1>
-    <p class="agent-entry"><a href="agent-start.txt">For agents: start composing</a></p>
     <details id="library-panel" class="song-library panel" open>
       <summary id="library-summary">Choose a song <span class="small">Browse songs or open your own .tl file</span></summary>
       <div class="library-body">
@@ -233,8 +242,8 @@
       <div class="detail-body">
         <label for="record">JotTune Timeline text or score v1 JSON</label>
         <textarea id="record" spellcheck="false" placeholder="Paste a complete .tl record or score v1 JSON…" aria-describedby="edit-help"></textarea>
-        <div class="row actions"><button id="prepare-input">Prepare pasted input</button><button id="listen">Listen to edits</button><button id="draft-download">Save draft text</button><button id="verify-saved" disabled>Verify saved render</button></div>
-        <p id="edit-help" class="small">Editing stops playback and keeps the selected renderer. Prepare pasted input accepts TL or score v1 JSON, composes when needed and prepares silently; press Play to listen. Keep the original score file for musical edits. Listen renders TL edits and starts audio. Save draft text retains unfinished or refused text locally, without claiming verification.</p>
+        <div class="row actions"><button id="prepare-input">Prepare pasted input</button><button id="listen">Listen to edits</button><button id="draft-download">Save draft text</button><button id="score-download" hidden>Save editable score (.score.json)</button><button id="verify-saved" disabled>Verify saved render</button></div>
+        <p id="edit-help" class="small">Prepare pasted input accepts TL or score v1 JSON and prepares it silently. Press Play to listen. After composing JSON, the editor shows the generated TL. Save editable score keeps the original JSON, including its formatting. It stays available through saved verification. Save it before editing the TL, loading another song or leaving this page. Editing stops playback and keeps the selected renderer. Listen to edits renders TL and starts audio. Save draft text keeps the current editor text, including unfinished drafts.</p>
         <p class="small">For an intentional new version, keep the original saved TL and edit a separate draft without its old <code>hash</code> assertion. Never remove a hash to conceal an unexplained mismatch. After a valid draft render, Verify saved render replays its canonical output and checks the new saved hash. Keep your editable source too: canonical output can reorder headers and add defaults.</p>
         <form id="url-form">
           <label for="url">Load from a URL</label>
@@ -274,12 +283,22 @@
       <summary id="agent-summary">Agent guide</summary>
       <div class="detail-body agent-grid">
         <div>
-          <h2>The instrument is an open interface.</h2>
-          <p><strong>Give your agent this page’s URL.</strong> Start with the <a href="agent-quick.txt">agent quick card</a> and <a href="agent-start.txt">full quickstart</a>: compose in musical time, render locally, measure and revise, then deliver one complete TL and WAV. No MCP server or source checkout is needed.</p>
+          <h2>Make an instrumental song</h2>
+          <p><strong>Give your agent this page’s URL.</strong> Open the <a href="llms.txt">complete agent index (llms.txt)</a> or the <a href="agent-quick.txt">quick card</a> for a working score. Compose, measure and revise in the <a href="agent-start.txt">authoring workflow</a>. Return the verified .tl and its playable link. Keep the editable score and include a WAV when files can be transferred.</p>
           <p>Browser automation uses <code>window.IntFM</code>. Terminal agents can download the <a href="agent.mjs" download>official Node client</a> (Node 22.15+; no npm packages).</p>
+          <p>Using a read-only assistant on a phone? Ask for a .score.json file. Open it in the player, or paste its JSON in Source and choose <strong>Prepare pasted input</strong>. Choose <strong>Verify saved render</strong>, then save the TL and copy the song link. Use <strong>Copy report for your agent</strong> to send back the result.</p>
+          <details id="score-syntax">
+            <summary>Score syntax on this page</summary>
+            <p>This one-note example shows the required fields. Choose your own sounds, form and tempo for a song. Keep the score JSON for revision. The player generates the native TL and song link.</p>
+            <pre><code id="inline-score">{"version":1,"fs":48000,"metadata":{"title":"Syntax example","made_by":"agent"},
+"clock":{"bars":1,"meter":[{"bar":1,"quarters":4}],"tempo":[{"bar":1,"bpm":96}],"ramp":"step","tail_ns":500000000},
+"declarations":"space stereo\nblock 64\nnear 100\nrecipe part marimba\n",
+"streams":["part"],"voices":["part"],"events":[{"kind":"note","at":0,"duration":1,"stream":"part","voice":0,"pitch":{"note":"C5"},"velocity_q15":22000}]}</code></pre>
+            <p>For a connected browser, use <code>IntFM.compose</code>, <code>IntFM.listen</code> and <code>IntFM.verify</code>. On the verified result, <code>IntFM.toText</code> returns the TL and <code>await IntFM.toLink(result)</code> returns its playable URL.</p>
+          </details>
           <button id="copy-guide">Copy browser guide</button>
           <a id="guide-manual" class="guide-manual" href="browser-guide.txt" hidden>Open Browser guide</a>
-          <p class="reference-links"><a href="authoring.txt">Score &amp; sound recipes</a><a href="starter.score.json">Editable example</a><a href="analysis.txt">Audio analysis</a><a href="native-reference.txt">Native TL reference</a><a href="instrument.txt">Full instrument guide</a><a href="reference/params.txt">Native parameters</a><a href="reference/gen-params.txt">Generator parameters</a></p>
+          <p class="reference-links"><a href="authoring.txt">Score &amp; sound recipes</a><a href="starter.score.json">Editable example</a><a href="analysis.txt">Audio analysis</a><a href="tl-format.txt">Portable TL format and metadata</a><a href="native-reference.txt">Native TL grammar</a><a href="reference/recipes.txt">Recipe catalog</a><a href="agent-manifest.json">Asset manifest</a><a href="instrument.txt">Full instrument guide</a><a href="reference/params.txt">Native parameters</a><a href="reference/gen-params.txt">Generator parameters</a></p>
         </div>
         <div>
           <h2>Keep your music</h2>
@@ -319,5 +338,10 @@
     <button id="dock-sections" class="dock-sections" type="button" aria-controls="section-nav" aria-expanded="false">Sections</button>
   </nav>
 </aside>
+<footer class="agent-resources" aria-label="Song creation references">
+  <strong>Agent song handoff</strong>
+  <p>Start with <a href="llms.txt">llms.txt</a> and <a href="agent-quick.txt">agent-quick.txt</a>. Write editable score v1 JSON with <a href="authoring.txt">authoring.txt</a>. A portable .tl holds an optional versioned metadata header and one native timeline. See <a href="tl-format.txt">tl-format.txt</a> for header fields and <a href="native-reference.txt">native-reference.txt</a> for music events.</p>
+  <p>Follow <a href="agent-start.txt">agent-start.txt</a> to render, verify the saved TL and return its playable link. Browser automation can use <a href="browser-guide.txt">window.IntFM</a>. A read-only assistant can hand the score to the player for verification. <a href="analysis.txt">Audio measurements</a> help with revision.</p>
+</footer>
 </body>
 </html>

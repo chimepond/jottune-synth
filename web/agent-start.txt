@@ -4,8 +4,8 @@ SPDX-License-Identifier: Apache-2.0
 JOTTUNE SYNTH: START HERE, GIVEN THIS PLAYER URL
 
 Goal: compose an original instrumental song, render locally with the complete
-JotTune engine, inspect/revise it, and deliver ONE complete canonical .tl plus
-WAV. Keep your editable score too. No source checkout, MCP server, npm install,
+JotTune engine, measure and revise it, then deliver the verified canonical .tl,
+editable score and playback link. Include WAV when you can transfer audio. No source checkout, MCP server, npm install,
 Python, renderer bridge or custom TL parser is required. No audio is sent to
 the service by these local tools. Synthesized instruments do not sing lyrics.
 All following links are relative to THIS player prefix, not the domain root.
@@ -28,6 +28,7 @@ Read agent-quick.txt for a compact capability check and valid score, then
 authoring.txt to write a song and render a first take. Use other references
 when needed; reading all source code or documentation before composing is
 unnecessary. agent-manifest.json files[].bytes gives exact served file sizes.
+  llms.txt                  full index of player guides and reference files
   agent-quick.txt           minimal score, pipeline and capability split
   authoring.txt             score fields, durable metadata, FX and sound laws
   reference/recipes.txt     look up chosen recipes and their native rows
@@ -41,7 +42,10 @@ native-reference.txt is the native-instrument subset of instrument.txt; consult
 it for synthesis features beyond the authoring guide. There is no need to read
 agent.mjs source: run node agent.mjs --help for supported commands and flags.
 starter.score.json is an editable eight-bar syntax example; starter.tl is its
-complete hashless draft. Make an original arrangement, not a renamed example.
+complete hashless draft. For the exact text in a connected browser, use
+await (await fetch('authoring.txt')).text(). Keep known title, made_by, model
+(id and source), tempo, genre and utc_day in score.metadata. Omit unknowns.
+The field table in authoring.txt links the portable document rules in tl-format.txt.
 
 LICENSE BEFORE COMPOSING OR SHARING
 Preserve score.metadata.license through revisions and canonical export.
@@ -74,7 +78,9 @@ c_level attenuates; positive gain amplifies. See authoring.txt for bounds. Then:
   const saved = await IntFM.verify(IntFM.toText(take),
                                  {release:draft.rendererRelease});
   if (!saved.verified) throw Error(saved.stderr || saved.verification);
-  const measured = await IntFM.analyze(saved, {windowSeconds:4});
+  const sections = [{name:'opening',startSeconds:0,endSeconds:1}];
+  const measured = await IntFM.analyze(saved, {sections, dryVoices:true});
+  console.log(measured.pcm.sections, measured.dry.reason ?? measured.dry.streams);
   const wav = IntFM.toWav(saved);  // Blob; original integer PCM
   const svg = IntFM.toSvg(saved); // native note gates, not an audio spectrum
   console.log(IntFM.summary(saved)); // compact JSON-safe result; no PCM/events
@@ -188,8 +194,11 @@ quality/originality proofs. Use identical phrases plus effect history for A/B.
 Revise the retained score; never erase an unexplained saved hash mismatch.
 
 4. DELIVER
-Canonical .tl is self-contained. Keep it, its renderer release, WAV and editable
-score. Hashless valid drafts are unverified: canonical replay must report
+Keep the complete canonical .tl, renderer release and editable score. A browser
+agent can return the verified player link and score even when audio transfer is
+unavailable. If canonical text exceeds one reply, browser-guide.txt shows how
+to transfer it in parts and check its document SHA-256. Hashless valid drafts
+are unverified: canonical replay must report
 verified=true, match=yes and block_indep=yes. Listen is one pass; verify is two.
 The CLI automatically replays a draft's canonical output in verification mode.
 execution.canonicalReplay means this EXTRA invocation for a newly canonicalized

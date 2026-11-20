@@ -133,6 +133,22 @@ this is validation, not audio verification. Its source-map pointers and advisory
 indices still refer to the original score. Listen or Verify remains a separate call.
 This measures a new performance through the effects, not independent additive
 stems of the original: shared returns, dynamics and preceding audio can change.
+To compare each part through the effects in a named passage, render solos in
+sequence. Choose sections within the score duration. For example:
+  const sections = [{name:'opening',startSeconds:0,endSeconds:1}];
+  const rows = [];
+  for (const stream of score.streams) {
+    const d = await IntFM.compose(score, {soloStreams:[stream]});
+    const t = await IntFM.listen(d.draftText, {release:d.rendererRelease});
+    if (t.verdict !== 'valid') throw Error(t.stderr || t.verdict);
+    const a = await IntFM.analyze(t, {sections});
+    for (const s of a.pcm.sections)
+      rows.push({stream,section:s.name,lufs:s.loudness?.integrated_lufs ?? null});
+  }
+  console.table(rows);
+Each solo starts with the full score duration and its own effects history.
+Shared dynamics and sends can respond differently with all streams playing.
+
 The CLI equivalent is compose --solo-streams '["lead"]' or --mute-streams '["bass"]'.
 
 Save draft text keeps the exact editable text, even before it is valid.
@@ -208,8 +224,13 @@ save the TL file too.
 A person can open a score JSON file, or paste score JSON into the editor and
 choose Prepare pasted input. Both compile score v1, report source errors and
 advisories, and use the native browser renderer without autoplay. Copy report for your agent
-copies the current errors, advisories and available measurements as text for
-revision in chat. It does not claim measurements that have not been run. A
+includes the native sample peak, peak and RMS in dBFS, sample frames and
+saturation count in song.play. For integrated LUFS, stereo balance and exact
+ending silence, use Record details → Audio measurements → Analyze audio, then
+copy again. The clipboard includes up to eight named sections, dry streams and
+authoring advisories each, with total counts. Save analysis JSON keeps all
+measured windows, channels, sections and optional dry levels. Copying a report
+does not start or interrupt analysis. A
 read-only web fetch cannot render; a connected browser or an authorized local
 client is required. Network/execution limits belong to the particular session.
 
@@ -239,6 +260,19 @@ and amb3 channels are field coefficients: inspect/export them, not speaker audio
 
 await IntFM.metrics(text, options): render and return native metrics.
 IntFM.toWav(result, provenance={}): Blob preserving PCM, with WAV INFO credits.
+For a text-only browser session, send the editable score and the verified playback
+link. To transfer a large saved TL or URL through bounded text replies, call:
+  await IntFM.exportChunk(saved, {format:'tl', offset:0, bytes:6000})
+Use format:'link' for the UTF-8 bytes of the pinned URL from IntFM.toLink(saved).
+Defaults are 'tl', offset 0 and 6000 bytes. Each request accepts 1..7200 bytes.
+Decode each reply's base64 separately and verify its chunkSha256. Request the
+nextOffset from that reply until it is null. Keep format, totalBytes,
+documentSha256 and payloadSha256 constant. Concatenate the decoded bytes in
+offset order, check totalBytes and verify the complete payloadSha256. For TL it
+must equal the saved documentSha256. Decode UTF-8 only after joining chunks.
+An offset at totalBytes yields an empty final chunk. Export runs locally and
+preserves the render's verification status. Attach audio when file transfer is
+available, and label playback that nobody auditioned as unheard.
 IntFM.toSvg(result): native note-gate timeline and spatial command targets.
 IntFM.showQr(url): open a local QR dialog for a complete HTTP(S) song URL;
 returns true when the code is generated. IntFM.closeQr() clears it. QR encoding

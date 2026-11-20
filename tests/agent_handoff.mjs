@@ -137,13 +137,29 @@ async function withPage(name,run,{reader=false,missingCompression=false,delayFil
 
 try {
   await withPage('JavaScript-disabled reader discovers exact quick card and score/docs links',async(page,context)=>{
-    for(const name of ['agent-quick.txt','agent-start.txt','authoring.txt','starter.score.json','analysis.txt','browser-guide.txt']) {
+    for(const edge of ['nav[aria-label="Make a song with an agent"]','footer[aria-label="Song creation references"]']) {
+      for(const name of ['llms.txt','agent-quick.txt','agent-start.txt','tl-format.txt']) {
+        assert(await page.locator(edge).locator('a[href="'+name+'"]').isVisible(),edge+' must expose '+name+' without a click or JavaScript');
+      }
+    }
+    assert.equal(await page.locator('head link[rel="help"][href="llms.txt"]').count(),1);
+    const html=await (await context.request.get(base)).text();
+    for(const chunk of [html.slice(0,2600),html.slice(-2250)]) {
+      for(const name of ['llms.txt','agent-quick.txt','agent-start.txt','tl-format.txt']) assert(chunk.includes('href="'+name+'"'),name+' must survive a clipped HTML read');
+    }
+    await page.locator('#agent > summary').click();
+    await page.locator('#score-syntax > summary').click();
+    const example=JSON.parse(await page.locator('#inline-score').innerText());
+    assert.equal(example.version,1);assert.equal(example.metadata.made_by,'agent');
+    for(const name of ['llms.txt','agent-quick.txt','agent-start.txt','tl-format.txt','authoring.txt','starter.score.json','analysis.txt','browser-guide.txt','native-reference.txt','reference/recipes.txt','agent-manifest.json']) {
       const link=page.locator(`a[href="${name}"]`).first();assert.equal(await link.count(),1,'Missing direct reference: '+name);
       const response=await context.request.get(new URL(await link.getAttribute('href'),base).href);
       assert.equal(response.status(),200,name);const bytes=await response.body();assert(bytes.length>0,name);
       if(name==='agent-quick.txt') {assert(bytes.length<=2048,'Quick card exceeds 2 KiB.');assert.match(bytes.toString(),/"version":1/);}
       if(name==='starter.score.json') assert.equal(JSON.parse(bytes).version,1);
     }
+    const alias=await context.request.get(new URL('llm.txt',base).href);
+    assert.equal(alias.status(),200);assert.match(await alias.text(),/\(llms\.txt\)/);
     assert(await page.locator('#play').isDisabled(),'A reader-only page has no prepared audio.');
   },{reader:true});
 

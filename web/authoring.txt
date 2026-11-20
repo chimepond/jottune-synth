@@ -18,6 +18,7 @@ LINKS RELATIVE TO THIS PAGE
   starter.score.json       editable score-v1 example
   starter.tl               complete matching hashless TL draft
   authoring.mjs            pure browser/Node authoring functions
+  llms.txt                 index of the player guides and reference files
   agent-quick.txt          compact score, pipeline and capability check
   browser-guide.txt        browser rendering, verification and export
   tl-format.txt            durable metadata fields and document identity
@@ -54,8 +55,9 @@ publication or CC0/dataset/rights/age/history consent. Private drafts may omit i
 
 The page's Listen button starts audio on its user gesture. IntFM.listen only
 renders; a returned PCM buffer is not evidence of hearing the song. Export the
-canonical bytes and WAV through the player or the supported Node client. The
-browser guide explains release discovery, limits and all result fields.
+verified canonical TL and keep the editable score. Save a WAV when your interface
+can transfer it. In a text-only browser session, use IntFM.toLink(saved) and the
+canonical text handoff in browser-guide.txt.
 
 compileScore returns draftText (also authored_tl), sourceMap (also line_map),
 advisories, length_ns, quarter_extent, counts and coverage. Each source-map row
@@ -287,6 +289,10 @@ Use the native descriptor for positional patch fields. Common traps:
 * Declaring delay/reverb does not send audio into it. Add nonzero per-voice sends.
   Sends demonstrate routing, not musical benefit. Compare one changed send over
   the same phrase plus its decay, with the preceding effect history retained.
+* After the returns join the dry mix, the enabled master stages run in this order:
+  gain, DC blocker, compressor, limiter, then softclip or rounding with optional
+  dither. Raising gain drives the limiter harder. Declaration order in the TL
+  header has no effect on processing order.
 * limiter THRESHOLD_DB10 RELEASE_MS uses POSITIVE attenuation: "limiter 30 100"
   means a -3 dB threshold and 100 ms release. A negative threshold is invalid.
   Do not use a limiter to conceal bad staging; no target level is a genre gate.
