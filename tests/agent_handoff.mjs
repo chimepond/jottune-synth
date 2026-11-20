@@ -92,8 +92,8 @@ async function savedIdentity(page) {
   await page.locator('#verify-saved').tap();
   await page.waitForFunction(()=>/^Verified/.test(document.getElementById('verdict').textContent));
   return page.evaluate(()=>{
-    const {documentSha256,recordSha256,pcmHash,rendererRelease}=window.IntFM.summary();
-    return {documentSha256,recordSha256,pcmHash,rendererRelease:rendererRelease ?? null};
+    const {documentSha256,recordSha256,pcmHash,engineId,rendererRelease}=window.IntFM.summary();
+    return {documentSha256,recordSha256,pcmHash,engineId,rendererRelease:rendererRelease ?? null};
   });
 }
 async function damagedLink(page,{missingCompression=false}={}) {
@@ -237,6 +237,9 @@ try {
     assert.match(originalIdentity.documentSha256,/^[a-f0-9]{64}$/);
     assert.match(originalIdentity.recordSha256,/^[a-f0-9]{64}$/);
     assert.match(originalIdentity.pcmHash,/^[a-f0-9]+$/);
+    assert(originalIdentity.engineId);
+    const requestedRelease=new URL(base).searchParams.get('release');
+    if(requestedRelease) assert.equal(originalIdentity.rendererRelease,requestedRelease);
     const expected=await page.evaluate(()=>window.IntFM.toLink());
     const bytes=await downloadBytes(page,button,/\.link\.txt$/);
     assert(bytes.equals(Buffer.from(expected+'\n','utf8')),'Downloaded bytes must contain the complete URL and one LF.');
