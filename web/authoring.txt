@@ -18,7 +18,9 @@ LINKS RELATIVE TO THIS PAGE
   starter.score.json       editable score-v1 example
   starter.tl               complete matching hashless TL draft
   authoring.mjs            pure browser/Node authoring functions
+  agent-quick.txt          compact score, pipeline and capability check
   browser-guide.txt        browser rendering, verification and export
+  tl-format.txt            durable metadata fields and document identity
   reference/params.txt     native field units, ranges and dependencies
   reference/gen-params.txt native generators
   reference/recipes.txt    complete recipe rows, descriptions and tweak units
@@ -32,15 +34,23 @@ identity from the selected installed renderer registry entry, without the
 leading "ENGINE ". Engine identity is not a unique release identifier; retain
 the selected renderer release separately and use it when rendering and replaying.
 
+Preserve score.metadata.license through composition, revisions and canonical
+export. For your original song whose author approved CC0, explicitly set
+metadata.license to "CC0-1.0" before composing. Never silently relicense a work:
+this teaching starter retains Apache-2.0. The header supplies no separate
+publication or CC0/dataset/rights/age/history consent. Private drafts may omit it.
+
   const score = await (await fetch(new URL('starter.score.json', document.baseURI))).json();
   const compiled = await IntFM.compose(score);
   console.log(compiled.advisories);
   const take = await IntFM.listen(compiled.draftText, {release: compiled.rendererRelease});
   if (take.verdict !== 'valid') throw Error(take.stderr || take.verdict);
-  const savedText = new TextDecoder().decode(take.canonical);
+  const savedText = IntFM.toText(take);
   const saved = await IntFM.verify(savedText, {release: compiled.rendererRelease});
   if (!saved.verified) throw Error(saved.stderr || saved.verification);
   const wav = IntFM.toWav(saved);
+  console.log(IntFM.summary(saved)); // JSON-safe; no PCM or native event arrays
+  const songURL = await IntFM.toLink(saved); // same URL as the share control
 
 The page's Listen button starts audio on its user gesture. IntFM.listen only
 renders; a returned PCM buffer is not evidence of hearing the song. Export the
@@ -65,8 +75,43 @@ SCORE SHAPE AND EXACT TIME
 
 Required fields: version:1, fs:44100 or 48000, clock, declarations (native text),
 streams (distinct names in ordering priority), voices (patch names indexed from
-zero), and events. Optional name and about:[single-line text] become comments.
-Unknown fields are refused. The clock is:
+zero), and events. Optional metadata carries durable descriptive fields. Optional
+name and about:[single-line text], plus mark events, become authoring comments:
+canonicalization drops those comments. Put the saved title in metadata.title;
+keep the score to retain comments and source structure. Unknown fields are refused.
+
+For example, add this object at the top level beside version and events:
+  "metadata": {"title":"Your song", "made_by":"agent",
+               "tempo":{"min_bpm":96,"max_bpm":96}}
+
+All metadata fields are optional. The exact portable TL field is license
+(American spelling), not licence. Supported fields and bounds from tl-format.txt:
+  title                 nonempty NFC text, at most 60 Unicode characters
+  collection, author    nonempty NFC text, at most 200 Unicode characters each
+  made_by               agent, human or mixed
+  genre                 null or 1..160 characters from [A-Za-z0-9._:+/@-]
+  tempo                 null or exactly {min_bpm,max_bpm}; finite positive
+                        numbers <= 9007199254740991, min_bpm <= max_bpm
+  model                 null or exactly {id,source}; id uses the genre label
+                        grammar, source is client-reported or user-stated
+  utc_day               valid YYYY-MM-DD calendar date
+  license, prompt_id    1..160 characters from [A-Za-z0-9._:+/@-]
+  renderer_release      1..128 characters from [A-Za-z0-9._-]
+Text has no leading/trailing whitespace, controls, surrogates or line/paragraph
+separators. No free prompt, arbitrary extension object or extra field is allowed.
+Only genre, tempo and model accept null; omit other unknown fields. Never infer
+an author, model ID, genre or license. A header-bearing document is at most
+1,000,000 UTF-8 bytes, with no BOM/NUL; each newline-terminated line has at most
+1022 content bytes including its "# " prefix. See tl-format.txt for framing.
+
+For ChimePond or tunes publication, include "license":"CC0-1.0" only with the
+author's explicit authorization. This declaration does not supply actual CC0,
+dataset, rights, age or history-retention consent, or permission to publish.
+Those remain separate publication decisions and declarations. Local private
+drafts may leave license undeclared. This teaching starter is Apache-2.0; do not
+relabel its arrangement CC0 or present it as your own original composition.
+
+The clock is:
 
   {bars:8, meter:[{bar:1, quarters:4}],
    tempo:[{bar:1, bpm:96}], ramp:'step', tail_ns:3000000000}
@@ -210,6 +255,26 @@ ping-pong different left/right delays. Moving a voice does not move its returns.
 Try independent complementary phrases and check actual stereo/mono behavior.
 The same score can declare other native routes; raw ambisonic coefficients are
 not speaker channels. Native dependencies and selected-renderer support apply.
+
+Common FX fields, in positional order (inclusive native bounds):
+  delay      TIME_US 50000..1000000, FEEDBACK_Q15 0..29491,
+             LOWPASS_HZ 20..20000
+  pingpong   the same three fields, then HIGHPASS_HZ 0..2000
+  reverb     ROOM_PERMILLE 0..1000, DAMP_PERMILLE 0..1000
+  chorus     BASE_US 7000..25000, DEPTH_US 1000..5000,
+             RATE_MILLIHZ 100..3000
+  compressor THRESHOLD_DB10 0..600, RATIO_TENTHS 10..200,
+             ATTACK_MS 0..100, RELEASE_MS 1..5000, MAKEUP_DB10 0..240
+  limiter    THRESHOLD_DB10 0..200, RELEASE_MS 1..5000
+  gain       GAIN_DB10 -600..240
+  block      FRAMES exactly 32, 64 or 128
+Score send events use bus chorus, delay, reverb, duck or flanger and
+level_q15 0..32768. The bus must be enabled; duck requires a compressor.
+Ping-pong uses sends to the delay bus: there is no pingpong bus. delay and
+pingpong are mutually exclusive. These FX require fs 8000..192000 and forbid
+PANLAW; pingpong needs stereo, amb1, amb3 or binaural, while compressor/limiter
+forbid raw amb1/amb3. Positive thresholds are attenuation; makeup/gain are gain.
+These bounds come from reference/params.txt; consult it for all dependencies.
 
 Use the native descriptor for positional patch fields. Common traps:
 * Pitch/filter cutoff is mHz, patch envelope times ms, delay times microseconds,

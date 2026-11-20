@@ -67,7 +67,8 @@ defaults remain editorial; Browse all prefers the existing saved
 Keys default. Same-song explicit choices remain when they match the filters.
 Genre and tempo cite retained scores or creator declarations. Missing fields
 remain Unknown, including model attribution. A BPM range is not a timed tempo
-map. Metadata stays outside TL and binds only to its exact canonical version.
+map. Catalog metadata binds only to its exact canonical version; portable
+header metadata is described below.
 Collection summaries use this website selection, one Original per composition,
 and show known/unknown denominators. They are not exchange or benchmark counts,
 and construction/declarations do not measure musical quality or model progress.
@@ -112,6 +113,12 @@ render full native TL within their stated limits. Retain the exact editable
 score input yourself: canonical TL does not recover its phrases or regions.
 The complete preset catalog is reference/recipes.txt, including synthesis
 declarations and spectral guidance beyond the short recipe descriptions.
+
+Before composing, preserve score.metadata.license in revisions and canonical
+exports. For an original contribution whose author approved CC0, explicitly set
+metadata.license to "CC0-1.0". Never silently relicense another work. This field
+supplies no separate publication or CC0/dataset/rights/age/history consent;
+private drafts may omit it. Use license, not licence, in portable TL metadata.
 
 Optional score-v1 part audition: await IntFM.compose(score,{soloStreams:['lead']})
 or {muteStreams:['bass']}; use one option only, with distinct existing stream
@@ -186,6 +193,26 @@ cancellable operation, preserving the link's release and expected identity.
 It returns a listener result; inspect verdict as with render. Network errors
 and cancellation reject. It never starts audio or acquires an audio device.
 
+For an automation reply, IntFM.summary(result=IntFM.result()) returns a compact
+JSON-safe object with current result identity, verification and dimensions; it
+contains no PCM arrays or native event rows. IntFM.toText(result) returns the
+canonical full TL document as a string, preserving its validated metadata.
+Use it instead of manually decoding result.canonical.
+
+await IntFM.toLink(result, {pinRelease:true}) returns a URL string exactly as the
+player's song-link share control builds it. pinRelease defaults to true. It
+uses the same compact library reference or portable TL fragment as that control;
+it does not publish or upload the song. Keep the returned string intact and
+save the TL file too.
+
+A person can open a score JSON file, or paste score JSON into the editor and
+choose Prepare pasted input. Both compile score v1, report source errors and
+advisories, and use the native browser renderer without autoplay. Copy report for your agent
+copies the current errors, advisories and available measurements as text for
+revision in chat. It does not claim measurements that have not been run. A
+read-only web fetch cannot render; a connected browser or an authorized local
+client is required. Network/execution limits belong to the particular session.
+
 A result includes verdict, code, mode, verified, verification, native stdout and
 stderr, canonical Uint8Array bytes, recordSha256, pcmHash, engineIdentity,
 engineId, rendererRelease, development, play/metrics objects, PCM Int16Array,
@@ -206,8 +233,8 @@ a Listen result can contain canonical TL and pcmHash while verified stays false.
 Refused carries the native diagnostic. Wrong PCM hashes or unavailable/withdrawn
 explicit releases are mismatch, never a fallback or a newly sealed success.
 
-Record SHA-256 covers canonical TL bytes. PCM hash is the engine's FNV-1a 64
-value, not SHA-256. Device audio resampling is outside that identity. Raw amb1
+Record SHA-256 covers the canonical native music body; a full-document checksum
+also covers metadata. PCM hash is the engine's FNV-1a 64 value, not SHA-256. Device audio resampling is outside that identity. Raw amb1
 and amb3 channels are field coefficients: inspect/export them, not speaker audio.
 
 await IntFM.metrics(text, options): render and return native metrics.
@@ -375,7 +402,13 @@ is the song identity; document SHA-256 additionally covers metadata bytes.
 The current TL and engine compatibility counters are both 1; newer required
 versions are refused. Existing headerless files remain valid. Score JSON may
 include an explicit metadata object; unknown model/genre/tempo stays unknown.
-Metadata declarations never replace explicit publication consent.
+Metadata declarations never replace explicit publication consent. name/about/mark
+are authoring comments and disappear from canonical output; use metadata.title
+for the durable title. The portable field is license (not licence); the WAV
+provenance key licence above is a separate interface. Use "license":"CC0-1.0"
+for ChimePond/tunes publication only with the author's explicit authorization.
+It supplies no actual CC0, dataset, rights, age or history-retention consent,
+and no permission to publish. Local private drafts may omit a license.
 
 Player Facts shows the TL version, engine compatibility version, header status
 and embedded declarations. Headerless files show the inferred legacy version 1.

@@ -24,17 +24,18 @@ References are optional; their selection can influence the result. Never claim
 that valid rendering, feature counts or loudness measurements prove a masterpiece.
 
 1. DISCOVER
-Read this guide, then authoring.txt to write a score and render a first take.
-Use the other references when their subject is needed; reading all source code
-or all documentation before composing is unnecessary. Approximate download sizes
-below are UTF-8 bytes, not model tokens. agent-manifest.json files[].bytes gives
-the exact size of each served file for this deployment.
-  authoring.txt             ~19 KB: score fields, clock, recipes and sound laws
-  reference/recipes.txt     ~22 KB: look up chosen recipes and their native rows
-  analysis.txt              ~9 KB: inspect a take, sections, levels and dry voices
-  browser-guide.txt         ~19 KB: browser API; terminal users can skip it
-  reference/params.txt      ~81 KB: look up native fields, units and bounds
-  reference/gen-params.txt  ~5 KB: read when using native generators
+Read agent-quick.txt for a compact capability check and valid score, then
+authoring.txt to write a song and render a first take. Use other references
+when needed; reading all source code or documentation before composing is
+unnecessary. agent-manifest.json files[].bytes gives exact served file sizes.
+  agent-quick.txt           minimal score, pipeline and capability split
+  authoring.txt             score fields, durable metadata, FX and sound laws
+  reference/recipes.txt     look up chosen recipes and their native rows
+  analysis.txt              inspect a take, sections, levels and dry voices
+  browser-guide.txt         browser API; terminal users can skip it
+  reference/params.txt      look up native fields, units and bounds
+  reference/gen-params.txt  read when using native generators
+  tl-format.txt             portable metadata bounds and identity
   instrument.txt           broad instrument reference, including local CLI tools
 native-reference.txt is the native-instrument subset of instrument.txt; consult
 it for synthesis features beyond the authoring guide. There is no need to read
@@ -42,7 +43,26 @@ agent.mjs source: run node agent.mjs --help for supported commands and flags.
 starter.score.json is an editable eight-bar syntax example; starter.tl is its
 complete hashless draft. Make an original arrangement, not a renamed example.
 
+LICENSE BEFORE COMPOSING OR SHARING
+Preserve score.metadata.license through revisions and canonical export.
+Use license (not licence). For an original ChimePond/tunes contribution with the
+author's explicit CC0 approval, set it to "CC0-1.0". Never silently relicense.
+Header metadata supplies no separate publication or CC0/dataset/rights/age/history
+consent. Private drafts may omit license; the teaching starter retains Apache-2.0.
+
 2. CHOOSE ONE SUPPORTED INTERFACE
+A web reader can read docs but cannot execute this page's JavaScript/Wasm. A
+connected browser can render locally. A cloud terminal may restrict network or
+execution: check that session's capabilities, rather than assuming all phones
+or agents share one restriction. If the site is unreachable, use a downloadable
+offline client bundle when available, or hand score JSON to the person's browser.
+
+Without automation, send a .score.json file to open in the player, or paste
+score JSON into its editor and choose Prepare pasted input. Both compile and
+render locally without autoplay; Play needs the person's tap. Ask them to use Copy report for your agent and
+paste the errors, advisories and current measurements back for your revision.
+Keep the editable score alongside the canonical TL for later musical edits.
+
 A. Browser automation: await IntFM.compose(score) returns draftText and the
 selected rendererRelease. IntFM.recipes() lists the sounds. A score declaration
 "recipe wind flute c_level=6" lowers the flute carrier by 6 dB; for all carriers,
@@ -51,12 +71,14 @@ c_level attenuates; positive gain amplifies. See authoring.txt for bounds. Then:
   const draft = await IntFM.compose(score);
   const take = await IntFM.listen(draft.draftText, {release:draft.rendererRelease});
   if (take.verdict !== 'valid') throw Error(take.stderr || take.verdict);
-  const saved = await IntFM.verify(new TextDecoder().decode(take.canonical),
+  const saved = await IntFM.verify(IntFM.toText(take),
                                  {release:draft.rendererRelease});
   if (!saved.verified) throw Error(saved.stderr || saved.verification);
   const measured = await IntFM.analyze(saved, {windowSeconds:4});
   const wav = IntFM.toWav(saved);  // Blob; original integer PCM
   const svg = IntFM.toSvg(saved); // native note gates, not an audio spectrum
+  console.log(IntFM.summary(saved)); // compact JSON-safe result; no PCM/events
+  const songURL = await IntFM.toLink(saved); // release pinned by default
 Use the existing player buttons to save TL, WAV, SVG, analysis JSON and PNG
 spectrogram. browser-guide.txt documents the complete API. Loading/rendering
 via API is silent; Play needs a human audio gesture. Do not claim you listened
@@ -182,6 +204,9 @@ CLI SVG shows native note gates and spatial command targets. MIDI/SFZ and
 score v2/v3 abstractions use the separate local tools described in local-tools.txt
 and interchange.txt; they are not silently advertised as browser operations.
 Portable links and QR codes are created locally; save the canonical TL for durable storage.
+Use metadata.title for the saved title: name/about/mark are comments dropped by
+canonicalization. Keep metadata.license with the canonical full TL as instructed
+above. See authoring.txt and tl-format.txt for exact fields and bounds.
 
 Use songs.json or Browse all for examples; Favorites is a curated listening selection.
 Optional references, after choosing your own musical direction:

@@ -1,3 +1,13 @@
+# jottune-tl 1 1
+# {
+#   "license": "Apache-2.0",
+#   "tempo": {
+#     "max_bpm": 96,
+#     "min_bpm": 96
+#   },
+#   "title": "A first conversation"
+# }
+# end-jottune-tl
 timeline draft2
 engine a1 sine_bits=12 exp_bits=10 phase64=1 env64=1 fb_avg=1 tables=58021f1150d3c8d2
 fs 48000
@@ -7,6 +17,7 @@ streams lead bass chords
 # Copyright (c) 2026 Nenad Micic
 # SPDX-License-Identifier: Apache-2.0
 # Teaching arrangement: write your own melody before claiming original publication.
+# The metadata license describes this Apache-2.0 teaching example, not CC0 publication consent.
 # Eight bars, 4/4, quarter-note BPM 96; ordinary stereo, not binaural.
 # Lead and bass remain centered. Independent chord voices sit left and right.
 space stereo

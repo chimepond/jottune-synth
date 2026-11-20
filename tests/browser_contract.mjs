@@ -2665,6 +2665,91 @@ test('first-channel spectrum retains antiphase stereo energy', async () => {
   assert.deepEqual(stereo, before);
 });
 
+test('compact result helpers preserve identity and exactly match UI sharing without audio arrays',()=>withPage(async page=>{
+  const result=await complete(page,'authored fixture',validResult({rendererRelease:'test',metadata:{title:'A compact song'},canonical:new TextEncoder().encode('canonical fixture\n')}));
+  const report=page.api.summary();assert.equal(report.recordSha256,result.recordSha256);
+  assert.equal(report.title,'A compact song');assert.equal(report.canonicalBytes,result.canonical.byteLength);
+  assert(!Object.hasOwn(report,'pcm'));assert(!Object.hasOwn(report,'events'));assert(!Object.hasOwn(report,'canonical'));
+  assert.doesNotThrow(()=>JSON.stringify(report));assert.equal(page.api.toText(),new TextDecoder().decode(result.canonical));
+  const link=await page.api.toLink();await page.get('share').click();assert.equal(link,page.copied.at(-1));
+  assert.equal(new URL(link).searchParams.get('release'),'test');assert.equal(new URL(await page.api.toLink(result,{pinRelease:false})).searchParams.has('release'),false);
+  await assert.rejects(page.api.toLink(result,{unknown:true}),/pinRelease/);
+  assert.equal(page.audioCreations(),0);
+}));
+test('phone score file import and pasted score compile and prepare silently with advisory report',()=>withPage(async page=>{
+  page.ready({default:'test',engines:[{id:'test',identity:'int-fm-synth 1'}]});
+  const score=JSON.parse(readFileSync(new URL('../web/starter.score.json',import.meta.url),'utf8'));
+  score.metadata={title:'Phone composition',license:'CC0-1.0'};
+  page.get('file').files=[{name:'composition.score.json',size:JSON.stringify(score).length,text:async()=>JSON.stringify(score)}];
+  const pending=page.get('file').onchange();await nextTurn();
+  const worker=page.workers.at(-1);assert.equal(worker.request.mode,'listen');assert.match(worker.request.recordText,/# jottune-tl 1 1/);
+  worker.reply(validResult({metadata:score.metadata}));await pending;
+  assert.equal(page.api.result().authoring.counts.input_events,score.events.length);
+  assert.equal(page.audioCreations(),0);assert.equal(page.get('play').disabled,false);
+  await page.get('agent-report').click();const copied=JSON.parse(page.copied.at(-1));
+  assert.equal(copied.song.title,'Phone composition');assert(!Object.hasOwn(copied.song,'pcm'));
+  page.get('record').value=JSON.stringify(score);
+  const pasted=page.get('prepare-input').click();await nextTurn();page.workers.at(-1).reply(validResult({metadata:score.metadata}));await pasted;
+  assert.equal(page.audioCreations(),0);assert.equal(page.get('play').disabled,false);
+}));
+test('authored native refusals retain the failure status and source advisories',()=>withPage(async page=>{
+  page.ready({default:'test',engines:[{id:'test',identity:'int-fm-synth 1'}]});
+  const score=JSON.parse(readFileSync(new URL('../web/starter.score.json',import.meta.url),'utf8'));
+  score.events.push({kind:'off',at:0,stream:score.streams[0],voice:0});
+  page.get('record').value=JSON.stringify(score);
+  const pending=page.get('prepare-input').click();await nextTurn();
+  page.workers.at(-1).reply(validResult({verdict:'refused',stderr:'Too large for the browser profile.',canonical:new Uint8Array(),pcm:undefined}));
+  await pending;assert.equal(page.api.result().verdict,'refused');assert(page.api.result().authoring.advisories.length>0);
+  assert.equal(page.get('status').textContent,'Too large for the browser profile.');assert.equal(page.get('play').disabled,true);
+  await page.get('agent-report').click();const report=JSON.parse(page.copied.at(-1));
+  assert.equal(report.song.verdict,'refused');assert(report.song.authoring.advisories.length>0);assert.equal(page.audioCreations(),0);
+}));
+test('pasted scores keep the selected renderer for silent listening and verification',async()=>{
+  for(const [control,mode] of [['prepare-input','listen'],['render','verify']]) await withPage(async page=>{
+    page.ready({default:'new',engines:[{id:'old',identity:'int-fm-synth old'},{id:'new',identity:'int-fm-synth new'}]});
+    const loaded=page.api.render('saved older song',{release:'old'});await nextTurn();
+    page.workers.at(-1).reply(validResult({rendererRelease:'old',engineId:'old'}));await loaded;
+    const score=JSON.parse(readFileSync(new URL('../web/starter.score.json',import.meta.url),'utf8'));
+    page.get('record').value=JSON.stringify(score);page.get('record').dispatch('input');
+    const pending=page.get(control).click();await nextTurn();const worker=page.workers.at(-1);
+    assert.equal(worker.request.engine.id,'old');assert.equal(worker.request.mode,mode);
+    assert.match(worker.request.recordText,/engine int-fm-synth old/);
+    worker.reply(validResult({rendererRelease:'old',engineId:'old'}));await pending;
+    assert.equal(page.api.result().rendererRelease,'old');assert.equal(page.audioCreations(),0);
+  });
+});
+test('invalid score imports provide actionable pointer errors without native worker or audio',()=>withPage(async page=>{
+  page.ready({default:'test',engines:[{id:'test',identity:'int-fm-synth 1'}]});
+  for(const [text,message] of [['{',/incomplete or invalid/],['{"version":3}',/version/]]){
+    page.get('record').value=text;await page.get('prepare-input').click();
+    assert.match(page.get('status').textContent,message);assert.equal(page.workers.length,0);
+    await page.get('agent-report').click();const report=JSON.parse(page.copied.at(-1));assert(report.inputError.message);
+    if(text.includes('3'))assert.equal(report.inputError.pointer,'/version');
+  }
+  assert.equal(page.audioCreations(),0);
+}));
+test('late file reads cannot replace a newer file and denied clipboard offers plain report text',()=>withPage(async page=>{
+  const slow=deferred();page.ready();
+  page.get('file').files=[{name:'old.tl',size:12,text:()=>slow.promise}];const first=page.get('file').onchange();
+  page.get('file').files=[{name:'new.tl',size:12,text:async()=>'latest file'}];const latest=await prepared(page,page.get('file').onchange(),'latest file');
+  slow.resolve('obsolete file');await first;assert.equal(page.api.result(),latest);assert.equal(page.get('record').value,'latest file');
+  Object.defineProperty(navigator,'clipboard',{value:undefined,configurable:true});
+  await page.get('agent-report').click();assert.equal(page.get('agent-report-manual').hidden,false);
+  assert.equal(JSON.parse(page.get('agent-report-manual').value).song.recordSha256,latest.recordSha256);
+}));
+
+test('superseded Verify and delayed report clipboard errors cannot overwrite newer player state',()=>withPage(async page=>{
+  page.ready();page.get('record').value='first input';
+  const first=page.get('render').click();await nextTurn();
+  const later=page.api.listen('later input');await nextTurn();
+  await first;assert.equal(page.get('status').textContent,'Rendering once for listening…');
+  page.workers.at(-1).reply(validResult());await later;
+  let rejectClipboard;const clipboard=new Promise((resolve,reject)=>{rejectClipboard=reject;});Object.defineProperty(navigator,'clipboard',{value:{writeText:()=>clipboard},configurable:true});
+  const copying=page.get('agent-report').click();page.api.clear();rejectClipboard(Error('denied'));await copying;
+  assert.equal(page.get('status').textContent,'Record cleared.');assert.equal(page.get('agent-report-manual').hidden,true);
+  assert.equal(page.get('agent-report-manual').value,'');
+}));
+
 let failures = 0;
 for (const {name, run} of tests) {
   try { await run(); console.log('PASS ' + name); }

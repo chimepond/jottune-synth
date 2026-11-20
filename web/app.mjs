@@ -278,6 +278,7 @@ let activeWorker, activeReject, lastResult, audio, source, started = 0, elapsed 
 // Compiled native modules are private view state, never part of the public API.
 const spatialModules = new WeakMap();
 let analysisJob, analysisResult, analysisSequence = 0;
+let inputProblem = null, inputRequest = 0, reportRequest = 0;
 let generation = 0, expectedRecordSha = null, loadedRelease;
 let rendering = false, playbackRequest = 0, playbackBuffer, playbackBufferResult;
 const mediaSession = (() => {try {return navigator.mediaSession || null;} catch {return null;}})();
@@ -355,6 +356,7 @@ function invalidate(retainProfile = false, retainRelease = false) {
   updateOfflineStatus();
   closeQr();
   cancel(); stop(); lastResult = null; analysisResult = null;
+  inputProblem = null; $('agent-report').disabled = true; $('agent-report-manual').hidden = true; $('agent-report-manual').value = '';
   $('analysis-status').textContent = 'Analyze the prepared audio without rendering again.';
   $('analysis-output').textContent = ''; $('analysis-download').disabled = true; $('analysis-cancel').hidden = true; expectedRecordSha = null;
   $('song-structure').textContent = 'Load a song to describe its native note commands.';
@@ -430,12 +432,40 @@ const reference = async (name = 'params') => {
 };
 const describe = () => ({name: 'jottune-synth', title: 'JotTune Synth', format: 'JotTune Timeline (.tl)',
   rendering: 'local WebAssembly worker',
-  operations: ['describe', 'compose', 'recipes', 'recipe', 'recipeGain', 'analyze', 'cancelAnalysis', 'render', 'listen', 'verify', 'verifySaved', 'cancel', 'clear', 'loadLink', 'prepareLink', 'result', 'metrics', 'toWav', 'toSvg', 'guide', 'reference', 'showQr', 'closeQr'],
+  operations: ['summary', 'toText', 'toLink', 'describe', 'compose', 'recipes', 'recipe', 'recipeGain', 'analyze', 'cancelAnalysis', 'render', 'listen', 'verify', 'verifySaved', 'cancel', 'clear', 'loadLink', 'prepareLink', 'result', 'metrics', 'toWav', 'toSvg', 'guide', 'reference', 'showQr', 'closeQr'],
   modes: {verify: 'Two renders; checks hash and block independence.', listen: 'One render; block independence is unchecked.'},
   profiles: {halfWidths:[30,45,60,75,90], unit:'degrees each side', mirror:'reverse low/high sides',
     behavior:'Native Keys projection; fully verifies the source and derived ordinary-stereo record. Does not change the input file.'},
   defaultMode: 'verify', limits,
-  references: {start: new URL('agent-start.txt', assetBase).href, authoring: new URL('authoring.txt', assetBase).href, client: new URL('agent.mjs', assetBase).href, analysis: new URL('analysis.txt', assetBase).href, native: new URL('native-reference.txt', assetBase).href, parameters: new URL('reference/params.txt', assetBase).href, generators: new URL('reference/gen-params.txt', assetBase).href},
+  references: {...(document.querySelector?.('#publication-panel') ? {publishing:new URL('publishing.txt',assetBase).href} : {}), quick: new URL('agent-quick.txt', assetBase).href, browser: new URL('browser-guide.txt', assetBase).href, recipes: new URL('reference/recipes.txt', assetBase).href, format: new URL('tl-format.txt', assetBase).href, start: new URL('agent-start.txt', assetBase).href, authoring: new URL('authoring.txt', assetBase).href, client: new URL('agent.mjs', assetBase).href, analysis: new URL('analysis.txt', assetBase).href, native: new URL('native-reference.txt', assetBase).href, parameters: new URL('reference/params.txt', assetBase).href, generators: new URL('reference/gen-params.txt', assetBase).href},
+  operationDetails: {
+    describe:{args:'none',returns:'capabilities, limits, references and operationDetails',effect:'local and silent'},
+    compose:{args:'score v1, {release,soloStreams|muteStreams}',returns:'draftText, advisories, counts, sourceMap, rendererRelease',effect:'silent; selected renderer assets may load'},
+    summary:{args:'result (default current)',returns:'compact JSON-safe result; no PCM or event arrays',effect:'local and silent'},
+    toText:{args:'valid rendered result (default current)',returns:'complete canonical TL document string',effect:'local and silent'},
+    toLink:{args:'valid rendered result, {pinRelease:true by default}',returns:'Promise of the same URL as Copy song link',effect:'local and silent; no upload'},
+    recipes:{args:'none',returns:'recipe descriptions and native fields',effect:'local and silent'},
+    recipe:{args:'recipe ID, patch ID, optional named deltas',returns:'native declarations',effect:'local and silent'},
+    recipeGain:{args:'recipe ID, patch ID, gain dB',returns:'native declarations',effect:'local and silent'},
+    render:{args:'TL text, {mode,release,profile}',returns:'render result with PCM and canonical bytes',effect:'silent; renderer assets may load'},
+    listen:{args:'TL text, {release}',returns:'one-pass render result; no audio playback',effect:'silent; renderer assets may load'},
+    verify:{args:'saved TL text, {release}',returns:'two-pass hash and block-independence result',effect:'silent; renderer assets may load'},
+    verifySaved:{args:'none',returns:'verified replay of current canonical output',effect:'changes page; silent'},
+    analyze:{args:'valid result, {windowSeconds,sections,dryVoices,dryMaxBytes}',returns:'JSON audio measurements',effect:'local and silent; optional dry render'},
+    cancelAnalysis:{args:'none',returns:'undefined',effect:'cancels local analysis'},
+    cancel:{args:'none',returns:'undefined',effect:'cancels local rendering'},
+    clear:{args:'none',returns:'undefined',effect:'clears page and stops playback'},
+    loadLink:{args:'song or portable URL',returns:'loaded record text and identity',effect:'changes page; hosted links use network; no autoplay'},
+    prepareLink:{args:'song or portable URL',returns:'silently prepared result',effect:'changes page; hosted links use network; no autoplay'},
+    result:{args:'none',returns:'current result or null',effect:'local and silent'},
+    metrics:{args:'TL text, render options',returns:'native metrics',effect:'silent render; renderer assets may load'},
+    toWav:{args:'valid result, optional provenance',returns:'WAV Blob',effect:'local and silent'},
+    toSvg:{args:'valid result',returns:'timeline SVG text',effect:'local and silent'},
+    guide:{args:'none',returns:'browser guide text',effect:'fetches a static document'},
+    reference:{args:'params or gen-params',returns:'native reference text',effect:'fetches a static document'},
+    showQr:{args:'URL, optional label',returns:'undefined',effect:'opens page dialog'},
+    closeQr:{args:'none',returns:'undefined',effect:'closes page dialog'}
+  },
   verdicts: ['valid', 'refused', 'mismatch'], integerResults: 'decimal strings',
   composition: 'compose(score, {release,soloStreams|muteStreams}) compiles musical-time score v1 without rendering. Optional stream selection natively inspects the entire original and selected draft; it preserves controls/effects and is not additive mix stems. Recipes and recipeGain provide native declarations. Direct TL supports the complete instrument. See authoring reference.',
   versioning: 'Explicit releases select trusted registry entries without fallback. Bare TL uses the installed default and must match its preserved hash.'});
@@ -461,6 +491,94 @@ async function compose(score, value = {}) {
   return {...authored, rendererRelease:engine.release_id || engine.id,
     engineId:engine.id, engineIdentity:engine.identity};
 }
+// Compact automation output omits PCM, event lists, source maps and raw native output.
+function summary(result = lastResult) {
+  if (!result) return null;
+  const pick = (value,names) => Object.fromEntries(names.filter(name =>
+    ['string','boolean','number'].includes(typeof value?.[name]) &&
+    (typeof value[name] !== 'number' || Number.isFinite(value[name]))).map(name=>[name,value[name]]));
+  const report = pick(result,['verdict','verified','verification','mode','recordSha256','documentSha256','pcmHash',
+    'rendererRelease','engineId','development','tlVersion','engineCompatibilityVersion','documentHeader']);
+  const frames = Number(result.info?.frames);
+  if (Number.isFinite(frames) && frames >= 0 && result.sampleRate > 0)
+    report.dimensions = {sampleRate:result.sampleRate,channels:result.channels,frames,durationSeconds:frames/result.sampleRate};
+  report.canonicalBytes = result.canonical?.byteLength || 0;
+  report.pcmBytes = result.pcm?.byteLength || 0;
+  if (typeof result.metadata?.title === 'string') report.title = result.metadata.title;
+  else if (result === lastResult && loadedIdentity?.title) report.title = loadedIdentity.title;
+  if (result.play) report.play = pick(result.play,['peak','clipped','samples','voices','events','streams','match','block_indep']);
+  if (result.stderr) report.stderr = String(result.stderr).slice(0,1000);
+  if (result.authoring) report.authoring = {counts:result.authoring.counts,advisories:result.authoring.advisories};
+  return report;
+}
+function toText(result = lastResult) {
+  if (result?.verdict !== 'valid' || !(result.canonical instanceof Uint8Array) || !result.canonical.length)
+    throw Error('Prepare a valid song before exporting its canonical TL.');
+  return new TextDecoder('utf-8',{fatal:true}).decode(result.canonical);
+}
+async function toLink(result = lastResult, value = {}) {
+  toText(result);
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some(key=>key!=='pinRelease') ||
+      value.pinRelease !== undefined && typeof value.pinRelease !== 'boolean') throw Error('Use {pinRelease:true or false}.');
+  const {url} = await loadedSongLink(result);
+  if (value.pinRelease !== false) return url;
+  const bare = new URL(url); bare.searchParams.delete('release'); return bare.href;
+}
+function reportInputError(error) {
+  inputProblem = {message:String(error.message || error),...(error.pointer ? {pointer:error.pointer} : {})};
+  $('agent-report').disabled = false;
+  playerStatus(inputProblem.message + (lastResult?.verdict === 'valid' ? ' The current song is unchanged.' : ''));
+}
+async function copyAgentReport() {
+  const request=++reportRequest, initial=generation, result=lastResult, problem=inputProblem, analysis=analysisResult;
+  const current=()=>request===reportRequest && initial===generation && result===lastResult && problem===inputProblem && analysis===analysisResult;
+  const report = {song:summary(),...(inputProblem ? {inputError:inputProblem} : {}),
+    ...(analysisResult ? {analysis:analysisResult} : {analysisStatus:'Not run; use Analyze audio for measurements.'})};
+  const text = JSON.stringify(report,null,2)+'\n';
+  $('agent-report-manual').value = text;
+  try { await navigator.clipboard.writeText(text); if (!current()) return; $('agent-report-manual').hidden = true; playerStatus('Report copied for your agent. No song was uploaded.'); }
+  catch { if (!current()) return; $('agent-report-manual').hidden = false; $('agent-report-manual').focus(); $('agent-report-manual').select?.();
+    playerStatus('Clipboard access is unavailable. Copy the report from the selected text below.'); }
+}
+async function prepareTextInput(text, {title,mode='listen'} = {}) {
+  const request=++inputRequest, initial=generation;
+  let currentGeneration=initial;
+  inputProblem=null;
+  try {
+    if (typeof text !== 'string' || new TextEncoder().encode(text).length > limits.recordBytes)
+      throw Error('Song or score exceeds the 1 MB input limit.');
+    let authored, recordText=text;
+    if (/^[{\[]/.test(text.trimStart())) {
+      let score;
+      try { score=JSON.parse(text); } catch { throw Error('Score JSON is incomplete or invalid. Ask your agent for the complete score file.'); }
+      playerStatus('Composing score JSON…');
+      const release=loadedRelease ?? (new URL(location.href).searchParams.get('release') ?? undefined);
+      authored=await compose(score,{release}); recordText=authored.draftText;
+    }
+    if (request!==inputRequest || initial!==generation) return;
+    checkRecord(recordText);
+    if (title || authored) {
+      invalidate(); currentGeneration=generation; loadedIdentity={title:parseDocument(recordText).metadata.title || title || 'Composed score',
+        version:authored ? 'Score v1 · composed locally' : 'Local file · as saved'};
+    }
+    $('record').value=recordText;
+    const pending=mode==='verify' ? verify(recordText,{release:authored?.rendererRelease}) : preparePlayback(recordText,{release:authored?.rendererRelease});
+    currentGeneration=generation;
+    const result=await pending;
+    if (lastResult===result && authored) {
+      result.authoring={counts:authored.counts,advisories:authored.advisories};
+      if (result.verdict==='valid' && authored.advisories.length) playerStatus('Score prepared with '+authored.advisories.length+' authoring advisories. Copy report for details; press Play to listen.');
+    }
+    if (lastResult===result && result?.verdict==='valid' && result.recordSha256 && title) {
+      linkedMetadata={path:null,sha:result.recordSha256,recordText,match:catalog.cached(null,result.recordSha256),controller:new AbortController(),timer:null};
+      reconcileLinkedIdentity();
+    }
+    return result;
+  } catch (error) { if (request===inputRequest && currentGeneration===generation) reportInputError(error); }
+}
+$('agent-report').onclick=copyAgentReport;
+$('prepare-input').onclick=()=>{showPlayer();return prepareTextInput($('record').value);};
+
 function cancelAnalysis() {
   analysisSequence++;
   analysisJob?.(Error('Analysis cancelled.')); analysisJob = null;
@@ -556,6 +674,8 @@ $('analysis-download').onclick = () => {if (analysisResult) download(new Blob([J
 
 async function render(recordText, value = {}, sourceContext = null) {
   const requested = options(value);
+  if (typeof recordText === 'string' && /^[{\[]/.test(recordText.trimStart()))
+    throw Error('This is score JSON. Use Prepare pasted input or IntFM.compose(score) before rendering TL.');
   const sameText = recordText === $('record').value;
   const expected = sourceContext ? sourceContext.expected : sameText ? expectedRecordSha : null;
   const contextualRelease = sourceContext ? sourceContext.release : sameText ? loadedRelease : undefined;
@@ -673,9 +793,9 @@ $('listening-profile').onchange = () => updateProfileControls();
 $('profile-mirror').onchange = () => updateProfileControls();
 $('profile-quiet').onchange = () => updateProfileControls();
 $('profile-apply').onclick = applyProfile;
-async function preparePlayback(text) {
+async function preparePlayback(text, value = {}) {
   // UI loading prepares PCM without opening an audio device or starting playback.
-  const pending = listen(text), requestGeneration = generation;
+  const pending = listen(text, value), requestGeneration = generation;
   try {
     const result = await pending;
     if (requestGeneration === generation && canAudition(result)) playerStatus('Ready. Press Play to listen.');
@@ -685,7 +805,7 @@ async function preparePlayback(text) {
     throw error;
   }
 }
-window.IntFM = Object.freeze({describe, compose, recipes:listRecipes, recipe, recipeGain, analyze, cancelAnalysis, render: (text, value) => render(text, value), listen, verify, verifySaved, cancel, clear, loadLink, prepareLink: loadLinkForPlayback, showQr: openQr, closeQr, result: () => lastResult,
+window.IntFM = Object.freeze({describe, summary, toText, toLink, compose, recipes:listRecipes, recipe, recipeGain, analyze, cancelAnalysis, render: (text, value) => render(text, value), listen, verify, verifySaved, cancel, clear, loadLink, prepareLink: loadLinkForPlayback, showQr: openQr, closeQr, result: () => lastResult,
   metrics: async (text, value) => (await render(text, value)).metrics, toWav, toSvg, guide, reference});
 window.addEventListener('message', async event => {
   if (event.origin !== location.origin || !event.source || event.data?.protocol !== 'intfm-v1') return;
@@ -908,7 +1028,7 @@ function label(result) {
   return 'Rendered · expected hash not provided';
 }
 function show(result) {
-  releaseSource(); elapsed = 0; lastResult = result;
+  releaseSource(); elapsed = 0; lastResult = result; inputProblem = null; $('agent-report').disabled = false;
   result.structure = result.verdict === 'valid' ? songStructure(result)
     : {version:1,status:'unavailable',scope:'native_gate_commands',reason:'A valid loaded or inspected song is required.'};
   $('song-structure').textContent = songStructureText(result.structure);
@@ -979,7 +1099,7 @@ function show(result) {
   updateTransport();
   if (displayView === 'spectrum') void showSpectrum();
 }
-$('render').onclick = () => verify($('record').value).catch(() => {});
+$('render').onclick = () => prepareTextInput($('record').value,{mode:'verify'});
 $('cancel').onclick = cancel;
 
 let songLibrary = [], librarySelection = [], selectedSongId = '', songChoices = new Map(), libraryView = 'featured', catalogIndex, catalogResult;
@@ -1397,22 +1517,16 @@ loadLibrary();
 
 async function loadFile(file) {
   if (!file) return;
-  showPlayer();
-  invalidate(); const requestGeneration = generation;
+  showPlayer(); invalidate(); const request=++inputRequest, initial=generation;
   playerStatus('Loading ' + file.name + '…');
   try {
-    if (file.size > limits.recordBytes) throw Error('Record exceeds the 1 MB input limit.');
+    if (file.size > limits.recordBytes) throw Error('Song or score exceeds the 1 MB input limit.');
     const text = new TextDecoder('utf-8',{fatal:true,ignoreBOM:true}).decode(await file.arrayBuffer());
-    if (requestGeneration !== generation) return;
-    checkRecord(text); $('record').value = text; loadedIdentity = {title:parseDocument(text).metadata.title || file.name.replace(/\.tl$/i,''),version:'Local file · as saved'};
-    const result = await preparePlayback(text);
-    if (lastResult === result && result?.verdict === 'valid' && result.recordSha256) {
-      linkedMetadata = {path:null,sha:result.recordSha256,recordText:text,match:catalog.cached(null,result.recordSha256),controller:new AbortController(),timer:null};
-      reconcileLinkedIdentity();
-    }
-    return result;
-  } catch (error) { if (requestGeneration === generation) playerStatus(error.message); }
+    if (request!==inputRequest || initial!==generation) return;
+    return prepareTextInput(text,{title:file.name.replace(/(?:\.score)?\.json$|\.tl$/i,'')});
+  } catch (error) { if (request===inputRequest && initial===generation) reportInputError(error); }
 }
+
 function surfaceLinkedSelection(match = null) {
   libraryHistory = []; libraryCursor = null; catalogResult = null;
   librarySelection = match ? [{song:match.song,variants:match.song.variants}] : [];

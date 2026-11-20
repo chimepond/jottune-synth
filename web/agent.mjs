@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // Copyright (c) 2026 Nenad Micic
 // SPDX-License-Identifier: Apache-2.0
-// Download this one file from a JotTune player. Everything else is fetched
-// from its explicit static manifest; composition/rendering never sends a score.
+// Use a downloaded client or a deployment-neutral verified offline bundle.
+// Composition/rendering never sends a score.
 import fs from 'node:fs/promises';
 import {constants, readSync, lstatSync, openSync, closeSync, fstatSync} from 'node:fs';
 import path from 'node:path';
@@ -181,14 +181,109 @@ function selectedFiles(files, engine) {
   return selected;
 }
 
-export async function setup({site,cache,offline = false,release,allowDevelopment = false}) {
+// Ancestors may use ordinary OS aliases, but the selected directory and every
+// asset below it must be real files/directories, just like the execution cache.
+async function sourceDirectory(value) {
+  const requested = path.resolve(value), st = await fs.lstat(requested);
+  if (!st.isDirectory() || st.isSymbolicLink()) fail('Bundle source must be a real directory.');
+  return fs.realpath(requested);
+}
+
+async function sourceAsset(root, name, maximum) {
+  assetPath(name);
+  let current = root;
+  for (const part of name.split('/').slice(0,-1)) {
+    current = path.join(current,part);
+    const st = await fs.lstat(current);
+    if (!st.isDirectory() || st.isSymbolicLink()) fail('Bundle asset directory must not be a symlink.');
+  }
+  return readRegular(path.join(root,name),maximum);
+}
+
+async function checkedSourceAsset(root, entry) {
+  const bytes = await sourceAsset(root,entry.path,entry.bytes);
+  if (bytes.length !== entry.bytes || hash(bytes) !== entry.sha256)
+    fail('Bundle asset checksum differs: ' + entry.path);
+  return bytes;
+}
+
+function checkedEngine(registry, files, id, allowDevelopment = false) {
+  const matches = (registry.engines || []).filter(entry => entry.id === id || entry.release_id === id);
+  if (matches.length !== 1) fail('Requested renderer is unavailable; no fallback was selected.');
+  const engine = matches[0];
+  const kept = engine.development === false && engine.release_id === engine.id;
+  const development = allowDevelopment === true && engine.development === true && engine.release_id === null;
+  if (!ID.test(engine.id) || engine.withdrawn || engine.withdrawn_at || typeof engine.identity !== 'string' || !engine.identity ||
+      (!kept && !development)) fail('Select an available kept renderer release; source builds require --allow-development.');
+  for (const [name,digest] of [['browser_wasm','browser_sha256'],['runtime_module','runtime_sha256']]) {
+    const entry = files.get(engine[name]);
+    if (!entry || !entry.path.startsWith('engines/' + engine.id + '/') || entry.sha256 !== engine[digest])
+      fail('Manifest and renderer registry disagree.');
+  }
+  return engine;
+}
+
+async function adjacentBundle() {
+  const root = path.dirname(fileURLToPath(import.meta.url));
+  try { await fs.lstat(path.join(root,'agent-bundle.json')); return root; }
+  catch (error) { if (error.code !== 'ENOENT') throw error; return undefined; }
+}
+
+async function readBundle(value, release) {
+  const root = await sourceDirectory(value);
+  const metadata = JSON.parse(decoder.decode(await sourceAsset(root,'agent-bundle.json',4096)));
+  if (!metadata || metadata.format !== 1 || Object.keys(metadata).sort().join(',') !== 'format,manifestSha256,release' ||
+      !SHA.test(metadata.manifestSha256 || '') || !ID.test(metadata.release || '')) fail('Unsupported agent bundle metadata.');
+  if (release !== undefined && release !== metadata.release) fail('Requested renderer is unavailable in this bundle; no fallback was selected.');
+  const manifestBytes = await sourceAsset(root,'agent-manifest.json',MAX_MANIFEST);
+  if (hash(manifestBytes) !== metadata.manifestSha256) fail('Bundle manifest checksum differs.');
+  const {files,value:manifest} = parseManifest(manifestBytes);
+  const registry = JSON.parse(decoder.decode(await checkedSourceAsset(root,files.get(manifest.registry))));
+  const engine = checkedEngine(registry,files,metadata.release);
+  const entries = selectedFiles(files,engine);
+  // Check every selected byte before binding this deployment-neutral bundle to
+  // the caller's SITE. A bad bundle never falls back to a network download.
+  for (const entry of entries) await checkedSourceAsset(root,entry);
+  return {root,manifestBytes,engine};
+}
+
+// The manifest remains byte-for-byte official. No site cache metadata, catalog,
+// song library, deployment configuration or unlisted source files are copied.
+export async function buildBundle({source,out,release}) {
+  const root = await sourceDirectory(source);
+  const manifestBytes = await sourceAsset(root,'agent-manifest.json',MAX_MANIFEST);
+  const {files,value} = parseManifest(manifestBytes);
+  const registry = JSON.parse(decoder.decode(await checkedSourceAsset(root,files.get(value.registry))));
+  const engine = checkedEngine(registry,files,release ?? registry.default), entries = selectedFiles(files,engine);
+  for (const entry of entries) await checkedSourceAsset(root,entry);
+  const requested = path.resolve(out);
+  await fs.mkdir(path.dirname(requested),{recursive:true});
+  const destination = path.join(await fs.realpath(path.dirname(requested)),path.basename(requested));
+  if (destination === root || destination.startsWith(root + path.sep)) fail('Bundle output must be outside the source tree.');
+  await fs.mkdir(destination,{mode:0o700}); // Refuse existing directories, including symlinks.
+  try {
+    for (const entry of entries) {
+      await directory(destination,path.posix.dirname(entry.path) === '.' ? '' : path.posix.dirname(entry.path));
+      await atomicWrite(path.join(destination,entry.path),await checkedSourceAsset(root,entry));
+    }
+    await atomicWrite(path.join(destination,'agent-manifest.json'),manifestBytes);
+    await atomicWrite(path.join(destination,'agent-bundle.json'),json({format:1,manifestSha256:hash(manifestBytes),release:engine.id}));
+  } catch (error) { await fs.rm(destination,{recursive:true,force:true}); throw error; }
+  return {release:engine.id,manifestSha256:hash(manifestBytes),files:entries.length + 2};
+}
+
+export async function setup({site,cache,offline = false,release,allowDevelopment = false,bundle}) {
   const deadline = Date.now() + 120000;
+  const bundled = bundle ?? await adjacentBundle();
+  const imported = bundled === undefined ? null : await readBundle(bundled,release);
+  if (imported) offline = true;
   const base = siteURL(site), requestedRoot = path.resolve(cache || path.join(os.homedir(),'.cache','jottune-agent'));
   await fs.mkdir(requestedRoot,{recursive:true,mode:0o700});
   if ((await fs.lstat(requestedRoot)).isSymbolicLink()) fail('Cache root must not be a symlink.');
   const root = await fs.realpath(requestedRoot), siteRoot = await directory(root,hash(base.href));
   let manifestBytes, previous;
-  if (offline) {
+  if (imported) manifestBytes = imported.manifestBytes;
+  else if (offline) {
     previous = JSON.parse(decoder.decode(await readRegular(path.join(siteRoot,'current.json'),MAX_MANIFEST * 2 + 4096)));
     if (previous.site !== base.href || typeof previous.manifest !== 'string' || !SHA.test(previous.manifestSha256 || '')) fail('Offline cache identity differs.');
     manifestBytes = Buffer.from(previous.manifest,'utf8');
@@ -206,8 +301,11 @@ export async function setup({site,cache,offline = false,release,allowDevelopment
     catch (error) { if (error.code !== 'ENOENT') throw error; }
     if (bytes && (bytes.length !== entry.bytes || hash(bytes) !== entry.sha256)) fail('Cached asset checksum differs: ' + entry.path);
     if (!bytes) {
-      if (offline) fail('Offline asset is missing: ' + entry.path);
-      bytes = await download(new URL(entry.path,base),entry.bytes,Math.min(30000,deadline-Date.now()));
+      if (imported) bytes = await checkedSourceAsset(imported.root,entry);
+      else {
+        if (offline) fail('Offline asset is missing: ' + entry.path);
+        bytes = await download(new URL(entry.path,base),entry.bytes,Math.min(30000,deadline-Date.now()));
+      }
       if (bytes.length !== entry.bytes || hash(bytes) !== entry.sha256) fail('Downloaded asset checksum differs: ' + entry.path);
       try { await atomicWrite(target,bytes); }
       catch (error) {
@@ -219,22 +317,11 @@ export async function setup({site,cache,offline = false,release,allowDevelopment
     return bytes;
   }
   const registry = JSON.parse(decoder.decode(await obtain(files.get(value.registry))));
-  const id = release ?? (offline ? previous.release : registry.default);
-  const matches = (registry.engines || []).filter(entry => entry.id === id || entry.release_id === id);
-  if (matches.length !== 1) fail('Requested renderer is unavailable; no fallback was selected.');
-  const engine = matches[0];
-  const kept = engine.development === false && engine.release_id === engine.id;
-  const development = allowDevelopment === true && engine.development === true && engine.release_id === null;
-  if (!ID.test(engine.id) || engine.withdrawn || engine.withdrawn_at || typeof engine.identity !== 'string' || !engine.identity ||
-      (!kept && !development)) fail('Select an available kept renderer release; source builds require --allow-development.');
-  for (const [name,digest] of [['browser_wasm','browser_sha256'],['runtime_module','runtime_sha256']]) {
-    const entry = files.get(engine[name]);
-    if (!entry || !entry.path.startsWith('engines/' + engine.id + '/') || entry.sha256 !== engine[digest])
-      fail('Manifest and renderer registry disagree.');
-  }
+  const id = release ?? imported?.engine.id ?? (offline ? previous.release : registry.default);
+  const engine = checkedEngine(registry,files,id,imported ? false : allowDevelopment);
   const entries = selectedFiles(files,engine);
   for (const entry of entries) await obtain(entry);
-  if (!offline) await atomicWrite(path.join(siteRoot,'current.json'),json({site:base.href,release:engine.id,
+  if (!offline || imported) await atomicWrite(path.join(siteRoot,'current.json'),json({site:base.href,release:engine.id,
     manifestSha256,manifest:decoder.decode(manifestBytes)}),true);
   return {site:base.href,folder,engine,manifestSha256,entries,offline};
 }
@@ -506,7 +593,7 @@ function terminalReport(result) {
 }
 
 const HELP = `JotTune URL client (Node 22.15+; built-in modules only)
-  node agent.mjs SITE setup|discover [--release ID] [--cache DIR] [--offline]
+  node agent.mjs SITE setup|discover [--release ID] [--cache DIR] [--offline] [--bundle DIR]
   node agent.mjs SITE discover --out STEM [--formats json]
   node agent.mjs SITE discover --examples COUNT [--example-seed SEED]
   node agent.mjs SITE compose SCORE.json --out STEM
@@ -524,6 +611,10 @@ Rendering and analysis run locally. Online commands fetch the static manifest
 and missing runtime assets; discover --examples also fetches songs.json.
 There is no upload command. Offline execution uses a complete verified cache;
 current renderer revocation cannot be checked while offline.
+--bundle DIR imports verified local runtime assets into the ordinary cache;
+it implies offline execution with revocation status unknown. No network fallback.
+An adjacent agent-bundle.json selects that bundle automatically. SITE is only
+bound locally and used for link export.
 Kept releases are required by default. For your own source build, explicitly
 add --allow-development; reports label it as development, never as a kept release.
 Cache defaults to ~/.cache/jottune-agent; --cache ./cache keeps downloads local.
@@ -566,7 +657,7 @@ async function checkOutputPaths(stem, suffixes, inputFile, force) {
 export async function main(argv = process.argv.slice(2)) {
   if (!argv.length || argv.includes('--help') || argv[0] === 'help') { process.stdout.write(HELP); return 0; }
   const positional = [], opts = {};
-  const valued = new Set(['release','cache','out','formats','timeout-ms','sections','window-seconds','provenance',
+  const valued = new Set(['release','cache','bundle','out','formats','timeout-ms','sections','window-seconds','provenance',
     'mode','detail','dry-voices','dry-max-bytes','dry-timeout-ms','examples','example-seed','solo-streams','mute-streams']);
   for (let i = 0; i < argv.length; i++) {
     if (!argv[i].startsWith('--')) { positional.push(argv[i]); continue; }
@@ -585,9 +676,9 @@ export async function main(argv = process.argv.slice(2)) {
   if (opts['example-seed'] !== undefined && (opts.examples === undefined || !/^[\x20-\x7e]{1,128}$/.test(opts['example-seed'])))
     fail('An example seed requires --examples and 1..128 printable ASCII characters.');
   if (opts.examples !== undefined && (!/^[1-9][0-9]*$/.test(opts.examples) || Number(opts.examples) > 10)) fail('Example count must be 1..10.');
-  if (opts.examples !== undefined && opts.offline) fail('Examples require the current online song catalog; omit --examples for offline discovery.');
-  if (command === 'discover' && Object.keys(opts).some(key => !['release','cache','out','formats','force','timeout-ms','detail','offline','allow-development','examples','example-seed'].includes(key)))
-    fail('Discover supports only release/cache, offline, deadline, detail, optional examples and JSON export options.');
+  if (opts.examples !== undefined && (opts.offline || opts.bundle)) fail('Examples require the current online song catalog; omit --examples for offline discovery.');
+  if (command === 'discover' && Object.keys(opts).some(key => !['release','cache','bundle','out','formats','force','timeout-ms','detail','offline','allow-development','examples','example-seed'].includes(key)))
+    fail('Discover supports only release/cache/bundle, offline, deadline, detail, optional examples and JSON export options.');
   if (command === 'discover' && !opts.out && (opts.formats !== undefined || opts.force)) fail('Discover --formats and --force require --out STEM.');
   const formats = (opts.formats || (command === 'discover' ? 'json' : 'tl,json')).split(',');
   if (!formats.length || new Set(formats).size !== formats.length || formats.some(x => !['tl','json','wav','svg','link'].includes(x))) fail('Unknown or duplicate export format.');
@@ -610,9 +701,10 @@ export async function main(argv = process.argv.slice(2)) {
       format === 'json' ? 'verification.json' : format === 'link' ? 'link.txt' : format);
     await checkOutputPaths(path.resolve(opts.out),suffixes,inputFile,opts.force);
   }
-  const context = await setup({site,cache:opts.cache,release:opts.release,offline:opts.offline,allowDevelopment:opts['allow-development']});
+  const context = await setup({site,cache:opts.cache,release:opts.release,offline:opts.offline,allowDevelopment:opts['allow-development'],bundle:opts.bundle});
   if (command === 'setup') { process.stdout.write(json({ready:true,renderer:context.engine.id,manifestSha256:context.manifestSha256,
     development:context.engine.development,offline:context.offline,revocationChecked:!context.offline,cachedFiles:context.entries.length,cache:context.folder})); return 0; }
+  if (opts.examples !== undefined && context.offline) fail('Examples require the current online song catalog; omit --examples for offline discovery.');
   const examples = opts.examples === undefined ? null : await discoverExamples(context,Number(opts.examples),opts['example-seed'] ?? randomUUID());
   const answer = await execute(context,command,input,options);
   if (examples) answer.examples = examples;

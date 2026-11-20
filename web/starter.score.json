@@ -5,6 +5,7 @@
     "Copyright (c) 2026 Nenad Micic",
     "SPDX-License-Identifier: Apache-2.0",
     "Teaching arrangement: write your own melody before claiming original publication.",
+    "The metadata license describes this Apache-2.0 teaching example, not CC0 publication consent.",
     "Eight bars, 4/4, quarter-note BPM 96; ordinary stereo, not binaural.",
     "Lead and bass remain centered. Independent chord voices sit left and right."
   ],
@@ -582,5 +583,13 @@
       },
       "velocity_q15": 23000
     }
-  ]
+  ],
+  "metadata": {
+    "title": "A first conversation",
+    "tempo": {
+      "min_bpm": 96,
+      "max_bpm": 96
+    },
+    "license": "Apache-2.0"
+  }
 }

@@ -15,7 +15,7 @@
   <header class="app-header">
     <a class="brand" href="./">JotTune <span>Integer synth</span></a>
     <p class="header-note">One text file. The whole record.</p>
-    <nav class="resource-nav" aria-label="Resources"><a href="browser-guide.txt">Guide</a></nav>
+    <nav class="resource-nav" aria-label="Resources"><a href="agent-quick.txt">Agent quick card</a><a href="browser-guide.txt">Guide</a></nav>
     <button id="section-toggle" class="section-toggle" aria-controls="section-nav" aria-expanded="false" hidden>Sections <span aria-hidden="true">☰</span></button>
   </header>
   <div class="app-shell">
@@ -122,8 +122,8 @@
       </details>
       <div class="open-row">
         <div id="dropzone">
-          <label for="file">Open song (.tl)</label>
-          <input id="file" type="file" accept=".tl,text/plain" aria-describedby="drop-hint">
+          <label for="file">Open song (.tl) or score (.json)</label>
+          <input id="file" type="file" accept=".tl,.json,application/json,text/plain" aria-describedby="drop-hint">
           <span id="drop-hint" class="small">or drop a file here</span>
         </div>
         <button id="example" class="quiet">Load example</button>
@@ -190,7 +190,9 @@
         <button id="spectrum" disabled>Render spectrogram</button>
         <button id="png-download" disabled>PNG</button>
       </div>
-      <p class="small">A .tl song file reopens in this instrument; .wav is rendered audio.</p>
+      <div class="row actions"><button id="agent-report" disabled>Copy report for your agent</button></div>
+      <textarea id="agent-report-manual" readonly hidden rows="8" aria-label="Report for your agent; select and copy this text"></textarea>
+      <p class="small">A .tl song file reopens in this instrument; .wav is rendered audio. Reports contain results and optional measurements, without audio samples or uploads.</p>
       <div class="row actions" role="group" aria-label="Share the loaded song">
         <button id="share" disabled>Copy song link</button>
         <button id="show-qr" disabled>Song QR code</button>
@@ -227,12 +229,12 @@
     </section>
 
     <details id="source-panel" class="panel input-panel">
-      <summary id="source-summary">Timeline source</summary>
+      <summary id="source-summary">Song source · TL or score JSON</summary>
       <div class="detail-body">
-        <label for="record">JotTune Timeline text</label>
-        <textarea id="record" spellcheck="false" placeholder="Paste a complete .tl record…" aria-describedby="edit-help"></textarea>
-        <div class="row actions"><button id="listen">Listen to edits</button><button id="draft-download">Save draft text</button><button id="verify-saved" disabled>Verify saved render</button></div>
-        <p id="edit-help" class="small">Editing stops playback and keeps the selected renderer. Listen renders the current text and starts audio. Save draft text retains unfinished or refused text locally, without claiming verification.</p>
+        <label for="record">JotTune Timeline text or score v1 JSON</label>
+        <textarea id="record" spellcheck="false" placeholder="Paste a complete .tl record or score v1 JSON…" aria-describedby="edit-help"></textarea>
+        <div class="row actions"><button id="prepare-input">Prepare pasted input</button><button id="listen">Listen to edits</button><button id="draft-download">Save draft text</button><button id="verify-saved" disabled>Verify saved render</button></div>
+        <p id="edit-help" class="small">Editing stops playback and keeps the selected renderer. Prepare pasted input accepts TL or score v1 JSON, composes when needed and prepares silently; press Play to listen. Keep the original score file for musical edits. Listen renders TL edits and starts audio. Save draft text retains unfinished or refused text locally, without claiming verification.</p>
         <p class="small">For an intentional new version, keep the original saved TL and edit a separate draft without its old <code>hash</code> assertion. Never remove a hash to conceal an unexplained mismatch. After a valid draft render, Verify saved render replays its canonical output and checks the new saved hash. Keep your editable source too: canonical output can reorder headers and add defaults.</p>
         <form id="url-form">
           <label for="url">Load from a URL</label>
@@ -273,7 +275,7 @@
       <div class="detail-body agent-grid">
         <div>
           <h2>The instrument is an open interface.</h2>
-          <p><strong>Give your agent this page’s URL.</strong> Start with the <a href="agent-start.txt">agent quickstart</a>: compose in musical time, render locally, measure and revise, then deliver one complete TL and WAV. No MCP server or source checkout is needed.</p>
+          <p><strong>Give your agent this page’s URL.</strong> Start with the <a href="agent-quick.txt">agent quick card</a> and <a href="agent-start.txt">full quickstart</a>: compose in musical time, render locally, measure and revise, then deliver one complete TL and WAV. No MCP server or source checkout is needed.</p>
           <p>Browser automation uses <code>window.IntFM</code>. Terminal agents can download the <a href="agent.mjs" download>official Node client</a> (Node 22.15+; no npm packages).</p>
           <button id="copy-guide">Copy browser guide</button>
           <a id="guide-manual" class="guide-manual" href="browser-guide.txt" hidden>Open Browser guide</a>

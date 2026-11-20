@@ -59,6 +59,11 @@ reading even when integrated_lufs is null. This is not residual audio: use raw
 sample peak, RMS and trailing digital silence to determine PCM silence. Analyzing
 the isolated silent slice starts filters from zero and can give a different
 ungated result. No silence threshold or automatic trimming is implied.
+Short percussion can have low or unavailable integrated LUFS despite a high
+sample peak: duration, surrounding silence and gating affect the result. Compare
+peak and RMS over the same phrase; their dB difference gives a crest factor.
+Do not raise a drum to a sustained instrument's LUFS merely to match a number.
+These measurements cannot establish musical quality or replace an audition.
 Raw four/sixteen-channel field components have no assigned speaker loudness.
 
 true_peak_dbtp is a 4x FFT interpolation estimate, not a guaranteed continuous

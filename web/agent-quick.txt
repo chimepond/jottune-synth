@@ -1,0 +1,35 @@
+Copyright (c) 2026 Nenad Micic
+SPDX-License-Identifier: Apache-2.0
+
+JOTTUNE AGENT QUICK CARD
+All references are relative to this player prefix. Details: agent-start.txt.
+Reader only: write score JSON; the person opens/pastes it in the player and
+returns Copy report for your agent. Rendering is silent; Play needs a tap.
+Connected browser: use IntFM below. Node: agent.mjs plus its complete runtime
+cache; offline bundle when available. Session network/execution limits vary.
+
+Preserve metadata.license through compose/export. For contributions whose author
+approved CC0, set it to "CC0-1.0". Never silently relicense. The header supplies
+no separate CC0/dataset/rights/age/history consent or publication permission.
+Private drafts may omit license. name/about/mark comments are not preserved.
+
+Minimal syntax exercise (write your own song):
+```json
+{"version":1,"fs":48000,"metadata":{"title":"Syntax exercise"},
+"clock":{"bars":2,"meter":[{"bar":1,"quarters":4}],"tempo":[{"bar":1,"bpm":96}],"ramp":"step","tail_ns":2000000000},
+"declarations":"space stereo\nblock 64\nnear 100\nrecipe lead marimba\n",
+"streams":["lead"],"voices":["lead"],"events":[{"kind":"note","at":0,"duration":1,"stream":"lead","voice":0,"pitch":{"note":"C5"},"velocity_q15":22000}]}
+```
+```js
+const d=await IntFM.compose(score);
+const t=await IntFM.listen(d.draftText,{release:d.rendererRelease});
+if(t.verdict!=='valid') throw Error(t.stderr||t.verdict);
+const s=await IntFM.verify(IntFM.toText(t),{release:d.rendererRelease});
+if(!s.verified) throw Error(s.stderr||s.verification);
+console.log(IntFM.summary(s)); // JSON-safe; no PCM/events
+const url=await IntFM.toLink(s); // pins release; same URL as share control
+```
+Node 22.15+, SITE=player base with trailing slash:
+node agent.mjs "$SITE" compose song.score.json --mode listen --out take
+node agent.mjs "$SITE" verify take.tl --analysis --out final --formats tl,json,wav,link
+Browser: <=1,000,000 TL bytes, <=300 s. Save canonical TL plus editable score.

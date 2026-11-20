@@ -43,6 +43,9 @@ export async function fetchRecord(value, base, {signal} = {}) {
 // Plain-language text for a link that could not be opened. The thrown error
 // keeps its technical detail for programmatic callers.
 export function linkProblem(error) {
+  if (error?.portableUnsupported) return 'This browser cannot open compressed song links. Ask for the .tl file and open it in the player.';
+  if (Number.isSafeInteger(error?.portableCharacters))
+    return 'This link is incomplete or damaged ('+error.portableCharacters+' fragment characters received). Ask for a new link or the .tl file.';
   if (error?.verificationStatus === 'pending')
     return 'This publication is waiting for independent technical verification. Its share link is not ready for playback. Check again later.';
   if (error?.verificationStatus === 'failed') {
@@ -113,9 +116,16 @@ export async function resolveLink(value, base) {
   if (url.hash.startsWith('#v1.')) {
     const encoded = url.hash.slice(4);
     if (encoded.length > limits.fragmentCharacters) throw Error('Record link is too large.');
-    const bytes = Uint8Array.from(atob(encoded.replace(/-/g, '+').replace(/_/g, '/')), character => character.charCodeAt(0));
-    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
-    return {recordText: await boundedText(new Response(stream)), release};
+    if (typeof DecompressionStream !== 'function') {
+      const error=Object.assign(Error(),{portableUnsupported:true}); error.message=linkProblem(error); throw error;
+    }
+    try {
+      const bytes = Uint8Array.from(atob(encoded.replace(/-/g, '+').replace(/_/g, '/')), character => character.charCodeAt(0));
+      const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
+      return {recordText: await boundedText(new Response(stream)), release};
+    } catch (cause) {
+      const error=Object.assign(Error(),{portableCharacters:url.hash.length});error.message=linkProblem(error);throw error;
+    }
   }
   if (/^#r=[0-9a-f]{64}$/.test(url.hash)) {
     const recordSha256 = url.hash.slice(3);
@@ -151,6 +161,8 @@ export async function resolveLink(value, base) {
 }
 
 export async function portableLink(canonical, base, release) {
+  if (typeof CompressionStream !== 'function')
+    throw Error('This browser cannot create compressed song links. Save and share the .tl file instead.');
   const compressed = await new Response(new Blob([canonical]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer();
   let binary = '';
   for (const byte of new Uint8Array(compressed)) binary += String.fromCharCode(byte);
