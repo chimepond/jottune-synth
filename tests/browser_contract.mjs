@@ -156,6 +156,7 @@ async function withPage(run, configuration = {}) {
   });
   install('document', {getElementById: get, createElement: tag => new Element(tag), hidden:false,
     addEventListener: (type, listener) => listeners.set('document:'+type, listener)});
+  if (configuration.documentModelContext) document.modelContext = configuration.documentModelContext;
   install('__sectionChanged', undefined);
   install('__sectionNavigation', {jump: id => {
     sectionJumps.push(id);
@@ -179,6 +180,7 @@ async function withPage(run, configuration = {}) {
   install('FormData', class extends FormData {constructor() {super();}}); // The mock provenance form has no entries.
   install('location', new URL(configuration.href || 'https://player.invalid/'));
   const navigation = {onLine:configuration.online ?? true, clipboard: {writeText: async text => {if(configuration.clipboardDenied)throw Error('Permission denied'); copied.push(text); }}};
+  if (configuration.navigatorModelContext) navigation.modelContext = configuration.navigatorModelContext;
   if (configuration.serviceWorker) navigation.serviceWorker = configuration.serviceWorker;
   if (configuration.serviceWorkerAccess) Object.defineProperty(navigation,'serviceWorker',configuration.serviceWorkerAccess);
   if (configuration.audioSession) Object.defineProperty(navigation, 'audioSession', configuration.audioSession);
@@ -299,6 +301,163 @@ async function complete(page, text = 'authored fixture', result = validResult())
   assert.equal(await promise, result);
   return result;
 }
+const starterScore = () => JSON.parse(readFileSync(new URL('../web/starter.score.json',import.meta.url),'utf8'));
+const toolValue = response => JSON.parse(response.content[0].text);
+function withModelTools(run, config = {}) {
+  const tools = new Map();
+  return withPage(page => run(page, tools), {...config, documentModelContext:{registerTool:tool => tools.set(tool.name,tool)}});
+}
+test('WebMCP reports unsupported, pending, failed and successful registrations independently', async () => {
+  await withPage(page => {
+    assert.deepEqual(page.api.describe().webmcp,{intfm_render:'unsupported',intfm_compose:'unsupported'});
+    assert.match(page.get('webmcp-status').textContent,/intfm_compose unsupported/);
+  });
+  for (const failsAsync of [false,true]) {
+    const pending = deferred();
+    await withPage(async page => {
+      assert.deepEqual(page.api.describe().webmcp,{intfm_render:'failed',intfm_compose:'registering'});
+      assert.match(page.get('webmcp-status').textContent,/intfm_compose registering/);
+      pending.resolve(); await nextTurn();
+      assert.deepEqual(page.api.describe().webmcp,{intfm_render:'failed',intfm_compose:'registered'});
+      assert.match(page.get('webmcp-status').textContent,/intfm_render failed.*intfm_compose registered/);
+    }, {navigatorModelContext:{registerTool(tool) {
+      if (tool.name === 'intfm_compose') return pending.promise;
+      if (failsAsync) return Promise.reject(Error('policy'));
+      throw Error('policy');
+    }}});
+  }
+});
+const toolRelease = {id:'kept-a', release_id:'kept-a', identity:'int-fm-synth 1'};
+async function finishToolScore(page, tool, canonical, options = {}) {
+  const score = options.score ?? starterScore();
+  const pending = tool.execute({score,release:options.release ?? toolRelease.id});
+  await nextTurn();
+  const first = page.workers.at(-1);
+  assert.equal(first.request.mode,'listen');
+  assert.equal(first.request.engine.id,options.release ?? toolRelease.id);
+  if (options.expectedDraft) assert.equal(first.request.recordText,options.expectedDraft);
+  const documentSha256 = createHash('sha256').update(canonical).digest('hex');
+  const fixture = {canonical,documentSha256,recordSha256:documentSha256,rendererRelease:toolRelease.id,metadata:score.metadata,...options.fixture};
+  first.reply(validResult({...fixture, play:{match:'-',block_indep:'unchecked'}}));
+  await nextTurn();
+  const replay = page.workers.at(-1);
+  assert.notEqual(replay,first); assert.equal(replay.request.mode,'verify');
+  assert.equal(replay.request.engine.id,first.request.engine.id);
+  assert.equal(replay.request.recordText,new TextDecoder().decode(canonical));
+  replay.reply(validResult({...fixture,...options.replay}));
+  return pending;
+}
+test('WebMCP composes, verifies and exports exact canonical TL and pinned URL through registered tools alone', () => withModelTools(async (page, tools) => {
+  assert.deepEqual([...tools.keys()],['intfm_render','intfm_compose']);
+  const tool = tools.get('intfm_compose');
+  page.ready({default:toolRelease.id,engines:[toolRelease]});
+  for (const large of [false,true]) {
+    const noise = Array.from({length:220}, (_,i) => createHash('sha256').update(String(i)).digest('hex')).join('\n# ');
+    const canonical = new TextEncoder().encode('# A tune 🎶\n' + (large ? '# '+noise+'\n' : '') + 'hash 0123456789abcdef\n');
+    const response = await finishToolScore(page,tool,canonical), result = toolValue(response);
+    assert.equal(response.isError,undefined); assert.equal(result.title,'A first conversation');
+    assert.equal(result.summary.verified,true); assert.equal(result.summary.play.block_indep,'yes');
+    assert.equal(result.summary.pcm,undefined); assert.equal(result.summary.authoring.advisories,undefined);
+    assert.equal(typeof result.summary.authoring.advisoryCount,'number');
+    const {documentSha256} = result.tl;
+    assert.equal(result.summary.documentSha256,documentSha256);
+    async function retrieve(format, chunk) {
+      const bytes = [];
+      let offset = 0;
+      do {
+        chunk ||= toolValue(await tool.execute({documentSha256,format,offset}))[format];
+        const buffer = Buffer.from(chunk.base64,'base64');
+        assert.equal(chunk.offset,offset); assert.equal(chunk.documentSha256,documentSha256);
+        assert.equal(chunk.verified,true); assert.ok(buffer.length <= 3000);
+        assert.equal(createHash('sha256').update(buffer).digest('hex'),chunk.chunkSha256);
+        bytes.push(buffer);
+        if (chunk.nextOffset === null) break;
+        offset += buffer.length;
+        assert.equal(chunk.nextOffset,offset); chunk = null;
+      } while (true);
+      const value = Buffer.concat(bytes);
+      assert.equal(value.length,chunk.totalBytes); assert.equal(createHash('sha256').update(value).digest('hex'),chunk.payloadSha256);
+      return value;
+    }
+    assert.deepEqual(await retrieve('tl',result.tl),Buffer.from(canonical));
+    const url = (await retrieve('link')).toString();
+    assert.equal(Buffer.byteLength(url),result.urlBytes); assert.equal(result.url,large ? null : url);
+    assert.equal(new URL(url).searchParams.get('release'),toolRelease.release_id); assert.match(new URL(url).hash,/^#v1\./);
+    assert.equal((await resolveLink(url,new URL('https://player.invalid/web/'))).recordText,new TextDecoder().decode(canonical));
+    page.api.clear();
+    const stale = await tool.execute({documentSha256,offset:0});
+    assert.equal(stale.isError,true); assert.match(toolValue(stale).error,/no longer active/);
+  }
+  assert.equal(page.audioCreations(),0);
+  assert.equal(page.downloaded.length,0);
+}));
+test('WebMCP replaces an equivalent pasted score with its own editable source and carries advisories through replay', () => withModelTools(async (page,tools) => {
+  page.ready({default:toolRelease.id,engines:[toolRelease]});
+  const previous = starterScore();
+  const note = previous.events.find(event => event.kind === 'note');
+  previous.events.push({...note}); // Intentional overlap generates a retrigger advisory.
+  const score = structuredClone(previous);
+  score.events[0].at = '0/1'; // Equivalent musical time, distinct editable JSON.
+  const canonical = new TextEncoder().encode('# saved canonical fixture\nhash 0123456789abcdef\n');
+  page.get('record').value = JSON.stringify(previous);
+  const preparing = page.get('prepare-input').click(); await nextTurn();
+  const draft = page.workers.at(-1).request.recordText;
+  page.workers.at(-1).reply(validResult({canonical,metadata:previous.metadata})); await preparing;
+  const response = await finishToolScore(page,tools.get('intfm_compose'),canonical,{score,expectedDraft:draft});
+  assert.equal(response.isError,undefined);
+  assert.equal(page.get('score-download').hidden,false);
+  page.get('score-download').click();
+  assert.deepEqual(JSON.parse(await page.downloaded.at(-1).text()),score);
+  assert.match(page.filenames.at(-1),/A first conversation-source\.score\.json$/);
+  await page.get('agent-report').click();
+  const report = JSON.parse(page.copied.at(-1));
+  assert.equal(report.song.title,score.metadata.title); assert.equal(report.song.verified,true);
+  assert.ok(report.song.authoring.advisory_count > 0);
+  assert.equal(report.song.authoring.advisory_count,toolValue(response).summary.authoring.advisoryCount);
+}));
+test('WebMCP returns score pointers, native refusals and file-only results for development renderers', () => withModelTools(async (page,tools) => {
+  const tool = tools.get('intfm_compose'), dev = {id:'dev',identity:toolRelease.identity};
+  page.ready({default:toolRelease.id,engines:[toolRelease,dev]});
+  for (const input of [{},{score:'JSON text'},{score:{},offset:2},{documentSha256:'missing',offset:0}]) {
+    const response = await tool.execute(input);
+    assert.equal(response.isError,true); assert.match(toolValue(response).error,/Pass \{score/);
+  }
+  const invalid = await tool.execute({score:{...starterScore(),fs:1}});
+  assert.deepEqual(toolValue(invalid),{error:'fs must be 44100 or 48000.',pointer:'/fs'});
+  const missing = await tool.execute({score:starterScore(),release:'withdrawn-or-missing'});
+  assert.match(toolValue(missing).error,/not available/); assert.equal(page.workers.length,0);
+  const refused = tool.execute({score:starterScore()});
+  await nextTurn(); page.workers.at(-1).reply(validResult({verdict:'refused',stderr:'native input error'}));
+  assert.equal(toolValue(await refused).error,'native input error'); assert.equal(page.workers.length,1);
+  const canonical = new TextEncoder().encode('hash 0123456789abcdef\n');
+  const mismatch = await finishToolScore(page,tool,canonical,{replay:{pcmHash:'different'}});
+  assert.equal(mismatch.isError,true); assert.equal(toolValue(mismatch).tl,undefined);
+  const response = await finishToolScore(page,tool,canonical,{release:dev.id,fixture:{rendererRelease:null,engineId:dev.id,development:true}});
+  const result = toolValue(response); assert.equal(response.isError,undefined);
+  assert.equal(result.url,null); assert.match(result.urlError,/no kept release/); assert.equal(result.urlBytes,undefined);
+  assert.equal(result.tl.verified,true);
+  const link = await tool.execute({documentSha256:result.tl.documentSha256,offset:0,format:'link'});
+  assert.match(toolValue(link).error,/unavailable/);
+}));
+test('WebMCP cancellation and supersession leave a newer page render in control', () => withModelTools(async (page,tools) => {
+  const tool = tools.get('intfm_compose'), score = starterScore();
+  const early = new AbortController(), waiting = tool.execute({score},{signal:early.signal});
+  early.abort(); await assert.rejects(waiting,/abort/i);
+  const stale = tool.execute({score}); page.api.clear();
+  page.ready({default:toolRelease.id,engines:[toolRelease]});
+  assert.match(toolValue(await stale).error,/cancelled/); assert.equal(page.workers.length,0);
+  const controller = new AbortController(), cancelled = tool.execute({score},{signal:controller.signal});
+  await nextTurn(); controller.abort(); await assert.rejects(cancelled,/abort/i);
+  assert.equal(page.workers[0].terminated,true);
+  const previous = new AbortController(), superseded = tool.execute({score},{signal:previous.signal});
+  await nextTurn();
+  const current = tools.get('intfm_render').execute({recordText:'current TL',mode:'listen'});
+  previous.abort(); await assert.rejects(superseded,/abort/i); await nextTurn();
+  const worker = page.workers.at(-1);
+  assert.equal(worker.request.recordText,'current TL'); assert.equal(worker.terminated,false);
+  worker.reply(validResult()); const result = toolValue(await current);
+  assert.equal(result.verdict,'valid'); assert.equal(result.mode,'listen'); assert.equal(result.verified,false);
+}));
 test('Musical score compilation selects exact release without rendering or playing', () => withPage(async page => {
   page.ready({default:'kept-a',engines:[{id:'kept-a',release_id:'kept-a',identity:'int-fm-synth 1'}]});
   const score=JSON.parse(readFileSync(new URL('../web/starter.score.json',import.meta.url),'utf8'));

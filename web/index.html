@@ -286,7 +286,9 @@
           <h2>Make an instrumental song</h2>
           <p><strong>Give your agent this page’s URL.</strong> Open the <a href="llms.txt">complete agent index (llms.txt)</a> or the <a href="agent-quick.txt">quick card</a> for a working score. Compose, measure and revise in the <a href="agent-start.txt">authoring workflow</a>. Return the verified .tl and its playable link. Keep the editable score and include a WAV when files can be transferred.</p>
           <p>Browser automation uses <code>window.IntFM</code>. Terminal agents can download the <a href="agent.mjs" download>official Node client</a> (Node 22.15+; no npm packages).</p>
-          <p>Using a read-only assistant on a phone? Ask for a .score.json file. Open it in the player, or paste its JSON in Source and choose <strong>Prepare pasted input</strong>. Choose <strong>Verify saved render</strong>, then save the TL and copy the song link. Use <strong>Copy report for your agent</strong> to send back the result.</p>
+          <p>Using a read-only assistant on a phone? Open its .score.json file to prepare it, or paste the JSON in Source and choose <strong>Prepare pasted input</strong>. Choose <strong>Verify saved render</strong>. After it shows Verified, save the TL and editable score, then copy or share the song link. For loudness or stereo measurements, choose <strong>Analyze audio</strong> under Record details before using <strong>Copy report for your agent</strong>. Press Play whenever you want to listen.</p>
+          <p>If your browser assistant offers WebMCP tools, give <code>intfm_compose</code> your score v1 JSON. It uses the synth in this tab. See the <a href="browser-guide.txt">browser guide</a> for inputs and file export.</p>
+          <p id="webmcp-status" class="small" role="status">WebMCP status appears when the player starts.</p>
           <details id="score-syntax">
             <summary>Score syntax on this page</summary>
             <p>This one-note example shows the required fields. Choose your own sounds, form and tempo for a song. Keep the score JSON for revision. The player generates the native TL and song link.</p>

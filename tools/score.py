@@ -155,7 +155,7 @@ def rational(value, pointer):
         numerator, denominator = value, 1
     else:
         _require(type(value) is str and len(value) <= 22 and re.fullmatch(RATIONAL, value),
-                 "must be an integer or a bounded numerator/denominator rational", pointer)
+                 'Use an integer or a quoted numerator/denominator fraction. For 0.5, write "1/2".', pointer)
         numerator, denominator = (int(part) for part in value.split("/"))
     _require(abs(numerator) <= RATIONAL_LIMIT and 1 <= denominator <= 4096,
              "rational exceeds numerator or denominator bounds", pointer)

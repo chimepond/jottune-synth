@@ -509,7 +509,11 @@ export function execute(context,command,input,options = {}) {
       worker.terminate().then(() => error ? reject(error) : resolve(value),reject);
     };
     const timer = setTimeout(() => finish(Error('Rendering or analysis exceeded its deadline; no output was written.')),timeoutMs);
-    worker.once('message',message => finish(message.error ? Error(message.error) : null,message.value));
+    worker.once('message',message => {
+      const error = message.error ? Error(message.error) : null;
+      if (error && message.pointer) error.pointer = message.pointer;
+      finish(error,message.value);
+    });
     worker.once('error',error => finish(error));
     worker.once('exit',code => { if (!settled) finish(Error('Renderer worker exited before completion (' + code + ').')); });
   });
@@ -734,8 +738,11 @@ export async function main(argv = process.argv.slice(2)) {
 
 if (!isMainThread && workerData?.agentWorker) {
   try { parentPort.postMessage({value:await workerMain(workerData)}); }
-  catch (error) { parentPort.postMessage({error:error.message}); }
+  catch (error) { parentPort.postMessage({error:error.message, pointer:error.pointer}); }
 } else if (process.argv[1] && await fs.realpath(process.argv[1]).catch(() => null) === fileURLToPath(import.meta.url)) {
   try { process.exitCode = await main(); }
-  catch (error) { process.stderr.write('JotTune: ' + error.message + '\n'); process.exitCode = 2; }
+  catch (error) {
+    const location = error.pointer ? error.pointer + ' ' : '';
+    process.stderr.write('JotTune: ' + location + error.message + '\n'); process.exitCode = 2;
+  }
 }

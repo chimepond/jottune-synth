@@ -155,7 +155,20 @@ try {
       const link=page.locator(`a[href="${name}"]`).first();assert.equal(await link.count(),1,'Missing direct reference: '+name);
       const response=await context.request.get(new URL(await link.getAttribute('href'),base).href);
       assert.equal(response.status(),200,name);const bytes=await response.body();assert(bytes.length>0,name);
-      if(name==='agent-quick.txt') {assert(bytes.length<=2048,'Quick card exceeds 2 KiB.');assert.match(bytes.toString(),/"version":1/);}
+      if (['agent-quick.txt','agent-start.txt','browser-guide.txt'].includes(name)) {
+        const guide = bytes.toString().replace(/\s+/g,' ');
+        const phone = guide.slice(guide.indexOf('On a phone,'));
+        assert.match(phone,/open the \.score\.json file.*?automatically.*?paste.*?Prepare pasted input/i,name);
+        assert.match(phone,/Verify saved render.*?Save editable score.*?Save song \(\.tl\).*?Copy song link.*?Share song link/,name);
+        assert.match(phone,/Analyze audio.*?Copy report for your agent/,name);
+      }
+      if (name==='agent-quick.txt') {
+        assert(bytes.length<=2048,'Quick card exceeds 2 KiB.');
+        const card = bytes.toString();
+        const score = JSON.parse(card.split('```json\n')[1].split('\n```')[0]);
+        assert.equal(score.version,1);
+        assert.match(card,/IntFM\.verify\(.*[\s\S]+?IntFM\.analyze\(s\)/,'Quick card measures the verified whole mix');
+      }
       if(name==='starter.score.json') assert.equal(JSON.parse(bytes).version,1);
     }
     const alias=await context.request.get(new URL('llm.txt',base).href);
@@ -170,16 +183,18 @@ try {
     const initial=await report(page);assert.equal(initial.song.title,'File handoff fixture');await mobileLayout(page,'390px manual report');
     assert(initial.song.authoring.counts.input_events>0);assert(initial.song.authoring.advisories.length>0);
     assert.match(initial.analysisStatus,/Not run/);
+    await openDetails(page,'source-panel');await page.locator('#verify-saved').click();
+    await page.waitForFunction(()=>/^Verified/.test(document.getElementById('verdict').textContent));
+    const verified=await report(page);assert.equal(verified.song.verified,true);assert.equal(verified.song.play.match,'yes');assert.equal(verified.song.play.block_indep,'yes');
     await openDetails(page,'details-panel');
     const measurements=page.locator('#details-panel details').filter({has:page.locator('#analyze-audio')});
     if(await measurements.getAttribute('open')===null) await measurements.locator(':scope > summary').click();
     await page.locator('#analyze-audio').click();
     await page.waitForFunction(()=>/^Analysis complete\./.test(document.getElementById('analysis-status').textContent));
     const measured=await report(page);assert.equal(measured.analysis.recordSha256,measured.song.recordSha256);
+    assert.equal(measured.song.verified,true);assert.equal(measured.analysis.pcmHash,verified.song.pcmHash);
+    assert.equal(measured.analysis.dry?.status === 'available',false);
     assert.equal(typeof measured.analysis.pcm.sample_peak,'number');assert.equal(await audioCount(page),0);
-    await openDetails(page,'source-panel');await page.locator('#verify-saved').click();
-    await page.waitForFunction(()=>/^Verified/.test(document.getElementById('verdict').textContent));
-    const verified=await report(page);assert.equal(verified.song.verified,true);assert.equal(verified.song.play.match,'yes');assert.equal(verified.song.play.block_indep,'yes');
     const saved=parseDocument(await canonicalDownload(page));assert.equal(saved.metadata.title,'File handoff fixture');assert.equal(saved.metadata.license,'CC0-1.0');assert.match(saved.body,/^hash [a-f0-9]{16}$/m);
     await paste(page,JSON.stringify(fixture('Pasted handoff fixture')));await ready(page,'Pasted handoff fixture');assert.equal(await audioCount(page),0);
     assert.equal((await report(page)).song.title,'Pasted handoff fixture');

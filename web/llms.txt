@@ -23,7 +23,7 @@ consent. Private drafts may omit license; the teaching starter stays Apache-2.0.
 - [Parameters](reference/params.txt): generated units/ranges/dependencies.
 - [Recipe catalog](reference/recipes.txt): complete presets, tweak units and spectral guidance.
 - [Audio analysis](analysis.txt): measured PCM, advisory gates and optional dry sources.
-- [Browser API](browser-guide.txt): window.IntFM, saved verification and artifacts.
+- [Browser tools](browser-guide.txt): WebMCP-capable assistants can compose and verify with `intfm_compose` or render TL with `intfm_render`. The guide also covers `window.IntFM` and file export.
 - [Library](songs.json): examples, exact saved variants and attributed metadata.
 - [Static checksums](agent-manifest.json) and [renderer registry](engines.json):
   artifact integrity and kept versions; same-origin hashes are not independent authenticity.

@@ -48,6 +48,10 @@ const cases = [];
 const metadataCase=base();metadataCase.metadata={title:'Portable score',made_by:'agent',model:{id:'fixture/v1',source:'client-reported'},tempo:{min_bpm:90,max_bpm:120}};
 metadataCase.events=[note()];cases.push(metadataCase);
 
+const halfBeat = base();
+halfBeat.events = [note('1/2', '1/2')];
+cases.push(halfBeat);
+
 for (const ramp of ['step','linear']) {
   for (const quarters of [4, '7/2', '1/4096']) {
     const s = base(); s.clock = {bars:3,meter:[{bar:1,quarters},{bar:3,quarters:3}],
@@ -135,7 +139,7 @@ const bad = change => {const score=base();change(score);assert.throws(()=>compil
 bad(s=>{s.version=2;s.phrases=[];}); bad(s=>{s.version=3;s.regions=[];});
 bad(s=>{s.clock.ramp='exponential';}); bad(s=>{s.clock.tempo[0].bar=2;});
 bad(s=>{s.clock.meter[0].quarters='1/4097';}); bad(s=>{s.events=[note(0,0)];});
-bad(s=>{s.events=[note(7,2)];}); bad(s=>{s.events=[note(0.5,1)];});
+bad(s=>{s.events=[note(7,2)];});
 bad(s=>{s.events=[{...note(),velocity_q15:9007199254740992}];});
 bad(s=>{s.events=[{...note(),pitch:{note:'a4'}}];}); bad(s=>{s.events=[{...note(),pitch:{note:'G#9'}}];});
 bad(s=>{s.events=[{...note(),kind:'chord'}];}); bad(s=>{s.streams=['first','first'];});
@@ -173,6 +177,22 @@ assert.equal(fs.readFileSync(path.join(root,'web/starter.tl'),'utf8'),compileSco
 assert.ok(fs.existsSync(harness),'Set JOTTUNE_HARNESS to the existing native renderer.');
 const tmp=fs.mkdtempSync(path.join(os.tmpdir(),'jottune-authoring-'));
 try {
+  const sourceFile = path.join(tmp, 'fraction.score.json');
+  for (const field of ['at', 'duration']) {
+    const score = structuredClone(halfBeat);
+    score.events[0][field] = 0.5;
+    const pointer = '/events/0/' + field;
+    const message = /0\.5.*"1\/2"/;
+    assert.throws(() => compileScore(score, {engine}), {name:'ScoreError', pointer, message});
+    fs.writeFileSync(sourceFile, JSON.stringify(score));
+    const cli = spawnSync(process.env.PYTHON || 'python3', ['-B', path.join(root, 'tools/fm.py'),
+      'score-inspect', '--score', sourceFile, '--receipt-dir', path.join(tmp, 'receipts'), '--json'],
+      {encoding:'utf8'});
+    assert.equal(cli.status, 2, cli.stderr);
+    const refusal = JSON.parse(cli.stdout);
+    assert.equal(refusal.pointer, pointer);
+    assert.match(refusal.message, message);
+  }
   const run=args=>{const r=spawnSync(harness,args,{encoding:'utf8',maxBuffer:4*1024*1024});assert.equal(r.status,0,r.stderr+'\n'+r.stdout);return r;};
   const draft=path.join(tmp,'starter.tl'),canonical=path.join(tmp,'canonical.tl'),replay=path.join(tmp,'replay.tl');
   fs.writeFileSync(draft,compileScore(starter,{engine}).draftText);

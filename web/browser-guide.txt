@@ -164,9 +164,25 @@ IntFM.cancelAnalysis() cancels it. Edits/new renders also cancel old analysis.
 The result contains pcm, events and optional dry measurements plus the exact
 recordSha256, pcmHash and rendererRelease. Optional dry failure is labelled;
 a timeout cannot invalidate prepared audio. See analysis.txt for scopes/limits.
-Details → Audio measurements provides Analyze audio and Save analysis JSON.
-Analysis options selects window length, one named section and optional dry
-source levels; the API supports up to 32 sections and explicit larger budgets.
+Record details → Audio measurements → Analyze audio measures the whole mix by
+default. Analysis options adds a named section or dry source levels. Leave dry
+levels off unless you need pre-effects levels and the additional native render
+fits the UI's 128 MiB and 10-second dry budgets. For an explicit API budget,
+see the frames × all voices × 4 byte check and dryTimeoutMs in analysis.txt.
+Save analysis JSON keeps the full report. The API supports up to 32 sections.
+
+Optional WebMCP in a supporting browser
+Give intfm_compose {score: SCORE_V1} and optionally release. The tool composes
+in this tab, verifies the saved TL and returns the title, a compact summary and
+the first TL chunk. Its verified link pins the renderer release. Read url when
+present. When urlBytes is present but url is null, request the link as chunks.
+If urlError is present, deliver the TL file. To get chunks call the same tool
+with {documentSha256,format:"tl"|"link",offset}. Start at 0 for a link or use
+the previous chunk's nextOffset. Decode each chunk's base64 separately, join
+the bytes in order, and check payloadSha256. Stop at nextOffset:null.
+Use intfm_render for an existing TL. No tool starts playback or submits a song.
+IntFM.describe().webmcp reports each tool's registration state. If your
+assistant cannot see these browser tools, use the phone or Node workflow.
 
 Call window.IntFM.describe() for capabilities, limits and reference URLs.
 await IntFM.render(recordText, {mode:'verify', release:'RELEASE-ID'}) uses the
@@ -221,18 +237,22 @@ uses the same compact library reference or portable TL fragment as that control;
 it does not publish or upload the song. Keep the returned string intact and
 save the TL file too.
 
-A person can open a score JSON file, or paste score JSON into the editor and
-choose Prepare pasted input. Both compile score v1, report source errors and
-advisories, and use the native browser renderer without autoplay. Copy report for your agent
-includes the native sample peak, peak and RMS in dBFS, sample frames and
-saturation count in song.play. For integrated LUFS, stereo balance and exact
-ending silence, use Record details → Audio measurements → Analyze audio, then
-copy again. The clipboard includes up to eight named sections, dry streams and
-authoring advisories each, with total counts. Save analysis JSON keeps all
-measured windows, channels, sections and optional dry levels. Copying a report
-does not start or interrupt analysis. A
-read-only web fetch cannot render; a connected browser or an authorized local
-client is required. Network/execution limits belong to the particular session.
+On a phone, open the .score.json file in Choose a song. It prepares automatically.
+For pasted JSON, open Song source and choose Prepare pasted input. Once ready,
+choose Verify saved render in Song source and wait for Verified. Use Save editable
+score (.score.json) to keep the source for revisions and Save song (.tl) to
+download the verified timeline. Use Copy song link (Share song link on supported
+touch devices) for the playable URL. Tap Play only if you want to listen.
+
+For a measured report, open Record details → Audio measurements → Analyze audio
+after verification. Wait for analysis to finish, then choose Copy report for your
+agent. If preparation fails, the same report button returns the input error.
+The report includes the native sample peak, peak and RMS in dBFS, sample frames
+and saturation count in song.play. Completed analysis adds integrated LUFS,
+stereo balance and exact ending silence. The clipboard includes up to eight
+named sections, dry streams and authoring advisories each, with total counts.
+Save analysis JSON keeps all measured windows, channels, sections and optional
+dry levels. Copying a report does not start or interrupt analysis.
 
 A result includes verdict, code, mode, verified, verification, native stdout and
 stderr, canonical Uint8Array bytes, recordSha256, pcmHash, engineIdentity,

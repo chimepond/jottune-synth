@@ -3,8 +3,10 @@ SPDX-License-Identifier: Apache-2.0
 
 LOCAL AUDIO ANALYSIS
 
-Analysis measures a completed render. It does not change the PCM, canonical
-timeline, verification verdict or master gain.
+Start with whole-song measurements of the verified mix. In the browser, use
+await IntFM.analyze(saved) or choose Record details → Audio measurements →
+Analyze audio after Verify saved render. In the CLI, add --analysis to verify.
+All three measure the PCM already produced. Leave dry voices off for this pass.
 
 INTERFACE BUDGETS
 The terminal client's --timeout-ms bounds its complete worker invocation:
@@ -128,19 +130,24 @@ their gate has no duration. These facts do not rank composition quality.
 
 DRY SOURCES
 
-To compare parts before effects, pass dryVoices:true to IntFM.analyze(take).
-Read dry.status first. A successful report has dry.voices and dry.streams for
-whole-song source levels. pcm.sections always describes the final mix. For a
-per-section table of individual parts through the effects, see the solo recipe
-in browser-guide.txt. For a larger song, estimate the work before requesting it:
+Request dry analysis only when a pre-effects question justifies another native
+render, such as checking whether a source stream is silent. Decide how many
+bytes and how much time to spend before starting. For example, for a verified
+result named saved, this opt-in allows 128 MiB of dry output and 10 seconds of
+dry work within a 120-second analysis deadline. Skip the pass if it exceeds
+the budget, even when requesting a single voice.
 
-  const bytes = Number(take.info.frames) * Number(take.info.voices) * 4;
-  // Opt in to this much processing and up to one minute of dry work.
-  if (bytes >= 44 && bytes <= 2 ** 31) {
-    const report = await IntFM.analyze(take, {dryVoices:true,
-      dryMaxBytes:bytes, dryTimeoutMs:60000, timeoutMs:120000});
+  const required = Number(saved.info.frames) * Number(saved.info.voices) * 4;
+  const dryMaxBytes = 128 * 1024 * 1024;
+  if (required <= dryMaxBytes) {
+    const report = await IntFM.analyze(saved, {dryVoices:true, dryMaxBytes,
+      dryTimeoutMs:10000, timeoutMs:120000});
     console.log(report.dry.status, report.dry.reason ?? report.dry.streams);
   }
+
+A successful report has dry.voices and dry.streams for whole-song source
+levels. pcm.sections describes the final mix. For per-section measurements
+of individual parts through effects, see the solo recipe in browser-guide.txt.
 
 analysis-runtime.mjs exports:
   analyzeDryVoices({module, recordText, info, events, pcmHash}, options)
@@ -164,10 +171,10 @@ The dry payload requires frames * ALL native voices * 4 bytes, excluding its
 44-byte WAV header. Choosing fewer voices reduces analysis work but not native
 output. Compute this from full result.info.frames and result.info.voices, or
 compact dimensions.frames and dimensions.voices. If the required payload
-exceeds the default, explicitly retry with CLI --dry-max-bytes REQUIRED_BYTES
-(or browser dryMaxBytes / companion maxBytes), up to the 2 GiB maximum. Retain
-the valid song when optional dry analysis is unavailable; do not keep retrying
-with the same insufficient budget. A byte budget is a processing cap, not an
+exceeds your budget, skip dry analysis and keep the verified song and mix
+measurements. To opt in to more work, choose an affordable CLI --dry-max-bytes
+(or browser dryMaxBytes / companion maxBytes) and dry timeout within the limits
+above. A byte budget is a processing cap, not an
 allocation of that much RAM. At 48 kHz, eight voices and 60 seconds require
 92,160,000 bytes; 46 voices and 125 seconds require
 1,104,000,000 bytes. Those bytes stream through a checked append-only sink;

@@ -432,7 +432,9 @@ const reference = async (name = 'params') => {
   if (!response.ok) throw Error('Native reference is not packaged. Run make web.');
   return response.text();
 };
+const webmcp = {intfm_render:'unsupported', intfm_compose:'unsupported'};
 const describe = () => ({name: 'jottune-synth', title: 'JotTune Synth', format: 'JotTune Timeline (.tl)',
+  webmcp: {...webmcp},
   rendering: 'local WebAssembly worker',
   operations: ['summary', 'toText', 'toLink', 'exportChunk', 'describe', 'compose', 'recipes', 'recipe', 'recipeGain', 'analyze', 'cancelAnalysis', 'render', 'listen', 'verify', 'verifySaved', 'cancel', 'clear', 'loadLink', 'prepareLink', 'result', 'metrics', 'toWav', 'toSvg', 'guide', 'reference', 'showQr', 'closeQr'],
   modes: {verify: 'Two renders; checks hash and block independence.', listen: 'One render; block independence is unchecked.'},
@@ -532,7 +534,8 @@ async function exportDigest(bytes) {
   return [...new Uint8Array(hash)].map(byte => byte.toString(16).padStart(2,'0')).join('');
 }
 
-async function exportChunk(result = lastResult, options = {}) {
+function exportChunk(result = lastResult, options = {}) { return exportResultChunk(result, options); }
+async function exportResultChunk(result, options, portableURL) {
   if (!options || typeof options !== 'object' || Array.isArray(options) ||
       Object.keys(options).some(key => !['format','offset','bytes'].includes(key)))
     throw Error('Use exportChunk options {format,offset,bytes}.');
@@ -549,7 +552,7 @@ async function exportChunk(result = lastResult, options = {}) {
   const canonical = new Uint8Array(result.canonical);
   if (await exportDigest(canonical) !== documentSha256) throw Error('Canonical document SHA-256 differs from the render result.');
   const payload = format === 'tl' ? canonical : new TextEncoder().encode(
-    await toLink({verdict:'valid',canonical,recordSha256,documentSha256,rendererRelease}));
+    portableURL ?? await toLink({verdict:'valid',canonical,recordSha256,documentSha256,rendererRelease}));
   if (offset > payload.length) throw Error('Export offset exceeds the payload length.');
   const chunk = payload.subarray(offset, offset + bytes), end = offset + chunk.length;
   return {format, encoding:'base64', documentSha256, verified:verified === true,
@@ -608,6 +611,16 @@ async function copyAgentReport() {
   catch { if (!current()) return; $('agent-report-manual').hidden = false; $('agent-report-manual').focus(); $('agent-report-manual').select?.();
     playerStatus('Clipboard access is unavailable. Copy the report from the selected text below.'); }
 }
+function selectInputDocument(recordText, title, scoreText) {
+  invalidate();
+  loadedIdentity = {title:parseDocument(recordText).metadata.title || title || 'Composed score',
+    version:scoreText === undefined ? 'Local file · as saved' : 'Score v1 · composed locally'};
+  if (scoreText !== undefined) {
+    originalScoreText = scoreText;
+    $('score-download').hidden = false;
+  }
+  $('record').value = recordText;
+}
 async function prepareTextInput(text, {title,mode='listen'} = {}) {
   const request=++inputRequest, initial=generation;
   let currentGeneration=initial;
@@ -626,14 +639,9 @@ async function prepareTextInput(text, {title,mode='listen'} = {}) {
     if (request!==inputRequest || initial!==generation) return;
     checkRecord(recordText);
     if (title || authored) {
-      invalidate(); currentGeneration=generation; loadedIdentity={title:parseDocument(recordText).metadata.title || title || 'Composed score',
-        version:authored ? 'Score v1 · composed locally' : 'Local file · as saved'};
-      if (authored) {
-        originalScoreText = text;
-        $('score-download').hidden = false;
-      }
-    }
-    $('record').value=recordText;
+      selectInputDocument(recordText, title, authored ? text : undefined);
+      currentGeneration=generation;
+    } else $('record').value=recordText;
     const pending=mode==='verify' ? verify(recordText,{release:authored?.rendererRelease}) : preparePlayback(recordText,{release:authored?.rendererRelease});
     currentGeneration=generation;
     const result=await pending;
@@ -806,7 +814,9 @@ async function verifySaved() {
   const text = new TextDecoder('utf-8', {fatal:true}).decode(result.canonical);
   // These bytes came from the current result. Keep its catalog, profile and
   // editable source context as the editor moves from the draft to saved TL.
-  return render(text, {mode:'verify', release:result.rendererRelease || result.engineId}, {replaySaved:true});
+  const saved = await render(text, {mode:'verify', release:result.rendererRelease || result.engineId}, {replaySaved:true});
+  if (lastResult === saved && result.authoring) saved.authoring = result.authoring;
+  return saved;
 }
 $('verify-saved').onclick = () => verifySaved().catch(error => { playerStatus(error.message); });
 $('draft-download').onclick = () => {
@@ -897,19 +907,123 @@ window.addEventListener('message', async event => {
   try { const value = await window.IntFM[operation](...args); event.source.postMessage({protocol: 'intfm-v1', id, value}, event.origin); }
   catch (error) { event.source.postMessage({protocol: 'intfm-v1', id, error: error.message}, event.origin); }
 });
-const modelContext = document.modelContext || navigator.modelContext;
-if (modelContext?.registerTool) {
+// Bind continuations to the verified result, without retaining a superseded song's PCM.
+const composedLinks = new WeakMap(), toolChunkBytes = 3000, inlineURLBytes = 2048;
+async function toolStep(start, signal, ownsRender = false) {
+  signal?.throwIfAborted();
+  const pending = start(), owner = generation;
+  let abort;
   try {
-    Promise.resolve(modelContext.registerTool({name: 'intfm_render', description: 'Render a JotTune Timeline locally; full verification is the default.',
-      inputSchema: {type: 'object', properties: {recordText: {type: 'string'}, mode: {type: 'string', enum: ['listen', 'verify']}, release: {type: 'string'}}, required: ['recordText']},
-      execute: async ({recordText, mode, release}) => {
-        const result = await render(recordText, {mode, release});
-        return {content: [{type: 'text', text: JSON.stringify({verdict: result.verdict, verified: result.verified,
-          mode: result.mode, verification: result.verification, recordSha256: result.recordSha256,
-          pcmHash: result.pcmHash, rendererRelease: result.rendererRelease, metrics: result.metrics, stderr: result.stderr})}]};
-      }})).catch(() => {});
-  } catch { /* Optional browser integration; the window API remains available. */ }
+    const value = signal ? await Promise.race([pending, new Promise((_, reject) => {
+      abort = () => {
+        if (ownsRender && owner === generation) cancel();
+        reject(signal.reason);
+      };
+      signal.addEventListener('abort', abort, {once:true});
+      if (signal.aborted) abort();
+    })]) : await pending;
+    signal?.throwIfAborted();
+    if (owner !== generation) throw Error('Song changed or rendering was cancelled. Retry with the intended song.');
+    return value;
+  } finally { if (abort) signal.removeEventListener('abort', abort); }
 }
+async function composeTool(input, signal) {
+  const usage = 'Pass {score, release?} to compose, or {documentSha256, offset, format?} to retrieve the next verified chunk.';
+  if (!input || typeof input !== 'object' || Array.isArray(input)) throw Error(usage);
+  if (!Object.hasOwn(input,'score')) {
+    const {documentSha256,offset,format='tl'} = input;
+    if (Object.keys(input).some(key => !['documentSha256','offset','format'].includes(key)) ||
+        typeof documentSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(documentSha256) ||
+        !Number.isSafeInteger(offset) || offset < 0 || !['tl','link'].includes(format)) throw Error(usage);
+    const saved = lastResult;
+    if (!composedLinks.has(saved) || saved.documentSha256 !== documentSha256)
+      throw Error('The verified composition is no longer active. Call intfm_compose with the original score again.');
+    const url = composedLinks.get(saved);
+    if (format === 'link' && !url) throw Error('A release-pinned link is unavailable for this composition. Retrieve the TL instead.');
+    const chunk = await toolStep(() => exportResultChunk(saved, {format,offset,bytes:toolChunkBytes}, url), signal);
+    return {[format]:chunk};
+  }
+  if (Object.keys(input).some(key => !['score','release'].includes(key)) ||
+      !input.score || typeof input.score !== 'object' || Array.isArray(input.score)) throw Error(usage);
+  const source = JSON.stringify(input.score);
+  if (new TextEncoder().encode(source).length > limits.recordBytes) throw Error('Score exceeds the 1 MB browser input limit.');
+  const score = JSON.parse(source), request = ++inputRequest;
+  const current = result => {
+    signal?.throwIfAborted();
+    if (request !== inputRequest || (result && result !== lastResult)) throw Error('Song changed. Retry with the intended score.');
+  };
+  const release = input.release === undefined ? new URL(location.href).searchParams.get('release') ?? undefined : input.release;
+  const authored = await toolStep(() => compose(score, {release}), signal);
+  current();
+  checkRecord(authored.draftText);
+  const title = score.metadata?.title || score.name?.slice(0,120) || 'Composed score';
+  selectInputDocument(authored.draftText, title, source);
+  const compact = result => ({...summary(result), title, authoring:{counts:authored.counts, advisoryCount:authored.advisories.length}});
+  const draft = await toolStep(() => listen(authored.draftText, {release:authored.rendererRelease}), signal, true);
+  current(draft);
+  draft.authoring = {counts:authored.counts, advisories:authored.advisories};
+  if (draft.verdict !== 'valid') return {error:draft.stderr?.slice(0,1000) || 'The renderer refused the score.', summary:compact(draft)};
+  const saved = await toolStep(verifySaved, signal, true);
+  current(saved);
+  if (!saved.verified || saved.documentSha256 !== draft.documentSha256 || saved.pcmHash !== draft.pcmHash)
+    return {error:saved.stderr?.slice(0,1000) || 'The saved TL did not verify against the authored render.', summary:compact(saved)};
+  const tl = await toolStep(() => exportChunk(saved, {bytes:toolChunkBytes}), signal);
+  current(saved);
+  const {url = null, urlError} = await toolStep(async () => {
+    if (!saved.rendererRelease || saved.development)
+      return {urlError:'This development renderer has no kept release to pin. Use the verified TL or compose with a kept release.'};
+    try { return {url:await portableLink(saved.canonical, assetBase, saved.rendererRelease)}; }
+    catch (error) { return {urlError:error.message}; }
+  }, signal);
+  current(saved);
+  composedLinks.set(saved, url);
+  const urlBytes = url ? new TextEncoder().encode(url).length : 0;
+  return {title, url:urlBytes <= inlineURLBytes ? url : null, ...(url ? {urlBytes} : {urlError}),
+    summary:compact(saved), tl};
+}
+function webToolReply(run) {
+  return async (input, {signal} = {}) => {
+    let value;
+    try { signal?.throwIfAborted(); value = await run(input, signal); }
+    catch (error) {
+      signal?.throwIfAborted();
+      value = {error:String(error?.message || error).slice(0,1000), ...(error?.pointer ? {pointer:error.pointer.slice(0,256)} : {})};
+    }
+    return {...(value.error ? {isError:true} : {}), content:[{type:'text', text:JSON.stringify(value)}]};
+  };
+}
+function showWebTools() {
+  const node = $('webmcp-status');
+  if (node) node.textContent = 'WebMCP registration · ' + Object.entries(webmcp).map(([name,state]) => name+' '+state).join(' · ');
+}
+async function registerWebTool(tool) {
+  try {
+    const context = typeof document.modelContext?.registerTool === 'function' ? document.modelContext : navigator.modelContext;
+    if (typeof context?.registerTool !== 'function') return;
+    webmcp[tool.name] = 'registering';
+    showWebTools();
+    await context.registerTool(tool);
+    webmcp[tool.name] = 'registered';
+  } catch { webmcp[tool.name] = 'failed'; }
+  finally { showWebTools(); }
+}
+void registerWebTool({name:'intfm_render', description:'Render a JotTune Timeline locally; full verification is the default.',
+  inputSchema:{type:'object', properties:{recordText:{type:'string'}, mode:{type:'string',enum:['listen','verify']}, release:{type:'string'}}, required:['recordText']},
+  execute:webToolReply(async ({recordText,mode,release}, signal) => {
+    const result = await toolStep(() => render(recordText,{mode,release}), signal, true);
+    return {verdict:result.verdict, verified:result.verified, mode:result.mode, verification:result.verification,
+      recordSha256:result.recordSha256, pcmHash:result.pcmHash, rendererRelease:result.rendererRelease, metrics:result.metrics, stderr:result.stderr};
+  })});
+void registerWebTool({name:'intfm_compose',
+  description:'Compose score v1 locally and verify the saved TL. Returns title, summary, a pinned URL when available, and the first base64 TL chunk. For more TL call again with its documentSha256 and nextOffset as offset. For a long URL (url null and urlBytes present) request format link from offset 0. No playback or publication.',
+  inputSchema:{type:'object', additionalProperties:false, properties:{
+    score:{type:'object',description:'Complete JotTune score v1 JSON object; see authoring.txt and starter.score.json alongside this player.'},
+    release:{type:'string',description:'Kept renderer release; defaults to the page release or registry default.'},
+    documentSha256:{type:'string',pattern:'^[a-f0-9]{64}$',description:'Document checksum from the active composition.'},
+    offset:{type:'integer',minimum:0,description:'Byte offset into the selected export.'},
+    format:{type:'string',enum:['tl','link'],default:'tl'}},
+    oneOf:[{required:['score']},{required:['documentSha256','offset']}]},
+  execute:webToolReply(composeTool)});
 
 function downloadName(extension, version) {
   let title = (loadedIdentity?.title || 'song').normalize('NFKC').replace(/[\x00-\x1f\x7f<>:"/\\|?*]/g, '-')

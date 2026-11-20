@@ -92,10 +92,10 @@ const zero = fraction(0n), whole = value => fraction(BigInt(value));
 const spelling = a => a.d === 1n ? String(a.n) : a.n + '/' + a.d;
 function rational(value, pointer) {
   let n, d;
-  if (typeof value === 'number') { integer(value, pointer); n = BigInt(value); d = 1n; }
+  if (Number.isInteger(value)) { integer(value, pointer); n = BigInt(value); d = 1n; }
   else {
     requireValue(typeof value === 'string' && value.length <= 22 && /^-?(0|[1-9][0-9]*)\/[1-9][0-9]*$/.test(value),
-      'Must be an integer or a bounded numerator/denominator rational.', pointer);
+      'Use an integer or a quoted numerator/denominator fraction. For 0.5, write "1/2".', pointer);
     [n, d] = value.split('/').map(BigInt);
   }
   requireValue(n >= -BigInt(MAX) && n <= BigInt(MAX) && d <= 4096n, 'Rational exceeds numerator or denominator bounds.', pointer);

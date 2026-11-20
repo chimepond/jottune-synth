@@ -61,11 +61,16 @@ execution: check that session's capabilities, rather than assuming all phones
 or agents share one restriction. If the site is unreachable, use a downloadable
 offline client bundle when available, or hand score JSON to the person's browser.
 
-Without automation, send a .score.json file to open in the player, or paste
-score JSON into its editor and choose Prepare pasted input. Both compile and
-render locally without autoplay; Play needs the person's tap. Ask them to use Copy report for your agent and
-paste the errors, advisories and current measurements back for your revision.
-Keep the editable score alongside the canonical TL for later musical edits.
+On a phone, open the .score.json file in Choose a song. It prepares automatically.
+For pasted JSON, open Song source and choose Prepare pasted input. Once ready,
+choose Verify saved render in Song source and wait for Verified. Use Save editable
+score (.score.json) to keep the source for revisions and Save song (.tl) to
+download the verified timeline. Use Copy song link (Share song link on supported
+touch devices) for the playable URL. Tap Play only if you want to listen.
+
+For a measured report, open Record details → Audio measurements → Analyze audio
+after verification. Wait for analysis to finish, then choose Copy report for your
+agent. If preparation fails, the same report button returns the input error.
 
 A. Browser automation: await IntFM.compose(score) returns draftText and the
 selected rendererRelease. IntFM.recipes() lists the sounds. A score declaration
@@ -78,9 +83,8 @@ c_level attenuates; positive gain amplifies. See authoring.txt for bounds. Then:
   const saved = await IntFM.verify(IntFM.toText(take),
                                  {release:draft.rendererRelease});
   if (!saved.verified) throw Error(saved.stderr || saved.verification);
-  const sections = [{name:'opening',startSeconds:0,endSeconds:1}];
-  const measured = await IntFM.analyze(saved, {sections, dryVoices:true});
-  console.log(measured.pcm.sections, measured.dry.reason ?? measured.dry.streams);
+  const measured = await IntFM.analyze(saved);
+  console.log(measured.pcm.sample_peak_dbfs, measured.pcm.loudness.integrated_lufs);
   const wav = IntFM.toWav(saved);  // Blob; original integer PCM
   const svg = IntFM.toSvg(saved); // native note gates, not an audio spectrum
   console.log(IntFM.summary(saved)); // compact JSON-safe result; no PCM/events
@@ -163,21 +167,19 @@ checksum check and WASI artifact contract. Same-origin checksums prove integrity
 against that manifest, not independent authenticity of the website/client.
 
 3. INSPECT AND REVISE
-analysis.txt describes LUFS, windows, named sections, peaks, stereo and tails.
-CLI --sections '[{"name":"hook","startSeconds":4,"endSeconds":12}]' measures
-an interval. --dry-voices '[0,1]' requests bounded native PRE-EFFECTS voice
-measurements; --dry-max-bytes and --dry-timeout-ms allow an explicit larger
-budget. Dry voices do not sum to the final nonlinear mix. Browser equivalent:
-IntFM.analyze(saved,{dryVoices:[0,1],sections:[{name:'hook',startSeconds:4,endSeconds:12}]}).
-Missing optional diagnostics preserve the valid song and say unavailable.
-CLI --timeout-ms defaults to and cannot exceed 120000 ms for the complete
-render/verification/analysis worker; --dry-timeout-ms must fit within it. The
-browser analysis API's 300000 ms maximum does not extend this CLI limit.
-Dry output needs frames * ALL native voices * 4 bytes: selecting fewer voices
-does not lower that output budget. Default --dry-max-bytes is 134217728 (128 MiB),
-maximum 2147483648 (2 GiB). On a byte-budget refusal, inspect the required bytes
-and explicitly retry with a sufficient --dry-max-bytes value and fresh --out
-stem, or omit dry analysis. analysis.txt explains the timing and memory scopes.
+Start with whole-song PCM measurements. Read sample_peak_dbfs, integrated LUFS,
+stereo balance and ending silence in analysis.txt. Add CLI --sections
+'[{"name":"hook","startSeconds":4,"endSeconds":12}]' to measure a passage.
+
+Request dry voices only to answer a source-level question, such as which stream
+is silent before effects. The extra native render produces frames * ALL native
+voices * 4 bytes even when measuring only one voice. Check that estimate against
+a chosen byte cap and allow time for the extra pass. For example, opt in with
+--dry-voices '[0]' --dry-max-bytes 134217728 --dry-timeout-ms 10000 if 128 MiB
+and 10 seconds suit the job. The browser example in analysis.txt applies these
+budgets. If dry analysis is unavailable, keep the verified TL and mix report.
+The CLI caps dry output at 2 GiB and the entire worker at 120000 ms, including
+render, verification and analysis. The browser analysis maximum is 300000 ms.
 To audition a score part through its effects, use a controlled rerender:
   node agent.mjs "$SITE" compose song.score.json --solo-streams '["lead"]' --mode listen --analysis --out lead-only
 Or use --mute-streams '["bass"]'; the two options are mutually exclusive.

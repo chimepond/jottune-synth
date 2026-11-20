@@ -2,10 +2,13 @@ Copyright (c) 2026 Nenad Micic
 SPDX-License-Identifier: Apache-2.0
 
 JOTTUNE AGENT QUICK CARD
-Read the index in the player: await (await fetch('llms.txt')).text().
-IntFM.recipes() lists sounds. See authoring.txt for score and FX syntax.
-Reader only: send editable score JSON to open/paste. The person taps Play and
-returns Copy report for your agent. Browser API renders silently.
+See llms.txt and authoring.txt. IntFM.recipes() lists sounds.
+Send editable JSON. On a phone, open the .score.json file (prepares
+automatically), or paste JSON in
+Song source and choose Prepare pasted input. Choose Verify saved render. When
+verified, Save editable score (.score.json), Save song (.tl) and Copy song link
+(or Share song link). Play is optional. For measurements, Analyze audio on the
+verified result, then Copy report for your agent.
 
 Replace example metadata with known facts. Omit unknowns. Preserve
 metadata.license. Use "CC0-1.0" only with the author's explicit CC0 approval.
@@ -21,13 +24,12 @@ separate CC0/dataset/rights/age/history consent. Never silently relicense.
 const d=await IntFM.compose(score), opts={release:d.rendererRelease};
 const t=await IntFM.listen(d.draftText,opts);
 if(t.verdict!=='valid') throw Error(t.stderr||t.verdict);
-const a=await IntFM.analyze(t,{sections:[{name:'start',startSeconds:0,endSeconds:1}],dryVoices:true});
 const s=await IntFM.verify(IntFM.toText(t),opts);
 if(!s.verified) throw Error(s.stderr||s.verification);
+const a=await IntFM.analyze(s);
 const url=await IntFM.toLink(s);
 ```
-Read a.pcm.sections and, when available, a.dry.streams (whole song, pre-FX).
-Dry bytes = frames * all voices * 4. See analysis.txt for budgets. Master gain
-precedes limiter. Keep verified TL, link and score. Include WAV if transferable.
-Browser limits: 1,000,000 TL bytes, 300 s. For Node
-22.15+ see agent-start.txt for agent.mjs, its runtime cache and offline bundle.
+a.pcm measures the whole mix. Dry voices need an extra render and explicit
+byte/time budgets (analysis.txt). Master gain precedes limiter. Include WAV
+if transferable. Browser limits are 1,000,000 TL bytes and 300 s. Node 22.15+
+and offline setup are in agent-start.txt.

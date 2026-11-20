@@ -193,6 +193,19 @@ try {
     assert.ok(discovery.recipes.length >= 50);
     assert.equal(discovery.authoring.recipes,undefined); assert.equal(discovery.cache,context.folder);
   });
+  if (assets.has('authoring.mjs')) await check('offline compose shows the rejected field and quoted fraction',async () => {
+    const score = JSON.parse(await fs.readFile(path.join(web,'starter.score.json'),'utf8'));
+    const index = score.events.findIndex(event => event.kind === 'note');
+    score.events[index].duration = 0.5;
+    const source = JSON.stringify(score), pointer = '/events/' + index + '/duration';
+    await assert.rejects(execute(context,'compose',source), {pointer, message:/"1\/2"/});
+    const file = path.join(scratch,'fraction.score.json');
+    await fs.writeFile(file,source);
+    const answer = await cli(site,'compose',file,'--cache',cache,'--offline','--out',path.join(scratch,'fraction'));
+    assert.equal(answer.code,2);
+    assert.ok(answer.stderr.includes(pointer),answer.stderr);
+    assert.match(answer.stderr,/"1\/2"/);
+  });
   if (assets.has('authoring.mjs')) await check('score stream solo and mute retain wet effects and controls with native original validation',async () => {
     const score = {version:1,fs:48000,clock:{bars:1,meter:[{bar:1,quarters:4}],tempo:[{bar:1,bpm:120}],ramp:'step',tail_ns:1000000000},
       declarations:'space stereo\nblock 64\nnear 100\ndelay 200000 16000 8000\nrecipe tone flute\n',
