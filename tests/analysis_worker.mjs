@@ -82,6 +82,11 @@ if (!isMainThread) {
   assert.equal(ordinary.result.pcm.sections[0].frames, 48000);
   assert.equal(ordinary.result.dry, undefined); assert.deepEqual(ordinary.requests, []); ++checks;
 
+  const fast = await run({options:{bands:true,truePeak:false,sections:[{name:'to end'}]}});
+  const pcmReport = fast.result.pcm;
+  assert.deepEqual(pcmReport.sections[0].bands,pcmReport.bands);
+  assert.equal(pcmReport.bands.length,5); assert.equal(pcmReport.sections[0].end_frame,pcmReport.frames);
+  assert.match(pcmReport.sections[0].true_peak_reason,/disabled/); ++checks;
   const complete = await run({options:{dryVoices:true, dryTimeoutMs:30000}});
   assert.equal(complete.result.dry.status, 'available', complete.result.dry.reason);
   assert.equal(complete.result.dry.verified_mix_pcm_hash, result.pcmHash);

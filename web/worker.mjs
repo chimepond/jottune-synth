@@ -80,7 +80,7 @@ self.onmessage = async ({ data }) => {
   try {
     const { engine } = data;
     let recordText = data.recordText;
-    if (data.operation === 'compose-selection') recordText = compileScore(data.score,{engine:engine.identity}).draftText;
+    if (data.operation === 'compose-selection' || data.operation === 'analyze-parts') recordText = compileScore(data.score,{engine:engine.identity}).draftText;
     const requested = options({mode: data.mode, profile: data.profile});
     const profile = requested.profile;
     if (data.operation === 'inspect' && profile) throw Error('Note previews cannot apply a listening profile.');
@@ -109,6 +109,40 @@ self.onmessage = async ({ data }) => {
       self.postMessage({type:'inspection', verdict:'valid', info, events:events.map(row), eventsError:null,
         sourceRecordSha256:await bodySha256(recordText),metadata:sourceDocument.metadata,...documentInfo(sourceDocument),
         engineId:engine.id, engineIdentity:engine.identity});
+      return;
+    }
+    if (data.operation === 'analyze-parts') {
+      const {analyzePCM,analysisSectionFrames} = await import('./analysis.mjs');
+      if (data.sections !== undefined) {
+        if (!Array.isArray(data.sections) || data.sections.length > 32) throw Error('Supply up to 32 named sections.');
+        data.sections.forEach((section,index) => analysisSectionFrames(section,index,Number(info.fs),Number(info.frames)));
+      }
+      const score = data.score, streams = data.streams === undefined ? score.streams : data.streams;
+      if (!Array.isArray(streams) || !streams.length || streams.length > score.streams.length ||
+          new Set(streams).size !== streams.length || streams.some(name => !score.streams.includes(name)))
+        throw Error('Choose distinct declared score streams for the part report.');
+      if (score.events.some(e => e.kind === 'gen' || e.kind === 'lane') ||
+          score.declarations.split('\n').some(line => /^gen(?:_|\s|$)/.test(line.split('#')[0].trim())))
+        throw Error('Generated notes cannot be isolated by authored score stream.');
+      const sounding = new Set(score.events.filter(e => e.kind === 'note' || e.kind === 'on').map(e => e.stream));
+      const compact = s => ({name:s.name,start_frame:s.start_frame,end_frame:s.end_frame,
+        sample_peak_dbfs:s.sample_peak_dbfs,integrated_lufs:s.loudness?.integrated_lufs ?? null});
+      const parts = [];
+      for (const stream of streams) {
+        self.postMessage({type:'part-progress',stream,completed:parts.length,total:streams.length});
+        if (!sounding.has(stream)) { parts.push({stream,status:'no-authored-notes'}); continue; }
+        const solo = selectScoreStreams(score,{soloStreams:[stream]},{engine:engine.identity}).authored.draftText;
+        const files = nativeFiles(solo);
+        const inspection = await execute(module,['--inspect','record.tl'],files);
+        if (inspection.code) throw Error(stream + ': ' + inspection.stderr);
+        const soloInfo = row(inspection.stdout.split('\n').find(line => line.startsWith('INSPECT ')));
+        checkInspection(soloInfo,'listen');
+        const rendered = await execute(module,['--play-once','record.tl'],files);
+        if (rendered.code) throw Error(stream + ': ' + rendered.stderr);
+        const measured = await analyzePCM({...rendered,info:soloInfo},{sections:data.sections,truePeak:false});
+        parts.push({stream,status:'measured',...compact(measured),sections:measured.sections.map(compact)});
+      }
+      self.postMessage({type:'part-report',scope:'post_fx_solo',rendererRelease:engine.release_id || engine.id,parts});
       return;
     }
     if (data.operation === 'compose-selection') {

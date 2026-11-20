@@ -29,23 +29,59 @@ PCM. A standalone analyze SONG.tl verifies/renders the saved song again. Browser
 analysis reuses the cached PCM for mix measurements. See agent-start.txt for
 artifact suffixes and the compact versus full JSON result shapes.
 
+Browser IntFM.analyze(saved, {windowSeconds, sections, truePeak, bands}) returns
+{pcm, events, ...}. Set truePeak:false to skip interpolation during revisions.
+The Node client accepts --sections JSON, --bands and --no-true-peak. Its full
+JSON has the PCM report under analysis and native events under diagnostics.
+
+Omit endSeconds to select the exact record end. For example, use
+sections:[{name:'ending', startSeconds:120}] for the last section of a song
+longer than 120 seconds. The first frame at or after startSeconds is included,
+and endSeconds is exclusive. Use the reported end_frame for an exact integer
+coordinate. A rounded displayed duration can exceed the actual record.
+
 analyzePCM(result, options) in analysis.mjs returns a Promise. result supplies
 pcm (Int16Array), sampleRate and channels. Options:
   windowSeconds: 4 by default, 0.1 to 300
   sections: [{name:'verse', startSeconds:4, endSeconds:12}], at most 32
   truePeak: true by default; false skips the additional interpolation work
-  signal: optional AbortSignal
-  shouldCancel: optional callback
+  bands: false by default; true adds full-mix and named-section frequency bands
+  signal: optional AbortSignal (direct analyzePCM only)
+  shouldCancel: optional callback (direct analyzePCM only)
 
 The output reports sample peak, first peak frame/time/channel, RMS, per-channel
 DC mean and exact PCM rail counts; stereo correlation and channel balance;
 window and section measurements; and trailing exact-zero digital silence.
-Whole-record stereo also reports mean-square mid/side energy in full-scale
+Whole-record stereo and sections[i].stereo both report mean-square mid/side energy in full-scale
 squared units and RMS dBFS, using M=(L+R)/2 and S=(L-R)/2, including DC.
 side_energy_fraction is side/(mid+side), null for silence; zero-energy RMS
 levels are null. This is a signal measurement, not a stereo-width target.
 Channels are zero based. dBFS references signed PCM16 full scale. Null means
 silence, insufficient duration or an unavailable measurement, never minus infinity.
+
+With bands:true, read pcm.bands and pcm.sections[i].bands on mono/stereo audio.
+Sub, bass, lowmid, mid and high cover 20–60, 60–250, 250–1000, 1000–4000 and
+4000–16000 Hz, with each upper edge excluded. The meter sums one-sided FFT
+bin powers from all selected frames and averages channel powers independently.
+mean_square_fs2 is the band contribution in squared full-scale units.
+energy_fraction is its share of the power in those five bands, with null for
+an empty denominator. A band with no bin below or at Nyquist has null fields.
+The FFT uses consecutive 2048-frame rectangular blocks on the record grid
+with section edges zero-padded. Frequency resolution is sample_rate/2048 Hz;
+short sections and off-bin tones spread energy between bins. Raw field
+components have no bands or stereo assignment.
+
+pcm.ending gives peak and RMS dBFS over the final 100 ms (or the whole song if
+shorter). below_threshold_from_frame is the first frame after the last sample
+above −60 dBFS in any channel. It is zero if the entire nonempty record is
+quiet, and null if no quiet suffix exists. events.final_gate_release_frame is
+the last native note-off that closed an active gate, when the complete event
+list ends with every gate closed. events.mix_settle_after_final_release_seconds
+measures time from that release to the quiet suffix, zero if already quiet, null
+if the release or suffix is unavailable. Use these to check an abrupt ending
+or a long tail. A mixed waveform cannot identify one instrument's decay or how
+much gain the limiter applied. Pre-limiter peak and gain reduction require
+measurements inside the renderer.
 
 For mono/stereo, integrated loudness uses the same rate-dependent BS.1770-4
 K filters and absolute/relative gates as tools/music/analyze.py. Mono counts

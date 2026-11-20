@@ -61,6 +61,11 @@ execution: check that session's capabilities, rather than assuming all phones
 or agents share one restriction. If the site is unreachable, use a downloadable
 offline client bundle when available, or hand score JSON to the person's browser.
 
+If terminal HTTP fails but you can run JavaScript in the connected player tab,
+use window.IntFM there. Fetch the guides as text relative to document.baseURI
+when a page reader paraphrases syntax. Import score JSON directly from a local
+file or paste it into Song source. The player renders locally.
+
 On a phone, open the .score.json file in Choose a song. It prepares automatically.
 For pasted JSON, open Song source and choose Prepare pasted input. Once ready,
 choose Verify saved render in Song source and wait for Verified. Use Save editable
@@ -195,6 +200,13 @@ Check a dense passage, arrangement contrasts, note overlap, ending decay and
 stereo/mono behavior. Level targets and gate warnings are advice, not musical
 quality/originality proofs. Use identical phrases plus effect history for A/B.
 Revise the retained score; never erase an unexplained saved hash mismatch.
+
+If you cannot hear the output, save and verify the first valid take. Before
+a long revision sweep, measure a representative passage and its ending. Use
+IntFM.analyzeParts(score,{sections}) or node agent.mjs "$SITE" parts song.score.json
+for solo levels through effects. Check the recipe's velocity response, note
+whether you actually heard playback, and remeasure only streams you changed.
+browser-guide.txt shows how to poll or cancel a long-running part report.
 
 4. DELIVER
 Keep the complete canonical .tl, renderer release and editable score. A browser

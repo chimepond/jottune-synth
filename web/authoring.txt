@@ -14,7 +14,16 @@ instrument and events and replays without JSON, recipes or other source files.
 starter.tl is intentionally a draft without a saved audio hash. Keep both the
 editable source and the canonical TL returned by the selected renderer.
 
+UNITS AT A GLANCE
+  gain -40          master gain -4 dB (signed tenths of a dB)
+  c_level=4         add 4 dB of carrier attenuation to a recipe
+  c_vel=120         add 120/256 to operator 0 velocity sensitivity
+  velocity_q15      note input from 0 to 32767 (full velocity)
+  at, duration      quarter notes as integers or quoted fractions
+  tail_ns           nanoseconds after the musical extent
+
 LINKS RELATIVE TO THIS PAGE
+  score-v1.schema.json     machine-readable structure for editable score v1 (JSON Schema draft 7)
   starter.score.json       editable score-v1 example
   starter.tl               complete matching hashless TL draft
   authoring.mjs            pure browser/Node authoring functions
@@ -25,6 +34,7 @@ LINKS RELATIVE TO THIS PAGE
   reference/params.txt     native field units, ranges and dependencies
   reference/gen-params.txt native generators
   reference/recipes.txt    complete recipe rows, descriptions and tweak units
+  reference/recipe-auditions.txt  measured peak and LUFS for every hosted recipe, and reverb decay examples
   instrument.txt          full instrument and optional local Python/MCP tools
 
 ONE BROWSER/ NODE MODULE; NO PYTHON REQUIRED ON THE CLIENT
@@ -135,7 +145,8 @@ anchor's tempo until the next. This is a clock example, not a suggested tempo.
 
 At quarter-note BPM 96, one quarter is 625000000 ns, one eighth 312500000 ns,
 and one 4/4 bar 2500000000 ns. In 6/8 at dotted-quarter=54, enter quarters:3
-and bpm:81; each eighth occupies "1/2" quarter. Dotted-quarter=72 similarly
+and bpm:81; each eighth occupies "1/2" quarter. A bar of 7/8 uses
+{bar:1, quarters:"7/2"}. Dotted-quarter=72 similarly
 means bpm:108. A tempo range alone is not a timed tempo map.
 
 An event example:
@@ -173,12 +184,20 @@ gen             id, param, value
 lane            id, enabled (0 or 1)
 mark            text (one line; an authoring comment)
 
+Validate the score object against score-v1.schema.json for syntax and field shapes.
+For example, any JSON Schema draft-07 validator accepts the schema and the
+parsed score as separate inputs. Keep the score itself free of a $schema key.
+Then compile or compose to check the declarations, cross-references, time
+bounds and resource limits, and verify the saved TL with the renderer.
+
 All musical spans end within the clock extent; tail_ns extends rendering only.
 The adapter writes events in source order, just like the Python compiler.
 Native scheduling uses timestamp, then declared stream order, then source order.
 It does not globally sort note-offs before ons. At a replacement boundary, place
 the previous note/off before the replacement on in the same stream. A note emits
-its own later off: that off can close a retriggered gate. Review advisories for
+an on row at its start and an off row at its endpoint. A saved canonical TL
+orders event rows by the rounded timestamp, declared stream index and source
+order within the stream. The generated off can close a retriggered gate. Review advisories for
 stale offs, simultaneous ons, intentional retriggers, unmatched offs and held
 gates. Warnings do not repair notes or reject legal retriggers. Cross-role rests
 are musical intent; note gates do not measure envelope or effect tails.
@@ -186,7 +205,8 @@ are musical intent; note gates do not measure envelope or effect tails.
 SOUNDS, EFFECTS AND SPACE
 
 listRecipes() returns 60 existing preset IDs, descriptions and generated carrier
-metadata: operator, named level tweak and default attenuationDb. recipe('epiano',
+metadata. carriers[] lists each output operator, its named level tweak and
+default attenuationDb. velocity[] describes each operator’s note response. recipe('epiano',
 'keys') returns complete native rows. A score's declarations may likewise use
 "recipe keys epiano". Defaults remain byte-for-byte the existing Python expansion.
 
@@ -202,6 +222,27 @@ as the Python helper requires. A noncarrier's level field is ignored by native
 synthesis, so its level tweak is refused; modulation depth uses index instead.
 Named deltas use Python's clamp to 0..120 dB and nearest-ties-even conversion to
 native tenths. They can change the balance between multiple carriers.
+
+To make flute dynamics more responsive, use the same editable score syntax:
+  recipe wind flute c_vel=120
+  const flute = IntFM.recipes().find(r => r.id === 'flute');
+  flute.velocity[0]  // sensitivityQ8:100, tweak:'c_vel', halfVelocityGainDb:-1.89
+
+c_vel, m_vel, o2_vel and o3_vel add to the default sensitivity of operators
+0, 1, 2 and 3 when present. Sensitivity is rounded to the nearest integer (ties
+even) after clamping to 0..256. Flute's c_vel=120 moves its carrier from 100
+to 220. At half velocity its gain then falls about 4.88 dB, versus 1.89 dB at
+the default. Full velocity always applies unity velocity gain. At sensitivity
+0, velocity has no effect on that operator's gain. At 256 it tracks the note.
+
+For sensitivity S and note velocity V in 0..32767, the operator multiplier is
+approximately 1 - (S/256)*(1 - V/32767). halfVelocityGainDb is 20*log10 of
+that multiplier at half velocity, rounded to 0.01 dB. This scales a carrier’s
+output or a modulator’s index as applicable. Routing, envelopes, pitch and
+effects determine the measured change in the final audio. Compare the same
+isolated phrase at two velocities when setting a part’s written dynamics.
+For a single-note comparison of all 60 sounds and the measurement conditions,
+read reference/recipe-auditions.txt.
 
 To change every carrier together while preserving that balance:
   const {recipeGain} = await import(new URL('authoring.mjs', document.baseURI));

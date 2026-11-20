@@ -173,10 +173,12 @@ export function pitchMillihz(value, pointer = '/pitch') {
 }
 
 // Python op() rounds the binary floating-point level*10 to nearest, ties even.
-function levelDb10(db) {
-  const value = Math.min(120, Math.max(0, db)) * 10, lower = Math.floor(value), remainder = value - lower;
+function roundEven(value) {
+  const lower = Math.floor(value), remainder = value - lower;
   return lower + Number(remainder > .5 || (remainder === .5 && lower % 2 === 1));
 }
+function levelDb10(db) { return roundEven(Math.min(120, Math.max(0, db)) * 10); }
+const VELOCITY_TWEAKS = ['c_vel', 'm_vel', 'o2_vel', 'o3_vel'];
 function signedDelta(value) {
   // Recipe comments use the existing Python `%+g` six-significant-digit form.
   const negative = value < 0 || Object.is(value, -0), magnitude = Math.abs(value);
@@ -187,23 +189,28 @@ function signedDelta(value) {
   return (negative ? '-' : '+') + shown;
 }
 
-/** Expand an existing preset with Python-compatible carrier attenuation deltas. */
+/** Expand an existing preset with Python-compatible level and velocity deltas. */
 export function recipe(name, patch, tweaks = {}) {
   text(name, '/recipe', {single:true, nonempty:true});
   patch ??= name.replace(/[^A-Za-z0-9_-]/g, '_');
   requireValue(Object.hasOwn(RECIPE_DATA, name), 'Unknown hosted recipe. Use the listed presets or complete native declarations.', '/declarations');
   requireValue(typeof patch === 'string' && /^[A-Za-z0-9_.-]{1,31}$/.test(patch), 'Recipe patch name must be 1–31 ASCII letters, digits, dots, underscores or hyphens.', '/declarations');
-  const entry = RECIPE_DATA[name], allowed = new Set(entry.carriers.map(carrier => carrier.tweak));
-  requireValue(object(tweaks), 'Recipe level tweaks must be an object.', '/declarations');
+  const entry = RECIPE_DATA[name];
+  const allowed = [...entry.carriers.map(carrier => carrier.tweak), ...VELOCITY_TWEAKS.slice(0, entry.velocityQ8.length)];
+  requireValue(object(tweaks), 'Recipe tweaks must be an object.', '/declarations');
   for (const [key, delta] of Object.entries(tweaks)) {
-    requireValue(allowed.has(key), 'Only named level tweaks of this recipe’s carriers are supported.', '/declarations', {tweak:key, allowed:[...allowed]});
-    requireValue(typeof delta === 'number' && Number.isFinite(delta), 'Recipe level delta must be finite dB attenuation.', '/declarations', {tweak:key});
+    requireValue(allowed.includes(key), 'This recipe does not support that tweak.', '/declarations', {tweak:key, allowed});
+    requireValue(typeof delta === 'number' && Number.isFinite(delta), 'Recipe tweak must be a finite numeric delta.', '/declarations', {tweak:key});
   }
   const said = Object.entries(tweaks).map(([key, delta]) => key + ' ' + signedDelta(delta)).join(', ');
   return entry.rows.map(template => {
     let row = template;
     for (const carrier of entry.carriers)
       row = row.replaceAll('{level:' + carrier.operator + '}', String(levelDb10(carrier.attenuationDb + (tweaks[carrier.tweak] ?? 0))).padEnd(10));
+    row = row.replace(/\{vel:(\d)\}/, (_, operator) => {
+      const sensitivity = entry.velocityQ8[operator] + (tweaks[VELOCITY_TWEAKS[operator]] ?? 0);
+      return String(roundEven(Math.min(256, Math.max(0, sensitivity)))).padEnd(11);
+    });
     if (said) row = row.replace('# recipe ' + name + ':', '# recipe ' + name + ' (' + said + '):');
     return row.replaceAll('{patch:8}', patch.padEnd(8)).replaceAll('{patch}', patch);
   }).join('\n') + '\n';
@@ -224,13 +231,15 @@ export function recipeGain(name, patch, gainDb) {
 }
 export function listRecipes() {
   return Object.entries(RECIPE_DATA).map(([id, entry]) => ({id, description: entry.description,
-    carriers:entry.carriers.map(carrier => ({...carrier}))}));
+    carriers:entry.carriers.map(carrier => ({...carrier})),
+    velocity:entry.velocityQ8.map((sensitivityQ8, operator) => ({operator, tweak:VELOCITY_TWEAKS[operator], sensitivityQ8,
+      halfVelocityGainDb:Number((20 * Math.log10(1 - sensitivityQ8 / 512)).toFixed(2))}))}));
 }
 export function authoringDescription() {
-  return {version: 1, source: 'tools/score.py score version 1', eventKinds: Object.keys(FIELDS),
+  return {version: 1, source: 'tools/score.py score version 1', structuralSchema:'score-v1.schema.json', eventKinds: Object.keys(FIELDS),
     limits: {sourceBytes:1048576, authoredBytes:4194304, events:8192, quarters:65536, seconds:600, streams:16, voices:64},
     clock: 'Exact rational quarters; step or linear ns/quarter; cumulative nearest-nanosecond ties away from zero.',
-    recipes: listRecipes(), recipeLevels: {tweaks:'Per-carrier c_level/m_level/o2_level/o3_level dB attenuation deltas; positive is quieter; Python clamp and round rules.',
+    recipes: listRecipes(), recipeVelocity:'c_vel/m_vel/o2_vel/o3_vel add signed Q8 sensitivity deltas. velocity[].halfVelocityGainDb is the operator gain change at half velocity, before routing and effects.', recipeLevels: {tweaks:'Per-carrier c_level/m_level/o2_level/o3_level dB attenuation deltas; positive is quieter; Python clamp and round rules.',
       gain:'recipeGain(name,patch,gainDb): signed gain for all carriers in 0.1 dB steps; refuses clamping.'},
     nativeValidation: 'Always required. No native render or TL parsing occurs here.',
     unsupported: ['Score versions 2 and 3', 'Other recipe tweaks and templates; use expanded native declarations', 'Unsafe JavaScript integer fields; use native TL']};
@@ -323,11 +332,11 @@ export function compileScore(input, {engine, statements} = {}) {
     if (keyword) requireValue(!OWNED.has(keyword) && (allowed.has(keyword) || keyword === 'recipe'),
       'Declaration keyword is unknown or adapter-owned.', '/declarations', {declaration_line:index + 1, keyword});
     if (keyword !== 'recipe') { expanded += line; return; }
-    requireValue(words.length >= 3, 'Expected recipe PATCH PRESET [CARRIER_LEVEL=DELTA ...].', '/declarations', {declaration_line:index + 1});
+    requireValue(words.length >= 3, 'Expected recipe PATCH PRESET [TWEAK=DELTA ...].', '/declarations', {declaration_line:index + 1});
     const tweaks = {};
     for (const word of words.slice(3)) {
-      const match = /^(c_level|m_level|o2_level|o3_level)=([-+]?\d+(?:\.\d+)?)$/.exec(word);
-      requireValue(match && !Object.hasOwn(tweaks, match[1]), 'Expected a distinct named carrier level tweak with a decimal dB delta.', '/declarations', {declaration_line:index + 1});
+      const match = /^((?:c|m|o2|o3)_(?:level|vel))=([-+]?\d+(?:\.\d+)?)$/.exec(word);
+      requireValue(match && !Object.hasOwn(tweaks, match[1]), 'Expected a distinct named recipe tweak with a decimal delta.', '/declarations', {declaration_line:index + 1});
       tweaks[match[1]] = Number(match[2]);
     }
     const comment = commentAt < 0 ? '' : line.slice(commentAt + 1).trim();
@@ -435,499 +444,558 @@ export function compileScore(input, {engine, statements} = {}) {
 // Generated below from the existing Python compiler and native parameter rows.
 const MIDI_MILLIHZ = Object.freeze([8176,8662,9177,9723,10301,10913,11562,12250,12978,13750,14568,15434,16352,17324,18354,19445,20602,21827,23125,24500,25957,27500,29135,30868,32703,34648,36708,38891,41203,43654,46249,48999,51913,55000,58270,61735,65406,69296,73416,77782,82407,87307,92499,97999,103826,110000,116541,123471,130813,138591,146832,155563,164814,174614,184997,195998,207652,220000,233082,246942,261626,277183,293665,311127,329628,349228,369994,391995,415305,440000,466164,493883,523251,554365,587330,622254,659255,698456,739989,783991,830609,880000,932328,987767,1046502,1108731,1174659,1244508,1318510,1396913,1479978,1567982,1661219,1760000,1864655,1975533,2093005,2217461,2349318,2489016,2637020,2793826,2959955,3135963,3322438,3520000,3729310,3951066,4186009,4434922,4698636,4978032,5274041,5587652,5919911,6271927,6644875,7040000,7458620,7902133,8372018,8869844,9397273,9956063,10548082,11175303,11839822,12543854]);
 const DECLARATIONS = Object.freeze(["patch","route","filter","shape","amp","lfo","peg","fenv","eg","ks","kstype","fbtype","egloop","noise","pd","vector","formant","ksource","wtbank","wthash","harmonic","wtdata","wtuse","mod","space","block","near","order","pinna","yaw","panlaw","dcblock","chorus","flanger","delay","pingpong","reverb","compressor","limiter","softclip","gain","dither","crush","decodable","gen_clock","gen","gen_axiom","gen_rule","gen_lane"]);
-// Default recipes and carrier metadata generated from compose.py RECIPES and
-// patch_headers. Level placeholders replace only generated carrier fields; no
-// submitted native declaration is parsed or rewritten by recipe level helpers.
+// Default recipes and operator metadata come from compose.py RECIPES and patch_headers.
+// Template fields belong only to these generated recipes.
 // Wavetable presets needing shared bank reconciliation use the local expander.
 const RECIPE_DATA = {
   "epiano": {
     "description": "electric piano, 1:1; velocity opens the index, which decays faster than the level (waltz)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":17}],
+    "velocityQ8": [180, 220],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            180         2         2400     300          350         # recipe epiano: electric piano, 1:1; velocity opens the index, which decays faster than the level (waltz)",
-      "patch {patch:8} 1  65536     0          1638      0            220         1         700      240          350"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 2         2400     300          350         # recipe epiano: electric piano, 1:1; velocity opens the index, which decays faster than the level (waltz)",
+      "patch {patch:8} 1  65536     0          1638      0            {vel:1} 1         700      240          350"
     ]
   },
   "ep-body": {
     "description": "electric-piano body, 1:1, velocity opens the index; layer ep-tine on the same key (nocturne)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":14}],
+    "velocityQ8": [200, 230],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         2         8000     500          450         # recipe ep-body: electric-piano body, 1:1, velocity opens the index; layer ep-tine on the same key (nocturne)",
-      "patch {patch:8} 1  65536     0          1126      0            230         1         1400     140          450"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 2         8000     500          450         # recipe ep-body: electric-piano body, 1:1, velocity opens the index; layer ep-tine on the same key (nocturne)",
+      "patch {patch:8} 1  65536     0          1126      0            {vel:1} 1         1400     140          450"
     ]
   },
   "ep-tine": {
     "description": "electric-piano tine: the modulator at 14 times the note, a metallic strike that dies away (nocturne)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":24}],
+    "velocityQ8": [256, 220],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            256         1         1400     1200         300         # recipe ep-tine: electric-piano tine: the modulator at 14 times the note, a metallic strike that dies away (nocturne)",
-      "patch {patch:8} 1  917504    0          1536      0            220         1         600      1200         200"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         1400     1200         300         # recipe ep-tine: electric-piano tine: the modulator at 14 times the note, a metallic strike that dies away (nocturne)",
+      "patch {patch:8} 1  917504    0          1536      0            {vel:1} 1         600      1200         200"
     ]
   },
   "harpsichord": {
     "description": "1:1, a fed-back modulator, no touch sensitivity (invention)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":14}],
+    "velocityQ8": [0, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            0           1         9000     1200         160         # recipe harpsichord: 1:1, a fed-back modulator, no touch sensitivity (invention)",
-      "patch {patch:8} 1  65536     0          2048      1536         0           1         2200     90           160"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         9000     1200         160         # recipe harpsichord: 1:1, a fed-back modulator, no touch sensitivity (invention)",
+      "patch {patch:8} 1  65536     0          2048      1536         {vel:1} 1         2200     90           160"
     ]
   },
   "harp": {
     "description": "1:1 pluck (canon)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":18}],
+    "velocityQ8": [180, 200],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            180         2         1800     1200         600         # recipe harp: 1:1 pluck (canon)",
-      "patch {patch:8} 1  65536     0          1229      0            200         1         400      400          400"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 2         1800     1200         600         # recipe harp: 1:1 pluck (canon)",
+      "patch {patch:8} 1  65536     0          1229      0            {vel:1} 1         400      400          400"
     ]
   },
   "organ": {
     "description": "1:1; the index starts 5 dB high and settles in 45 ms, a key click (shuffle)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":17}],
+    "velocityQ8": [64, 64],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            64          4         60       0            45          # recipe organ: 1:1; the index starts 5 dB high and settles in 45 ms, a key click (shuffle)",
-      "patch {patch:8} 1  65536     0          1024      307          64          1         45       50           45"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 4         60       0            45          # recipe organ: 1:1; the index starts 5 dB high and settles in 45 ms, a key click (shuffle)",
+      "patch {patch:8} 1  65536     0          1024      307          {vel:1} 1         45       50           45"
     ]
   },
   "marimba": {
     "description": "1:3, a short bright strike (clockwork)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":11}],
+    "velocityQ8": [200, 200],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         1         1100     1200         250         # recipe marimba: 1:3, a short bright strike (clockwork)",
-      "patch {patch:8} 1  196608    0          2458      0            200         1         80       600          100"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         1100     1200         250         # recipe marimba: 1:3, a short bright strike (clockwork)",
+      "patch {patch:8} 1  196608    0          2458      0            {vel:1} 1         80       600          100"
     ]
   },
   "celesta": {
     "description": "1:4, odd harmonics fading into a pure ring (first-light)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":10}],
+    "velocityQ8": [160, 200],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            160         2         3500     1200         1800        # recipe celesta: 1:4, odd harmonics fading into a pure ring (first-light)",
-      "patch {patch:8} 1  262144    0          2253      0            200         1         900      400          1200"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 2         3500     1200         1800        # recipe celesta: 1:4, odd harmonics fading into a pure ring (first-light)",
+      "patch {patch:8} 1  262144    0          2253      0            {vel:1} 1         900      400          1200"
     ]
   },
   "bell": {
     "description": "1:1.4 (Chowning), the index decaying with the ring (first-light)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":12}],
+    "velocityQ8": [200, 160],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         2         6000     1200         3000        # recipe bell: 1:1.4 (Chowning), the index decaying with the ring (first-light)",
-      "patch {patch:8} 1  91750     0          5120      0            160         1         4000     600          3000"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 2         6000     1200         3000        # recipe bell: 1:1.4 (Chowning), the index decaying with the ring (first-light)",
+      "patch {patch:8} 1  91750     0          5120      0            {vel:1} 1         4000     600          3000"
     ]
   },
   "tooth": {
     "description": "a steel tooth, 1:3.5, the index falling 30 dB in 250 ms, then a near-pure ring (music-box)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":14}],
+    "velocityQ8": [160, 128],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            160         1         3500     1200         400         # recipe tooth: a steel tooth, 1:3.5, the index falling 30 dB in 250 ms, then a near-pure ring (music-box)",
-      "patch {patch:8} 1  229376    0          2662      0            128         1         250      300          400"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         3500     1200         400         # recipe tooth: a steel tooth, 1:3.5, the index falling 30 dB in 250 ms, then a near-pure ring (music-box)",
+      "patch {patch:8} 1  229376    0          2662      0            {vel:1} 1         250      300          400"
     ]
   },
   "star": {
     "description": "1:3, a glassy ping, bright for 180 ms (night-sky)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":18}],
+    "velocityQ8": [200, 160],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         1         1200     1200         600         # recipe star: 1:3, a glassy ping, bright for 180 ms (night-sky)",
-      "patch {patch:8} 1  196608    0          1638      0            160         1         180      360          400"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         1200     1200         600         # recipe star: 1:3, a glassy ping, bright for 180 ms (night-sky)",
+      "patch {patch:8} 1  196608    0          1638      0            {vel:1} 1         180      360          400"
     ]
   },
   "planet-1.4": {
     "description": "a long bell, 1:1.4 (Chowning), the index falling with the ring (night-sky)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":12}],
+    "velocityQ8": [128, 128],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         2         12000    1200         4000        # recipe planet-1.4: a long bell, 1:1.4 (Chowning), the index falling with the ring (night-sky)",
-      "patch {patch:8} 1  91750     0          4096      0            128         1         9000     360          4000"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 2         12000    1200         4000        # recipe planet-1.4: a long bell, 1:1.4 (Chowning), the index falling with the ring (night-sky)",
+      "patch {patch:8} 1  91750     0          4096      0            {vel:1} 1         9000     360          4000"
     ]
   },
   "planet-2.76": {
     "description": "a bell, 1:2.76, the second mode of a free bar (night-sky)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":14}],
+    "velocityQ8": [128, 128],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         2         9000     1200         3000        # recipe planet-2.76: a bell, 1:2.76, the second mode of a free bar (night-sky)",
-      "patch {patch:8} 1  180879    0          2560      0            128         1         6000     300          3000"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 2         9000     1200         3000        # recipe planet-2.76: a bell, 1:2.76, the second mode of a free bar (night-sky)",
+      "patch {patch:8} 1  180879    0          2560      0            {vel:1} 1         6000     300          3000"
     ]
   },
   "planet-3.17": {
     "description": "a bell, 1:3.17 (night-sky)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":16}],
+    "velocityQ8": [128, 128],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         2         7000     1200         3000        # recipe planet-3.17: a bell, 1:3.17 (night-sky)",
-      "patch {patch:8} 1  207749    0          2048      0            128         1         4000     300          3000"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 2         7000     1200         3000        # recipe planet-3.17: a bell, 1:3.17 (night-sky)",
+      "patch {patch:8} 1  207749    0          2048      0            {vel:1} 1         4000     300          3000"
     ]
   },
   "flute": {
     "description": "a soft lead, 1:1, low index, a breath of feedback (waltz)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":10}],
+    "velocityQ8": [100, 150],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            100         45        500      30           200         # recipe flute: a soft lead, 1:1, low index, a breath of feedback (waltz)",
-      "patch {patch:8} 1  65536     0          717       358          150         30        600      60           200"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 45        500      30           200         # recipe flute: a soft lead, 1:1, low index, a breath of feedback (waltz)",
+      "patch {patch:8} 1  65536     0          717       358          {vel:1} 30        600      60           200"
     ]
   },
   "hollow": {
     "description": "clarinet-like: 1:2 gives odd harmonics (canon)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":13}],
+    "velocityQ8": [100, 160],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            100         35        400      20           250         # recipe hollow: clarinet-like: 1:2 gives odd harmonics (canon)",
-      "patch {patch:8} 1  131072    0          1331      0            160         25        800      40           250"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 35        400      20           250         # recipe hollow: clarinet-like: 1:2 gives odd harmonics (canon)",
+      "patch {patch:8} 1  131072    0          1331      0            {vel:1} 25        800      40           250"
     ]
   },
   "harmonica": {
     "description": "1:1, a reedy fed-back modulator; 0 dB sustain on both operators (shuffle)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":12}],
+    "velocityQ8": [128, 160],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         35        100      0            90          # recipe harmonica: 1:1, a reedy fed-back modulator; 0 dB sustain on both operators (shuffle)",
-      "patch {patch:8} 1  65536     0          1536      1126         160         20        100      0            90"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 35        100      0            90          # recipe harmonica: 1:1, a reedy fed-back modulator; 0 dB sustain on both operators (shuffle)",
+      "patch {patch:8} 1  65536     0          1536      1126         {vel:1} 20        100      0            90"
     ]
   },
   "glide": {
     "description": "1:2 at a low index; 0 dB sustain on both operators, so a glide is seamless (night-sky's comet)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":24}],
+    "velocityQ8": [256, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            256         250       100      0            2500        # recipe glide: 1:2 at a low index; 0 dB sustain on both operators, so a glide is seamless (night-sky's comet)",
-      "patch {patch:8} 1  131072    0          717       0            0           250       100      0            2500"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 250       100      0            2500        # recipe glide: 1:2 at a low index; 0 dB sustain on both operators, so a glide is seamless (night-sky's comet)",
+      "patch {patch:8} 1  131072    0          717       0            {vel:1} 250       100      0            2500"
     ]
   },
   "brass": {
     "description": "1:1, the index rising and falling with the level; velocity opens it. The fundamental cancels near index 1.8, so sustain above 2.4 or below 1.3 (Chowning's trumpet; fanfare)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":18}],
+    "velocityQ8": [200, 160],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         40        200      20           150         # recipe brass: 1:1, the index rising and falling with the level; velocity opens it. The fundamental cancels near index 1.8, so sustain above 2.4 or below 1.3 (Chowning's trumpet; fanfare)",
-      "patch {patch:8} 1  65536     0          4096      0            160         50        240      10           150"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 40        200      20           150         # recipe brass: 1:1, the index rising and falling with the level; velocity opens it. The fundamental cancels near index 1.8, so sustain above 2.4 or below 1.3 (Chowning's trumpet; fanfare)",
+      "patch {patch:8} 1  65536     0          4096      0            {vel:1} 50        240      10           150"
     ]
   },
   "oboe": {
     "description": "a double reed: the carrier at 3 times the note, the modulator at 1, harmonics 2 to 4 strongest. The index must rise no slower than the level, or the attack sounds the carrier's pitch (aria)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":16}],
+    "velocityQ8": [100, 160],
     "rows": [
-      "patch {patch:8} 0  196608    {level:0} 0         0            100         60        300      10           120         # recipe oboe: a double reed: the carrier at 3 times the note, the modulator at 1, harmonics 2 to 4 strongest. The index must rise no slower than the level, or the attack sounds the carrier's pitch (aria)",
-      "patch {patch:8} 1  65536     0          2048      0            160         40        300      15           120"
+      "patch {patch:8} 0  196608    {level:0} 0         0            {vel:0} 60        300      10           120         # recipe oboe: a double reed: the carrier at 3 times the note, the modulator at 1, harmonics 2 to 4 strongest. The index must rise no slower than the level, or the attack sounds the carrier's pitch (aria)",
+      "patch {patch:8} 1  65536     0          2048      0            {vel:1} 40        300      15           120"
     ]
   },
   "bassoon": {
     "description": "the carrier at 4 times the note, the modulator at 1: a nasal band over harmonics 2 to 6, the fundamental weak (aria)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":14}],
+    "velocityQ8": [100, 160],
     "rows": [
-      "patch {patch:8} 0  262144    {level:0} 0         0            100         50        300      10           120         # recipe bassoon: the carrier at 4 times the note, the modulator at 1: a nasal band over harmonics 2 to 6, the fundamental weak (aria)",
-      "patch {patch:8} 1  65536     0          2048      0            160         40        300      15           120"
+      "patch {patch:8} 0  262144    {level:0} 0         0            {vel:0} 50        300      10           120         # recipe bassoon: the carrier at 4 times the note, the modulator at 1: a nasal band over harmonics 2 to 6, the fundamental weak (aria)",
+      "patch {patch:8} 1  65536     0          2048      0            {vel:1} 40        300      15           120"
     ]
   },
   "clarinet": {
     "description": "the carrier at 3, the modulator at 2: odd harmonics; the index falls from 4 to 2 as the level rises (Chowning; aria)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":15}],
+    "velocityQ8": [100, 128],
     "rows": [
-      "patch {patch:8} 0  196608    {level:0} 0         0            100         70        200      0            110         # recipe clarinet: the carrier at 3, the modulator at 2: odd harmonics; the index falls from 4 to 2 as the level rises (Chowning; aria)",
-      "patch {patch:8} 1  131072    0          4096      0            128         5         150      60           110"
+      "patch {patch:8} 0  196608    {level:0} 0         0            {vel:0} 70        200      0            110         # recipe clarinet: the carrier at 3, the modulator at 2: odd harmonics; the index falls from 4 to 2 as the level rises (Chowning; aria)",
+      "patch {patch:8} 1  131072    0          4096      0            {vel:1} 5         150      60           110"
     ]
   },
   "vox": {
     "description": "a sung vowel's body, 1:1; sing vox-formant with it: same times, pitch and velocity (Chowning; aria)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":16}],
+    "velocityQ8": [128, 200],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         90        100      0            260         # recipe vox: a sung vowel's body, 1:1; sing vox-formant with it: same times, pitch and velocity (Chowning; aria)",
-      "patch {patch:8} 1  65536     0          1638      0            200         160       100      0            260"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 90        100      0            260         # recipe vox: a sung vowel's body, 1:1; sing vox-formant with it: same times, pitch and velocity (Chowning; aria)",
+      "patch {patch:8} 1  65536     0          1638      0            {vel:1} 160       100      0            260"
     ]
   },
   "vox-formant": {
     "description": "a sung vowel's formant, 14 dB under vox: the carrier on the harmonic nearest 2.4 kHz, the 4th for D5; move c_ratio with the note (Chowning; aria)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":30}],
+    "velocityQ8": [128, 200],
     "rows": [
-      "patch {patch:8} 0  262144    {level:0} 0         0            128         90        100      0            260         # recipe vox-formant: a sung vowel's formant, 14 dB under vox: the carrier on the harmonic nearest 2.4 kHz, the 4th for D5; move c_ratio with the note (Chowning; aria)",
-      "patch {patch:8} 1  65536     0          819       0            200         160       100      0            260"
+      "patch {patch:8} 0  262144    {level:0} 0         0            {vel:0} 90        100      0            260         # recipe vox-formant: a sung vowel's formant, 14 dB under vox: the carrier on the harmonic nearest 2.4 kHz, the 4th for D5; move c_ratio with the note (Chowning; aria)",
+      "patch {patch:8} 1  65536     0          819       0            {vel:1} 160       100      0            260"
     ]
   },
   "warm-pad": {
     "description": "1:1, the modulator 0.15 % sharp for a slow shimmer (first-light)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":22}],
+    "velocityQ8": [96, 64],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            96          700       1500     30           1600        # recipe warm-pad: 1:1, the modulator 0.15 % sharp for a slow shimmer (first-light)",
-      "patch {patch:8} 1  65634     0          1126      461          64          900       2500     60           1800"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 700       1500     30           1600        # recipe warm-pad: 1:1, the modulator 0.15 % sharp for a slow shimmer (first-light)",
+      "patch {patch:8} 1  65634     0          1126      461          {vel:1} 900       2500     60           1800"
     ]
   },
   "night-pad": {
     "description": "1:1, the index blooming after the level; play detuned pairs (night-sky)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":30}],
+    "velocityQ8": [0, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            0           3000      2500     30           3500        # recipe night-pad: 1:1, the index blooming after the level; play detuned pairs (night-sky)",
-      "patch {patch:8} 1  65536     0          922       205          0           4000      3000     60           3500"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 3000      2500     30           3500        # recipe night-pad: 1:1, the index blooming after the level; play detuned pairs (night-sky)",
+      "patch {patch:8} 1  65536     0          922       205          {vel:1} 4000      3000     60           3500"
     ]
   },
   "drone": {
     "description": "a soft 1:1 tone, its second harmonic 9 dB down (night-sky)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":25}],
+    "velocityQ8": [0, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            0           4000      100      0            5000        # recipe drone: a soft 1:1 tone, its second harmonic 9 dB down (night-sky)",
-      "patch {patch:8} 1  65536     0          614       0            0           4000      100      0            5000"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 4000      100      0            5000        # recipe drone: a soft 1:1 tone, its second harmonic 9 dB down (night-sky)",
+      "patch {patch:8} 1  65536     0          614       0            {vel:1} 4000      100      0            5000"
     ]
   },
   "strings": {
     "description": "1:1 with feedback, harmonics falling like a sawtooth's; a slow bow. Play each note on three voices 6 cents apart (aria)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":24}],
+    "velocityQ8": [96, 160],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            96          350       800      15           600         # recipe strings: 1:1 with feedback, harmonics falling like a sawtooth's; a slow bow. Play each note on three voices 6 cents apart (aria)",
-      "patch {patch:8} 1  65536     0          1638      819          160         450       900      30           600"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 350       800      15           600         # recipe strings: 1:1 with feedback, harmonics falling like a sawtooth's; a slow bow. Play each note on three voices 6 cents apart (aria)",
+      "patch {patch:8} 1  65536     0          1638      819          {vel:1} 450       900      30           600"
     ]
   },
   "round-bass": {
     "description": "1:1 at a low index (first-light)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":13}],
+    "velocityQ8": [128, 128],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         30        3000     100          900         # recipe round-bass: 1:1 at a low index (first-light)",
-      "patch {patch:8} 1  65536     0          717       0            128         10        1500     120          900"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 30        3000     100          900         # recipe round-bass: 1:1 at a low index (first-light)",
+      "patch {patch:8} 1  65536     0          717       0            {vel:1} 10        1500     120          900"
     ]
   },
   "plucked-bass": {
     "description": "1:1 with feedback, the index falling fast (waltz)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":12}],
+    "velocityQ8": [128, 160],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         3         900      90           150         # recipe plucked-bass: 1:1 with feedback, the index falling fast (waltz)",
-      "patch {patch:8} 1  65536     0          1843      717          160         2         250      180          150"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 3         900      90           150         # recipe plucked-bass: 1:1 with feedback, the index falling fast (waltz)",
+      "patch {patch:8} 1  65536     0          1843      717          {vel:1} 2         250      180          150"
     ]
   },
   "motor-bass": {
     "description": "1:1 with feedback, a snappy index (clockwork)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":12}],
+    "velocityQ8": [128, 180],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         2         400      120          90          # recipe motor-bass: 1:1 with feedback, a snappy index (clockwork)",
-      "patch {patch:8} 1  65536     0          2458      1024         180         1         120      240          90"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 2         400      120          90          # recipe motor-bass: 1:1 with feedback, a snappy index (clockwork)",
+      "patch {patch:8} 1  65536     0          2458      1024         {vel:1} 1         120      240          90"
     ]
   },
   "boogie-bass": {
     "description": "1:1, the index falling fast after the pluck (shuffle)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":9}],
+    "velocityQ8": [128, 160],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         4         700      100          70          # recipe boogie-bass: 1:1, the index falling fast after the pluck (shuffle)",
-      "patch {patch:8} 1  65536     0          1331      0            160         1         160      160          70"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 4         700      100          70          # recipe boogie-bass: 1:1, the index falling fast after the pluck (shuffle)",
+      "patch {patch:8} 1  65536     0          1331      0            {vel:1} 1         160      160          70"
     ]
   },
   "square": {
     "description": "1:2 fed back, odd harmonics (arcade)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":12}],
+    "velocityQ8": [0, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            0           2         100      0            30          # recipe square: 1:2 fed back, odd harmonics (arcade)",
-      "patch {patch:8} 1  131072    0          1331      922          0           1         100      0            30"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 2         100      0            30          # recipe square: 1:2 fed back, odd harmonics (arcade)",
+      "patch {patch:8} 1  131072    0          1331      922          {vel:1} 1         100      0            30"
     ]
   },
   "saw": {
     "description": "1:1 fed back, saw-like (arcade)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":15}],
+    "velocityQ8": [0, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            0           1         100      0            25          # recipe saw: 1:1 fed back, saw-like (arcade)",
-      "patch {patch:8} 1  65536     0          1024      1229         0           1         100      0            25"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         100      0            25          # recipe saw: 1:1 fed back, saw-like (arcade)",
+      "patch {patch:8} 1  65536     0          1024      1229         {vel:1} 1         100      0            25"
     ]
   },
   "triangle": {
     "description": "1:2 at a low index (arcade)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":8}],
+    "velocityQ8": [0, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            0           2         100      0            25          # recipe triangle: 1:2 at a low index (arcade)",
-      "patch {patch:8} 1  131072    0          307       0            0           1         100      0            25"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 2         100      0            25          # recipe triangle: 1:2 at a low index (arcade)",
+      "patch {patch:8} 1  131072    0          307       0            {vel:1} 1         100      0            25"
     ]
   },
   "kick": {
     "description": "at 50 Hz, a 1:2 modulator whose index collapses in 60 ms (shuffle)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":8}],
+    "velocityQ8": [128, 128],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         1         320      1200         60          # recipe kick: at 50 Hz, a 1:2 modulator whose index collapses in 60 ms (shuffle)",
-      "patch {patch:8} 1  131072    0          5120      0            128         1         60       1200         40"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         320      1200         60          # recipe kick: at 50 Hz, a 1:2 modulator whose index collapses in 60 ms (shuffle)",
+      "patch {patch:8} 1  131072    0          5120      0            {vel:1} 1         60       1200         40"
     ]
   },
   "snare-wires": {
     "description": "at 1.8 kHz; the modulator holds, so the noise stays noise as it decays (shuffle)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":8}],
+    "velocityQ8": [200, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         1         450      1200         60          # recipe snare-wires: at 1.8 kHz; the modulator holds, so the noise stays noise as it decays (shuffle)",
-      "patch {patch:8} 1  92406     0          3072      3584         0           1         100      0            60"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         450      1200         60          # recipe snare-wires: at 1.8 kHz; the modulator holds, so the noise stays noise as it decays (shuffle)",
+      "patch {patch:8} 1  92406     0          3072      3584         {vel:1} 1         100      0            60"
     ]
   },
   "snare-body": {
     "description": "at 190 Hz, 1:1.5, a short thud (shuffle)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":8}],
+    "velocityQ8": [180, 128],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            180         1         110      1200         50          # recipe snare-body: at 190 Hz, 1:1.5, a short thud (shuffle)",
-      "patch {patch:8} 1  98304     0          1434      0            128         1         50       1200         40"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         110      1200         50          # recipe snare-body: at 190 Hz, 1:1.5, a short thud (shuffle)",
+      "patch {patch:8} 1  98304     0          1434      0            {vel:1} 1         50       1200         40"
     ]
   },
   "hat": {
     "description": "a closed hi-hat at 7 kHz, damped after 40 ms (shuffle)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":15}],
+    "velocityQ8": [200, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         1         160      1200         25          # recipe hat: a closed hi-hat at 7 kHz, damped after 40 ms (shuffle)",
-      "patch {patch:8} 1  92406     0          2560      3584         0           1         100      0            25"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         160      1200         25          # recipe hat: a closed hi-hat at 7 kHz, damped after 40 ms (shuffle)",
+      "patch {patch:8} 1  92406     0          2560      3584         {vel:1} 1         100      0            25"
     ]
   },
   "open-hat": {
     "description": "at 7 kHz, ringing until choked (shuffle)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":16}],
+    "velocityQ8": [200, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         1         1500     1200         40          # recipe open-hat: at 7 kHz, ringing until choked (shuffle)",
-      "patch {patch:8} 1  92406     0          2560      3584         0           1         100      0            40"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         1500     1200         40          # recipe open-hat: at 7 kHz, ringing until choked (shuffle)",
+      "patch {patch:8} 1  92406     0          2560      3584         {vel:1} 1         100      0            40"
     ]
   },
   "crash": {
     "description": "at 5 kHz, about 24 dB a second (shuffle)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":12}],
+    "velocityQ8": [200, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         1         5000     1200         700         # recipe crash: at 5 kHz, about 24 dB a second (shuffle)",
-      "patch {patch:8} 1  92406     0          3072      3584         0           1         100      0            700"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         5000     1200         700         # recipe crash: at 5 kHz, about 24 dB a second (shuffle)",
+      "patch {patch:8} 1  92406     0          3072      3584         {vel:1} 1         100      0            700"
     ]
   },
   "pin-click": {
     "description": "at 2.6 kHz, a breath of noise (music-box)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":36}],
+    "velocityQ8": [0, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            0           1         20       1200         10          # recipe pin-click: at 2.6 kHz, a breath of noise (music-box)",
-      "patch {patch:8} 1  92406     0          2560      3584         0           1         100      0            10"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         20       1200         10          # recipe pin-click: at 2.6 kHz, a breath of noise (music-box)",
+      "patch {patch:8} 1  92406     0          2560      3584         {vel:1} 1         100      0            10"
     ]
   },
   "noise-tail": {
     "description": "noise that follows a pitch curve; the modulator holds (night-sky's comet tail)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":38}],
+    "velocityQ8": [0, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            0           400       100      0            1500        # recipe noise-tail: noise that follows a pitch curve; the modulator holds (night-sky's comet tail)",
-      "patch {patch:8} 1  92406     0          3072      3584         0           1         100      0            1500"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 400       100      0            1500        # recipe noise-tail: noise that follows a pitch curve; the modulator holds (night-sky's comet tail)",
+      "patch {patch:8} 1  92406     0          3072      3584         {vel:1} 1         100      0            1500"
     ]
   },
   "tick": {
     "description": "at 5.2 kHz, over in 35 ms (clockwork)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":16}],
+    "velocityQ8": [200, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         1         35       1200         30          # recipe tick: at 5.2 kHz, over in 35 ms (clockwork)",
-      "patch {patch:8} 1  92406     0          3072      3584         0           1         40       1200         30"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         35       1200         30          # recipe tick: at 5.2 kHz, over in 35 ms (clockwork)",
+      "patch {patch:8} 1  92406     0          3072      3584         {vel:1} 1         40       1200         30"
     ]
   },
   "tock": {
     "description": "at 1.3 kHz, the tick lower and longer (clockwork)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":14}],
+    "velocityQ8": [200, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         1         70       1200         50          # recipe tock: at 1.3 kHz, the tick lower and longer (clockwork)",
-      "patch {patch:8} 1  92406     0          2560      3072         0           1         80       1200         50"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         70       1200         50          # recipe tock: at 1.3 kHz, the tick lower and longer (clockwork)",
+      "patch {patch:8} 1  92406     0          2560      3072         {vel:1} 1         80       1200         50"
     ]
   },
   "wood-drum": {
     "description": "80:55 (Chowning), the index falling from 25 rad within a few ms (fiesta)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":14}],
+    "velocityQ8": [160, 96],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            160         1         450      1200         80          # recipe wood-drum: 80:55 (Chowning), the index falling from 25 rad within a few ms (fiesta)",
-      "patch {patch:8} 1  45056     0          25600     0            96          1         30       1200         20"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         450      1200         80          # recipe wood-drum: 80:55 (Chowning), the index falling from 25 rad within a few ms (fiesta)",
+      "patch {patch:8} 1  45056     0          25600     0            {vel:1} 1         30       1200         20"
     ]
   },
   "tom": {
     "description": "1:2 at a low index; 0 dB sustain, so a curve can sweep it, and the release is the decay (fiesta)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":12}],
+    "velocityQ8": [128, 128],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         1         100      0            650         # recipe tom: 1:2 at a low index; 0 dB sustain, so a curve can sweep it, and the release is the decay (fiesta)",
-      "patch {patch:8} 1  131072    0          819       0            128         1         100      0            400"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         100      0            650         # recipe tom: 1:2 at a low index; 0 dB sustain, so a curve can sweep it, and the release is the decay (fiesta)",
+      "patch {patch:8} 1  131072    0          819       0            {vel:1} 1         100      0            400"
     ]
   },
   "timpani": {
     "description": "1:1.5, an octave-low thump in the strike that fades into the tone; retrigger it for a roll (fanfare)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":12}],
+    "velocityQ8": [220, 160],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            220         2         3500     1200         500         # recipe timpani: 1:1.5, an octave-low thump in the strike that fades into the tone; retrigger it for a roll (fanfare)",
-      "patch {patch:8} 1  98304     0          1229      0            160         1         300      180          400"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 2         3500     1200         500         # recipe timpani: 1:1.5, an octave-low thump in the strike that fades into the tone; retrigger it for a roll (fanfare)",
+      "patch {patch:8} 1  98304     0          1229      0            {vel:1} 1         300      180          400"
     ]
   },
   "clap": {
     "description": "at 1.2 kHz, short bursts 10 ms apart, then a held one for the tail (fiesta)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":10}],
+    "velocityQ8": [128, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         1         450      1200         6           # recipe clap: at 1.2 kHz, short bursts 10 ms apart, then a held one for the tail (fiesta)",
-      "patch {patch:8} 1  92406     0          2867      3584         0           1         100      0            40"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         450      1200         6           # recipe clap: at 1.2 kHz, short bursts 10 ms apart, then a held one for the tail (fiesta)",
+      "patch {patch:8} 1  92406     0          2867      3584         {vel:1} 1         100      0            40"
     ]
   },
   "cowbell": {
     "description": "the square wave, struck; play two voices together at 540 and 800 Hz (fiesta)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":16}],
+    "velocityQ8": [160, 100],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            160         1         600      1200         50          # recipe cowbell: the square wave, struck; play two voices together at 540 and 800 Hz (fiesta)",
-      "patch {patch:8} 1  131072    0          1331      922          100         1         180      90           50"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         600      1200         50          # recipe cowbell: the square wave, struck; play two voices together at 540 and 800 Hz (fiesta)",
+      "patch {patch:8} 1  131072    0          1331      922          {vel:1} 1         180      90           50"
     ]
   },
   "ep-4op": {
     "description": "ep-body and ep-tine in one patch of four operators, two pairs side by side (carriers 0 and 2), one voice per key",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":14},{"operator":2,"tweak":"o2_level","attenuationDb":24}],
+    "velocityQ8": [200, 230, 256, 220],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         2         8000     500          450         # recipe ep-4op: ep-body and ep-tine in one patch of four operators, two pairs side by side (carriers 0 and 2), one voice per key",
-      "patch {patch:8} 1  65536     0          1126      0            230         1         1400     140          450",
-      "patch {patch:8} 2  65536     {level:2} 0         0            256         1         1400     1200         300",
-      "patch {patch:8} 3  917504    0          1536      0            220         1         600      1200         200",
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 2         8000     500          450         # recipe ep-4op: ep-body and ep-tine in one patch of four operators, two pairs side by side (carriers 0 and 2), one voice per key",
+      "patch {patch:8} 1  65536     0          1126      0            {vel:1} 1         1400     140          450",
+      "patch {patch:8} 2  65536     {level:2} 0         0            {vel:2} 1         1400     1200         300",
+      "patch {patch:8} 3  917504    0          1536      0            {vel:3} 1         600      1200         200",
       "route {patch} 4 5 1>0:256 3>2:256"
     ]
   },
   "sub-bass": {
     "description": "two carriers and no edge: the note, its feedback rounding it towards a saw, over a sine an octave down; for notes from A1 up",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":14},{"operator":1,"tweak":"m_level","attenuationDb":17}],
+    "velocityQ8": [128, 96],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         819          128         3         1200     80           160         # recipe sub-bass: two carriers and no edge: the note, its feedback rounding it towards a saw, over a sine an octave down; for notes from A1 up",
-      "patch {patch:8} 1  32768     {level:1} 0         0            96          6         2500     60           200",
+      "patch {patch:8} 0  65536     {level:0} 0         819          {vel:0} 3         1200     80           160         # recipe sub-bass: two carriers and no edge: the note, its feedback rounding it towards a saw, over a sine an octave down; for notes from A1 up",
+      "patch {patch:8} 1  32768     {level:1} 0         0            {vel:1} 6         2500     60           200",
       "route {patch} 2 3"
     ]
   },
   "snare-3op": {
     "description": "at 190 Hz: snare-body's thud, operator 2 on the carrier, and the wires from a noise carrier (wave 4) stepping at twice 32 times the note, about 12 kHz, in one voice suitable for one-note audition",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":10},{"operator":1,"tweak":"m_level","attenuationDb":12}],
+    "velocityQ8": [180, 200, 128],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            180         1         110      1200         50          # recipe snare-3op: at 190 Hz: snare-body's thud, operator 2 on the carrier, and the wires from a noise carrier (wave 4) stepping at twice 32 times the note, about 12 kHz, in one voice suitable for one-note audition",
-      "patch {patch:8} 1  2097152   {level:1} 0         0            200         1         300      1200         60         0                0             4",
-      "patch {patch:8} 2  98304     0          1434      0            128         1         50       1200         40",
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         110      1200         50          # recipe snare-3op: at 190 Hz: snare-body's thud, operator 2 on the carrier, and the wires from a noise carrier (wave 4) stepping at twice 32 times the note, about 12 kHz, in one voice suitable for one-note audition",
+      "patch {patch:8} 1  2097152   {level:1} 0         0            {vel:1} 1         300      1200         60         0                0             4",
+      "patch {patch:8} 2  98304     0          1434      0            {vel:2} 1         50       1200         40",
       "route {patch} 3 3 2>0:256"
     ]
   },
   "hat-fixed": {
     "description": "hat with both operators fixed, the carrier at 7 kHz and the modulator 1.41 times that, whatever the note, so in a keys version the note only places it; the modulator's phase runs on across hits from silence (free; its feedback still starts clear), so the hits need not start alike (manifold)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":15}],
+    "velocityQ8": [200, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         1         160      1200         25         0                0             0    0          7000000  # recipe hat-fixed: hat with both operators fixed, the carrier at 7 kHz and the modulator 1.41 times that, whatever the note, so in a keys version the note only places it; the modulator's phase runs on across hits from silence (free; its feedback still starts clear), so the hits need not start alike (manifold)",
-      "patch {patch:8} 1  92406     0          2560      3584         0           1         100      0            25         0                0             0    0          7000000       0         1"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         160      1200         25         0                0             0    0          7000000  # recipe hat-fixed: hat with both operators fixed, the carrier at 7 kHz and the modulator 1.41 times that, whatever the note, so in a keys version the note only places it; the modulator's phase runs on across hits from silence (free; its feedback still starts clear), so the hits need not start alike (manifold)",
+      "patch {patch:8} 1  92406     0          2560      3584         {vel:1} 1         100      0            25         0                0             0    0          7000000       0         1"
     ]
   },
   "clav-rs": {
     "description": "a 1:3 clavinet-like pluck whose envelopes shorten up the keyboard: rate scaling 3 on both operators, so every time is as written at A0, about 0.62 of it at G2, 0.48 at G3 and 0.37 at G4 (manifold)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":16}],
+    "velocityQ8": [200, 230],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            200         1         1600     1200         90         0                0             0    3  # recipe clav-rs: a 1:3 clavinet-like pluck whose envelopes shorten up the keyboard: rate scaling 3 on both operators, so every time is as written at A0, about 0.62 of it at G2, 0.48 at G3 and 0.37 at G4 (manifold)",
-      "patch {patch:8} 1  196608    0          1843      0            230         1         400      120          90         0                0             0    3"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         1600     1200         90         0                0             0    3  # recipe clav-rs: a 1:3 clavinet-like pluck whose envelopes shorten up the keyboard: rate scaling 3 on both operators, so every time is as written at A0, about 0.62 of it at G2, 0.48 at G3 and 0.37 at G4 (manifold)",
+      "patch {patch:8} 1  196608    0          1843      0            {vel:1} 1         400      120          90         0                0             0    3"
     ]
   },
   "kick-drop": {
     "description": "at 50 Hz, a sine falling one octave in 90 ms; no noise source (drum-study)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":14}],
+    "velocityQ8": [128, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         1         230      1200         45          # recipe kick-drop: at 50 Hz, a sine falling one octave in 90 ms; no noise source (drum-study)",
-      "patch {patch:8} 1  65536     0          0         0            0           1         1        1200         1",
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         230      1200         45          # recipe kick-drop: at 50 Hz, a sine falling one octave in 90 ms; no noise source (drum-study)",
+      "patch {patch:8} 1  65536     0          0         0            {vel:1} 1         1        1200         1",
       "peg {patch} 1200 0 0 90 0 0 -1200 40 1"
     ]
   },
   "snare-white": {
     "description": "at 185 Hz, a short sine body plus white noise clocked at 14 kHz (drum-study)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":19},{"operator":1,"tweak":"m_level","attenuationDb":20}],
+    "velocityQ8": [160, 160],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            160         1         85       1200         35          # recipe snare-white: at 185 Hz, a short sine body plus white noise clocked at 14 kHz (drum-study)",
-      "patch {patch:8} 1  65536     {level:1} 0         0            160         1         190      1200         35         0                0             4    0          7000000",
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         85       1200         35          # recipe snare-white: at 185 Hz, a short sine body plus white noise clocked at 14 kHz (drum-study)",
+      "patch {patch:8} 1  65536     {level:1} 0         0            {vel:1} 1         190      1200         35         0                0             4    0          7000000",
       "route {patch} 2 3"
     ]
   },
   "clap-white": {
     "description": "three short white-noise strikes 14 ms apart, then a longer fourth strike; repeated strikes are timeline events, not a patch sequencer (drum-study)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":19}],
+    "velocityQ8": [128, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            128         1         140      1200         4          0                0             4    0          8000000  # recipe clap-white: three short white-noise strikes 14 ms apart, then a longer fourth strike; repeated strikes are timeline events, not a patch sequencer (drum-study)",
-      "patch {patch:8} 1  65536     0          0         0            0           1         1        1200         1"
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         140      1200         4          0                0             4    0          8000000  # recipe clap-white: three short white-noise strikes 14 ms apart, then a longer fourth strike; repeated strikes are timeline events, not a patch sequencer (drum-study)",
+      "patch {patch:8} 1  65536     0          0         0            {vel:1} 1         1        1200         1"
     ]
   },
   "hat-ring": {
     "description": "white noise through two ring edges from fixed inharmonic sines; the two modulating envelopes also close the strike (drum-study)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":17}],
+    "velocityQ8": [160, 0, 0],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            160         1         180      1200         25         0                0             4    0          9000000  # recipe hat-ring: white noise through two ring edges from fixed inharmonic sines; the two modulating envelopes also close the strike (drum-study)",
-      "patch {patch:8} 1  65536     0          0         0            0           1         250      0            25         0                0             0    0          3431000",
-      "patch {patch:8} 2  65536     0          0         0            0           1         250      0            25         0                0             0    0          5711000",
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 1         180      1200         25         0                0             4    0          9000000  # recipe hat-ring: white noise through two ring edges from fixed inharmonic sines; the two modulating envelopes also close the strike (drum-study)",
+      "patch {patch:8} 1  65536     0          0         0            {vel:1} 1         250      0            25         0                0             0    0          3431000",
+      "patch {patch:8} 2  65536     0          0         0            {vel:2} 1         250      0            25         0                0             0    0          5711000",
       "route {patch} 3 1 1>0:256:ring 2>0:256:ring"
     ]
   },
   "warm-pad-x": {
     "description": "warm-pad with wheel vibrato, pressure brightness and slide brightness (regression EXPR)",
     "carriers": [{"operator":0,"tweak":"c_level","attenuationDb":22}],
+    "velocityQ8": [96, 64],
     "rows": [
-      "patch {patch:8} 0  65536     {level:0} 0         0            96          700       1500     30           1600        # recipe warm-pad-x: warm-pad with wheel vibrato, pressure brightness and slide brightness (regression EXPR)",
-      "patch {patch:8} 1  65634     0          1126      461          64          900       2500     60           1800",
+      "patch {patch:8} 0  65536     {level:0} 0         0            {vel:0} 700       1500     30           1600        # recipe warm-pad-x: warm-pad with wheel vibrato, pressure brightness and slide brightness (regression EXPR)",
+      "patch {patch:8} 1  65634     0          1126      461          {vel:1} 900       2500     60           1800",
       "lfo {patch} 0 5000 0 0 0 0 0",
       "mod {patch} 0 ctl0 lfo_pitch 50 3",
       "mod {patch} 1 ctl1 index1 1024 3",

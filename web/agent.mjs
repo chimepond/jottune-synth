@@ -378,9 +378,21 @@ async function workerMain({context,command,input,options:opts}) {
     const {recipes,...authoring} = author?.authoringDescription() || {};
     return {...executionContext(context),renderer:context.engine,cache:context.folder,
       authoring:author ? authoring : undefined,recipes:author?.listRecipes(),
-      commands:['setup','discover','compose','render','verify','analyze','export'],
-      references:context.entries.filter(e => e.path.endsWith('.txt'))
+      commands:['setup','discover','compose','parts','render','verify','analyze','export'],
+      references:context.entries.filter(e => e.path === 'score-v1.schema.json' || e.path.endsWith('.txt'))
         .map(e => new URL(e.path,context.site).href)};
+  }
+  if (command === 'parts') {
+    let report;
+    globalThis.self = {postMessage(value) {
+      if (value.type === 'part-progress') parentPort.postMessage({progress:value});
+      else report = value;
+    }};
+    await load('worker.mjs');
+    await self.onmessage({data:{operation:'analyze-parts',mode:'listen',score:JSON.parse(input),
+      engine:context.engine,streams:opts.streams,sections:opts.sections}});
+    if (report?.type !== 'part-report') fail(report?.stderr || 'Part report failed.');
+    return {...executionContext(context),...report};
   }
   let inspectedModule, inspectedRuntime;
   const inspect = async (text, label = 'Input') => {
@@ -417,11 +429,11 @@ async function workerMain({context,command,input,options:opts}) {
   let dryUnavailable;
   if (opts.sections || opts.dryVoices) {
     const info = await inspect(recordText), fs = Number(info.fs), frames = Number(info.frames);
-    const duration = frames / fs, voices = Number(info.voices);
-    if (opts.sections?.some(section => {
-      const start = section.startSeconds ?? 0, end = section.endSeconds ?? duration;
-      return end > duration || Math.ceil(end * fs) <= Math.ceil(start * fs);
-    })) fail('Analysis section must select frames inside the record.');
+    const voices = Number(info.voices);
+    if (opts.sections) {
+      const {analysisSectionFrames} = await load('analysis.mjs');
+      opts.sections.forEach((section, i) => analysisSectionFrames(section, i, fs, frames));
+    }
     if (opts.dryVoices?.some(voice => voice >= voices)) fail('Selected dry voice does not exist in the record.');
     if (opts.dryVoices) {
       const {analysisLimits} = await load('analysis.mjs');
@@ -453,11 +465,12 @@ async function workerMain({context,command,input,options:opts}) {
   if (authored) result.authoring = {sourceMap:authored.sourceMap,advisories:authored.advisories,counts:authored.counts,
     ...(selection ? {selection} : {})};
   if (result.verdict !== 'valid' || (mode === 'verify' && !result.verified)) return {result:report(result),artifacts:{}};
-  if (opts.analyze || command === 'analyze') {
+  if (opts.analyze || command === 'analyze' || opts.bands || opts.truePeak === false) {
     try {
       const {analyzePCM,diagnoseEvents} = await load('analysis.mjs');
-      result.analysis = await analyzePCM(result,{windowSeconds:opts.windowSeconds ?? 4,sections:opts.sections});
-      result.diagnostics = diagnoseEvents(result);
+      result.analysis = await analyzePCM(result,{windowSeconds:opts.windowSeconds ?? 4,sections:opts.sections,
+        truePeak:opts.truePeak, bands:opts.bands});
+      result.diagnostics = diagnoseEvents(result,result.analysis.ending);
     } catch (error) { result.analysis = {status:'unavailable',reason:error.message}; }
   }
   if (dryUnavailable) result.dryAnalysis = dryUnavailable;
@@ -498,18 +511,36 @@ function report(result) {
 }
 
 export function execute(context,command,input,options = {}) {
+  if (command === 'parts' && (typeof input !== 'string' || Buffer.byteLength(input,'utf8') > MAX_INPUT))
+    fail('Part report input must be score JSON of at most 1,000,000 bytes.');
+  if (options.streams !== undefined && (!Array.isArray(options.streams) || !options.streams.length || options.streams.length > 16 ||
+      options.streams.some(name => typeof name !== 'string' || !/^[A-Za-z_][A-Za-z0-9_-]*$/.test(name)) ||
+      new Set(options.streams).size !== options.streams.length)) fail('Choose 1 to 16 distinct stream identifiers.');
   validateOptions(command,options);
+  const {signal,onProgress,...workerOptions} = options;
+  if (signal != null && !(signal instanceof AbortSignal)) fail('Invalid abort signal.');
+  if (onProgress !== undefined && typeof onProgress !== 'function') fail('Invalid progress callback.');
+  signal?.throwIfAborted();
   const timeoutMs = options.timeoutMs ?? 120000;
   return new Promise((resolve,reject) => {
     const worker = new Worker(new URL(import.meta.url),{workerData:{agentWorker:true,context,command,input,
-      options:{formats:[],...options}},resourceLimits:{maxOldGenerationSizeMb:128,maxYoungGenerationSizeMb:16}});
+      options:{formats:[],...workerOptions}},resourceLimits:{maxOldGenerationSizeMb:128,maxYoungGenerationSizeMb:16}});
     let settled = false;
     const finish = (error,value) => {
-      if (settled) return; settled = true; clearTimeout(timer);
+      if (settled) return; settled = true; clearTimeout(timer); signal?.removeEventListener('abort',abort);
       worker.terminate().then(() => error ? reject(error) : resolve(value),reject);
     };
-    const timer = setTimeout(() => finish(Error('Rendering or analysis exceeded its deadline; no output was written.')),timeoutMs);
-    worker.once('message',message => {
+    const abort = () => finish(Error('Operation cancelled.'));
+    const deadline = () => setTimeout(() => finish(Error('Rendering or analysis exceeded its deadline; no output was written.')),timeoutMs);
+    let timer = deadline();
+    signal?.addEventListener('abort',abort,{once:true});
+    worker.on('message',message => {
+      if (settled) return;
+      if (command === 'parts' && message.progress) {
+        clearTimeout(timer); timer = deadline();
+        try { onProgress?.(message.progress); } catch (error) { finish(error); }
+        return;
+      }
       const error = message.error ? Error(message.error) : null;
       if (error && message.pointer) error.pointer = message.pointer;
       finish(error,message.value);
@@ -520,7 +551,8 @@ export function execute(context,command,input,options = {}) {
 }
 
 function validateOptions(command,options) {
-  if (!['setup','discover','compose','render','verify','analyze','export'].includes(command)) fail('Unsupported local command.');
+  if (!['setup','discover','compose','parts','render','verify','analyze','export'].includes(command)) fail('Unsupported local command.');
+  if (options.streams !== undefined && command !== 'parts') fail('--streams belongs to the parts command.');
   if (options.soloStreams !== undefined || options.muteStreams !== undefined) {
     if (command !== 'compose') fail('Stream selection belongs only to compose with a score-v1 source.');
     if (options.soloStreams !== undefined && options.muteStreams !== undefined) fail('Choose either --solo-streams or --mute-streams.');
@@ -533,6 +565,8 @@ function validateOptions(command,options) {
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 120000) fail('Deadline must be 1..120000 ms (default 120000).');
   if (options.mode !== undefined && !['listen','verify'].includes(options.mode)) fail('Mode must be listen or verify.');
   if (command === 'verify' && options.mode === 'listen') fail('This command requires full verification.');
+  for (const key of ['truePeak','bands']) if (options[key] !== undefined && typeof options[key] !== 'boolean')
+    fail(key + ' must be a boolean.');
   if (options.windowSeconds !== undefined && (!Number.isFinite(options.windowSeconds) || options.windowSeconds < .1 || options.windowSeconds > 300))
     fail('Analysis window must be 0.1 to 300 seconds.');
   if (options.sections !== undefined && (!Array.isArray(options.sections) || options.sections.length > 32 || options.sections.some(section =>
@@ -600,11 +634,14 @@ const HELP = `JotTune URL client (Node 22.15+; built-in modules only)
   node agent.mjs SITE setup|discover [--release ID] [--cache DIR] [--offline] [--bundle DIR]
   node agent.mjs SITE discover --out STEM [--formats json]
   node agent.mjs SITE discover --examples COUNT [--example-seed SEED]
+  node agent.mjs SITE parts SCORE.json [--streams '["lead","bass"]'] [--sections JSON]
+    Prints one post-effects solo report to stdout. Progress goes to stderr. Ctrl-C cancels.
+    The deadline applies separately to each selected stream.
   node agent.mjs SITE compose SCORE.json --out STEM
   node agent.mjs SITE compose SCORE.json --solo-streams '["lead"]' --out SOLO
   node agent.mjs SITE verify|render|analyze|export SONG.tl [--out STEM]
 Options: --formats tl,json,wav,svg,link (default tl,json); --force; --timeout-ms N
-         --mode verify|listen; --analysis; --sections JSON; --window-seconds N
+         --mode verify|listen; --analysis; --sections JSON; --window-seconds N; --bands; --no-true-peak
          --dry-voices JSON --dry-max-bytes N --dry-timeout-ms N
          --provenance JSON; --detail compact|full (default compact)
 Compose selection: --solo-streams JSON or --mute-streams JSON, never both.
@@ -662,17 +699,17 @@ export async function main(argv = process.argv.slice(2)) {
   if (!argv.length || argv.includes('--help') || argv[0] === 'help') { process.stdout.write(HELP); return 0; }
   const positional = [], opts = {};
   const valued = new Set(['release','cache','bundle','out','formats','timeout-ms','sections','window-seconds','provenance',
-    'mode','detail','dry-voices','dry-max-bytes','dry-timeout-ms','examples','example-seed','solo-streams','mute-streams']);
+    'mode','detail','dry-voices','dry-max-bytes','dry-timeout-ms','examples','example-seed','solo-streams','mute-streams','streams']);
   for (let i = 0; i < argv.length; i++) {
     if (!argv[i].startsWith('--')) { positional.push(argv[i]); continue; }
     const key = argv[i].slice(2);
     if (Object.hasOwn(opts,key)) fail('Duplicate option: --' + key);
-    if (['offline','force','analysis','allow-development'].includes(key)) opts[key] = true;
+    if (['offline','force','analysis','allow-development','bands','no-true-peak'].includes(key)) opts[key] = true;
     else if (valued.has(key) && i + 1 < argv.length && !argv[i+1].startsWith('--')) opts[key] = argv[++i];
     else fail('Unknown or incomplete option: --' + key);
   }
   const [site,command,inputFile] = positional;
-  if (!site || !['setup','discover','compose','render','verify','analyze','export'].includes(command) || positional.length > 3)
+  if (!site || !['setup','discover','compose','parts','render','verify','analyze','export'].includes(command) || positional.length > 3)
     fail('Use --help for command syntax.');
   if (['setup','discover'].includes(command) ? inputFile : !inputFile) fail('Unexpected or missing input file.');
   if (['compose','export'].includes(command) && !opts.out) fail('This command requires --out STEM.');
@@ -683,6 +720,8 @@ export async function main(argv = process.argv.slice(2)) {
   if (opts.examples !== undefined && (opts.offline || opts.bundle)) fail('Examples require the current online song catalog; omit --examples for offline discovery.');
   if (command === 'discover' && Object.keys(opts).some(key => !['release','cache','bundle','out','formats','force','timeout-ms','detail','offline','allow-development','examples','example-seed'].includes(key)))
     fail('Discover supports only release/cache/bundle, offline, deadline, detail, optional examples and JSON export options.');
+  if (command === 'parts' && Object.keys(opts).some(key => !['release','cache','bundle','offline','allow-development','timeout-ms','streams','sections'].includes(key)))
+    fail('Parts accepts renderer/cache options, --timeout-ms, --streams and --sections. Redirect stdout to save its JSON.');
   if (command === 'discover' && !opts.out && (opts.formats !== undefined || opts.force)) fail('Discover --formats and --force require --out STEM.');
   const formats = (opts.formats || (command === 'discover' ? 'json' : 'tl,json')).split(',');
   if (!formats.length || new Set(formats).size !== formats.length || formats.some(x => !['tl','json','wav','svg','link'].includes(x))) fail('Unknown or duplicate export format.');
@@ -690,10 +729,13 @@ export async function main(argv = process.argv.slice(2)) {
   const options = {formats:opts.out ? formats : [],timeoutMs:opts['timeout-ms'] === undefined ? 120000 : Number(opts['timeout-ms']),
     mode:opts.mode ?? 'verify',analyze:opts.analysis || command === 'analyze' || opts.sections !== undefined || opts['window-seconds'] !== undefined,
     ...(opts.sections ? {sections:JSON.parse(opts.sections)} : {}),
+    ...(opts.bands ? {bands:true} : {}), ...(opts['no-true-peak'] ? {truePeak:false} : {}),
     ...(opts['window-seconds'] !== undefined ? {windowSeconds:Number(opts['window-seconds'])} : {}),
     ...(opts['dry-voices'] !== undefined ? {dryVoices:JSON.parse(opts['dry-voices'])} : {}),
     ...(opts['dry-max-bytes'] !== undefined ? {dryMaxBytes:Number(opts['dry-max-bytes'])} : {}),
     ...(opts['dry-timeout-ms'] !== undefined ? {dryTimeoutMs:Number(opts['dry-timeout-ms'])} : {}),
+    ...(opts.streams !== undefined ? {streams:JSON.parse(opts.streams)} : {}),
+    ...(command === 'parts' ? {onProgress:p => process.stderr.write('Measuring '+p.stream+' ('+(p.completed+1)+'/'+p.total+')\n')} : {}),
     ...(opts['solo-streams'] !== undefined ? {soloStreams:JSON.parse(opts['solo-streams'])} : {}),
     ...(opts['mute-streams'] !== undefined ? {muteStreams:JSON.parse(opts['mute-streams'])} : {}),
     ...(opts.provenance ? {provenance:JSON.parse(opts.provenance)} : {})};
@@ -711,6 +753,7 @@ export async function main(argv = process.argv.slice(2)) {
   if (opts.examples !== undefined && context.offline) fail('Examples require the current online song catalog; omit --examples for offline discovery.');
   const examples = opts.examples === undefined ? null : await discoverExamples(context,Number(opts.examples),opts['example-seed'] ?? randomUUID());
   const answer = await execute(context,command,input,options);
+  if (command === 'parts') { process.stdout.write(json(answer)); return 0; }
   if (examples) answer.examples = examples;
   const discovering = command === 'discover';
   const result = discovering ? answer : answer.result;

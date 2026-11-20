@@ -51,8 +51,9 @@ async function readCompanion(name, maximum, signal) {
 export async function analyzeResult({result, options = {}, engine, baseURL} = {}, phase = () => {}) {
   if (baseURL !== undefined && new URL(baseURL, base).href !== base.href)
     throw Error('Analysis assets must use this application directory.');
-  const report = {pcm:await analyzePCM(result, {windowSeconds:options.windowSeconds, sections:options.sections}),
-    events:diagnoseEvents(result)};
+  const pcm = await analyzePCM(result, {windowSeconds:options.windowSeconds, sections:options.sections,
+    truePeak:options.truePeak, bands:options.bands});
+  const report = {pcm, events:diagnoseEvents(result, pcm.ending)};
   if (options.dryVoices === undefined || options.dryVoices === false) return report;
   try {
     const voices = options.dryVoices === true ? undefined : options.dryVoices;

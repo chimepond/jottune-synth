@@ -63,6 +63,7 @@ class Packages(unittest.TestCase):
     def test_agent_manifest_binds_all_transitive_assets_and_excludes_rewritten_and_bulk_content(self):
         self.agent()
         (self.root / 'web/starter.tl').write_text('fixture editable starter')
+        (self.root / 'web/score-v1.schema.json').write_text('{}')
         for name in ('index.html','theme.css','songs.json','precache.json'):
             (self.root / 'web' / name).write_text('not a static client dependency')
         for name in ('songs/song.tl','catalog/index.json'):
@@ -74,7 +75,7 @@ class Packages(unittest.TestCase):
         entries = {entry['path']:entry for entry in manifest['files']}
         self.assertEqual(manifest['format'], 1)
         self.assertEqual(manifest['entry'], 'agent.mjs')
-        for name in ('agent.mjs','analysis-worker.mjs','runtime.mjs','vendor/browser_wasi_shim/index.js',
+        for name in ('agent.mjs','analysis-worker.mjs','runtime.mjs','vendor/browser_wasi_shim/index.js','score-v1.schema.json',
                      'vendor/browser_wasi_shim/LICENSE','LICENSE','engines.json','starter.tl','example.tl',release['runtime_module'],
                      'engines/' + release['id'] + '/vendor/browser_wasi_shim/index.js'):
             self.assertEqual(entries[name]['sha256'], pkg.digest(self.root / 'web' / name))

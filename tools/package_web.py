@@ -218,7 +218,7 @@ def agent_manifest(web):
     web = Path(web)
     if not (web / 'agent.mjs').is_file() or not (web / 'engines.json').is_file():
         return
-    allowed_json = {'engines.json','starter.score.json','analysis-view.json','spatial-view.json'}
+    allowed_json = {'engines.json','starter.score.json','score-v1.schema.json','analysis-view.json','spatial-view.json'}
     excluded = {'songs','catalog'}
     entries = []
     for file in sorted(web.rglob('*')):

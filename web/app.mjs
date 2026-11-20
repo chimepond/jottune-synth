@@ -366,6 +366,7 @@ function invalidate(retainProfile = false, retainRelease = false) {
   instrumentView.clear();
   if (!retainProfile) {
     profileBase = null; appliedProfile = null; loadedIdentity = null; loadedSong = null; linkedSelectionActive = false;
+    openingPublication = null;
     originalScoreText = null; $('score-download').hidden = true;
     linkedMetadata?.controller.abort(); clearTimeout(linkedMetadata?.timer); linkedMetadata = null;
   }
@@ -436,7 +437,7 @@ const webmcp = {intfm_render:'unsupported', intfm_compose:'unsupported'};
 const describe = () => ({name: 'jottune-synth', title: 'JotTune Synth', format: 'JotTune Timeline (.tl)',
   webmcp: {...webmcp},
   rendering: 'local WebAssembly worker',
-  operations: ['summary', 'toText', 'toLink', 'exportChunk', 'describe', 'compose', 'recipes', 'recipe', 'recipeGain', 'analyze', 'cancelAnalysis', 'render', 'listen', 'verify', 'verifySaved', 'cancel', 'clear', 'loadLink', 'prepareLink', 'result', 'metrics', 'toWav', 'toSvg', 'guide', 'reference', 'showQr', 'closeQr'],
+  operations: ['summary', 'toText', 'toLink', 'exportChunk', 'describe', 'compose', 'recipes', 'recipe', 'recipeGain', 'analyze', 'analyzeParts', 'cancelAnalysis', 'render', 'listen', 'verify', 'verifySaved', 'cancel', 'clear', 'loadLink', 'prepareLink', 'result', 'metrics', 'toWav', 'toSvg', 'guide', 'reference', 'showQr', 'closeQr'],
   modes: {verify: 'Two renders; checks hash and block independence.', listen: 'One render; block independence is unchecked.'},
   profiles: {halfWidths:[30,45,60,75,90], unit:'degrees each side', mirror:'reverse low/high sides',
     behavior:'Native Keys projection; fully verifies the source and derived ordinary-stereo record. Does not change the input file.'},
@@ -448,7 +449,7 @@ const describe = () => ({name: 'jottune-synth', title: 'JotTune Synth', format: 
     summary:{args:'result (default current)',returns:'compact JSON-safe result; no PCM or event arrays',effect:'local and silent'},
     toText:{args:'valid rendered result (default current)',returns:'complete canonical TL document string',effect:'local and silent'},
     toLink:{args:'valid rendered result, {pinRelease:true by default}',returns:'Promise of the same URL as Copy song link',effect:'local and silent; no upload'},
-    exportChunk:{args:"valid result, {format:'tl'|'link',offset,bytes:1..7200} (default tl,0,6000)",returns:'Promise of base64 bytes, offset/nextOffset, totalBytes and SHA-256 for chunk, payload and document',effect:'local and silent; no upload or download'},
+    exportChunk:{args:"valid result, {format:'tl'|'tl-deflate'|'link',offset,bytes:1..7200} (default tl,0,6000)",returns:'Promise of base64 bytes, offset/nextOffset, totalBytes and SHA-256 for chunk, payload and document',effect:'local and silent; no upload or download'},
     recipes:{args:'none',returns:'recipe descriptions and native fields',effect:'local and silent'},
     recipe:{args:'recipe ID, patch ID, optional named deltas',returns:'native declarations',effect:'local and silent'},
     recipeGain:{args:'recipe ID, patch ID, gain dB',returns:'native declarations',effect:'local and silent'},
@@ -456,7 +457,8 @@ const describe = () => ({name: 'jottune-synth', title: 'JotTune Synth', format: 
     listen:{args:'TL text, {release}',returns:'one-pass render result; no audio playback',effect:'silent; renderer assets may load'},
     verify:{args:'saved TL text, {release}',returns:'two-pass hash and block-independence result',effect:'silent; renderer assets may load'},
     verifySaved:{args:'none',returns:'verified replay of current canonical output',effect:'changes page; silent'},
-    analyze:{args:'valid result, {windowSeconds,sections,dryVoices,dryMaxBytes}',returns:'JSON audio measurements',effect:'local and silent; optional dry render'},
+    analyze:{args:'valid result, {windowSeconds,sections,truePeak,bands,dryVoices,dryMaxBytes}',returns:'JSON audio measurements',effect:'local and silent; optional dry render'},
+    analyzeParts:{args:'score v1, {streams,sections,release,onProgress,signal}',returns:'per-stream post-effects solo loudness and sample peaks, overall and per section',effect:'silent background measurements; keeps the loaded song'},
     cancelAnalysis:{args:'none',returns:'undefined',effect:'cancels local analysis'},
     cancel:{args:'none',returns:'undefined',effect:'cancels local rendering'},
     clear:{args:'none',returns:'undefined',effect:'clears page and stops playback'},
@@ -540,7 +542,7 @@ async function exportResultChunk(result, options, portableURL) {
       Object.keys(options).some(key => !['format','offset','bytes'].includes(key)))
     throw Error('Use exportChunk options {format,offset,bytes}.');
   const {format = 'tl', offset = 0, bytes = 6000} = options;
-  if (format !== 'tl' && format !== 'link') throw Error('Export format must be tl or link.');
+  if (!['tl','tl-deflate','link'].includes(format)) throw Error('Export format must be tl, tl-deflate or link.');
   if (!Number.isSafeInteger(offset) || offset < 0) throw Error('Export offset must be a nonnegative safe integer.');
   if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > 7200) throw Error('Export bytes must be an integer from 1 to 7200.');
   if (result?.verdict !== 'valid' || !(result.canonical instanceof Uint8Array) ||
@@ -551,8 +553,13 @@ async function exportResultChunk(result, options, portableURL) {
   const {documentSha256, recordSha256, rendererRelease, verified} = result;
   const canonical = new Uint8Array(result.canonical);
   if (await exportDigest(canonical) !== documentSha256) throw Error('Canonical document SHA-256 differs from the render result.');
-  const payload = format === 'tl' ? canonical : new TextEncoder().encode(
-    portableURL ?? await toLink({verdict:'valid',canonical,recordSha256,documentSha256,rendererRelease}));
+  let payload = canonical;
+  if (format === 'tl-deflate') {
+    if (typeof CompressionStream !== 'function') throw Error('Deflate unavailable. Use format tl or save the .tl file.');
+    payload = new Uint8Array(await new Response(new Blob([canonical]).stream().pipeThrough(new CompressionStream('deflate'))).arrayBuffer());
+  } else if (format === 'link') {
+    payload = new TextEncoder().encode(portableURL ?? await toLink({verdict:'valid',canonical,recordSha256,documentSha256,rendererRelease}));
+  }
   if (offset > payload.length) throw Error('Export offset exceeds the payload length.');
   const chunk = payload.subarray(offset, offset + bytes), end = offset + chunk.length;
   return {format, encoding:'base64', documentSha256, verified:verified === true,
@@ -659,6 +666,55 @@ async function prepareTextInput(text, {title,mode='listen'} = {}) {
 $('agent-report').onclick=copyAgentReport;
 $('prepare-input').onclick=()=>{showPlayer();return prepareTextInput($('record').value);};
 
+// Work in a separate worker so a solo never replaces the song in the player.
+let partReportRunning = false;
+async function analyzeParts(score, config = {}) {
+  if (!config || typeof config !== 'object' || Array.isArray(config) ||
+      Object.keys(config).some(k => !['streams','sections','release','onProgress','signal'].includes(k)))
+    throw Error('Use analyzeParts options {streams,sections,release,onProgress,signal}.');
+  const {release} = options(config), {signal,onProgress} = config;
+  if ((signal != null && !(signal instanceof AbortSignal)) ||
+      (onProgress !== undefined && typeof onProgress !== 'function')) throw Error('Invalid progress callback or abort signal.');
+  if (signal?.aborted) throw new DOMException('Part report cancelled.','AbortError');
+  if (partReportRunning) throw Error('A part report is already running.');
+  const source = structuredClone({score,streams:config.streams,sections:config.sections});
+  if (new TextEncoder().encode(JSON.stringify(source)).length > limits.recordBytes) throw Error('Part report input exceeds the 1 MB browser limit.');
+  partReportRunning = true;
+  try {
+    return await new Promise((resolve,reject) => {
+      let worker, timer, finished = false;
+      const finish = (error, value) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer); worker?.terminate(); signal?.removeEventListener('abort', abort);
+        if (error) reject(error); else resolve(value);
+      };
+      const abort = () => finish(new DOMException('Part report cancelled.','AbortError'));
+      const deadline = () => {
+        clearTimeout(timer); timer = setTimeout(() => finish(Error('Part measurement exceeded its time limit.')),limits.renderSeconds * 1000);
+      };
+      signal?.addEventListener('abort',abort,{once:true}); deadline();
+      registryPromise.then(registry => {
+        if (finished) return;
+        const engine = selectEngine(registry, release);
+        worker = new Worker(new URL('worker.mjs',assetBase),{type:'module'});
+        worker.onerror = event => finish(Error(event.message || 'Part report worker failed.'));
+        worker.onmessageerror = () => finish(Error('Unreadable part report.'));
+        worker.onmessage = ({data}) => {
+          if (finished) return;
+          if (data.type === 'part-progress') {
+            deadline();
+            try { onProgress?.({stream:data.stream,completed:data.completed,total:data.total}); }
+            catch (error) { finish(error); }
+          } else if (data.type === 'part-report') finish(null,data);
+          else finish(Error(data.stderr || 'Part report failed.'));
+        };
+        worker.postMessage({operation:'analyze-parts',mode:'listen',engine,...source});
+      }).catch(error => finish(error));
+    });
+  } finally { partReportRunning = false; }
+}
+
 function cancelAnalysis() {
   analysisSequence++;
   analysisJob?.(Error('Analysis cancelled.')); analysisJob = null;
@@ -667,7 +723,7 @@ async function analyze(result = lastResult, value = {}) {
   if (result?.verdict !== 'valid' || !(result.pcm instanceof Int16Array) || !result.pcm.length)
     throw Error('Prepare valid audio before analysis.');
   if (!value || typeof value !== 'object' || Array.isArray(value)
-      || Object.keys(value).some(key => !['windowSeconds','sections','dryVoices','dryMaxBytes','dryTimeoutMs','timeoutMs'].includes(key)))
+      || Object.keys(value).some(key => !['windowSeconds','sections','truePeak','bands','dryVoices','dryMaxBytes','dryTimeoutMs','timeoutMs'].includes(key)))
     throw Error('Unknown audio analysis option.');
   const timeout = value.timeoutMs ?? 120000;
   if (!Number.isSafeInteger(timeout) || timeout < 100 || timeout > 300000) throw Error('Analysis timeout must be 100–300000 ms.');
@@ -898,7 +954,7 @@ async function preparePlayback(text, value = {}) {
     throw error;
   }
 }
-window.IntFM = Object.freeze({describe, summary, toText, toLink, exportChunk, compose, recipes:listRecipes, recipe, recipeGain, analyze, cancelAnalysis, render: (text, value) => render(text, value), listen, verify, verifySaved, cancel, clear, loadLink, prepareLink: loadLinkForPlayback, showQr: openQr, closeQr, result: () => lastResult,
+window.IntFM = Object.freeze({describe, summary, toText, toLink, exportChunk, compose, recipes:listRecipes, recipe, recipeGain, analyze, analyzeParts, cancelAnalysis, render: (text, value) => render(text, value), listen, verify, verifySaved, cancel, clear, loadLink, prepareLink: loadLinkForPlayback, showQr: openQr, closeQr, result: () => lastResult,
   metrics: async (text, value) => (await render(text, value)).metrics, toWav, toSvg, guide, reference});
 window.addEventListener('message', async event => {
   if (event.origin !== location.origin || !event.source || event.data?.protocol !== 'intfm-v1') return;
@@ -934,7 +990,7 @@ async function composeTool(input, signal) {
     const {documentSha256,offset,format='tl'} = input;
     if (Object.keys(input).some(key => !['documentSha256','offset','format'].includes(key)) ||
         typeof documentSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(documentSha256) ||
-        !Number.isSafeInteger(offset) || offset < 0 || !['tl','link'].includes(format)) throw Error(usage);
+        !Number.isSafeInteger(offset) || offset < 0 || !['tl','tl-deflate','link'].includes(format)) throw Error(usage);
     const saved = lastResult;
     if (!composedLinks.has(saved) || saved.documentSha256 !== documentSha256)
       throw Error('The verified composition is no longer active. Call intfm_compose with the original score again.');
@@ -1015,13 +1071,13 @@ void registerWebTool({name:'intfm_render', description:'Render a JotTune Timelin
       recordSha256:result.recordSha256, pcmHash:result.pcmHash, rendererRelease:result.rendererRelease, metrics:result.metrics, stderr:result.stderr};
   })});
 void registerWebTool({name:'intfm_compose',
-  description:'Compose score v1 locally and verify the saved TL. Returns title, summary, a pinned URL when available, and the first base64 TL chunk. For more TL call again with its documentSha256 and nextOffset as offset. For a long URL (url null and urlBytes present) request format link from offset 0. No playback or publication.',
+  description:'Compose score v1 locally and verify the saved TL. Returns title, summary, a pinned URL when available, and the first base64 TL chunk. For more TL call again with its documentSha256 and nextOffset as offset. For compressed TL request format tl-deflate from offset 0 and inflate the assembled bytes. For a long URL (url null and urlBytes present) request format link from offset 0. No playback or publication.',
   inputSchema:{type:'object', additionalProperties:false, properties:{
     score:{type:'object',description:'Complete JotTune score v1 JSON object; see authoring.txt and starter.score.json alongside this player.'},
     release:{type:'string',description:'Kept renderer release; defaults to the page release or registry default.'},
     documentSha256:{type:'string',pattern:'^[a-f0-9]{64}$',description:'Document checksum from the active composition.'},
     offset:{type:'integer',minimum:0,description:'Byte offset into the selected export.'},
-    format:{type:'string',enum:['tl','link'],default:'tl'}},
+    format:{type:'string',enum:['tl','tl-deflate','link'],default:'tl'}},
     oneOf:[{required:['score']},{required:['documentSha256','offset']}]},
   execute:webToolReply(composeTool)});
 
@@ -1058,9 +1114,10 @@ function updateTransport(redraw = true) {
   $('play-right').textContent = $('play').textContent;
   $('play-right').disabled = $('play').disabled;
   $('song-load-right').disabled = $('song-load').disabled;
-  const title = loadedIdentity?.title || (lastResult ? 'Local song' : 'No song loaded');
+  const publication = linkedSelectionActive ? openingPublication : null;
+  const title = loadedIdentity?.title || publication?.label || (lastResult ? 'Local song' : 'No song loaded');
   const version = appliedProfile ? `${profileDescription(appliedProfile)} · computed from ${loadedIdentity?.version || 'loaded source'}`
-    : loadedIdentity?.version || (lastResult ? 'Local version' : 'Load a song, then press Play.');
+    : loadedIdentity?.version || publication?.status || (lastResult ? 'Local version' : 'Load a song, then press Play.');
   $('loaded-song').textContent = title;
   document.title = lastResult?.verdict === 'valid' && loadedIdentity?.title ? `${title} · ${pageTitle}` : pageTitle;
   $('loaded-version').textContent = version;
@@ -1079,6 +1136,9 @@ function updateTransport(redraw = true) {
   } else if (prepared) {
     $('mobile-song').textContent = title;
     $('mobile-version').textContent = `Loaded · ${version}`;
+  } else if (publication) {
+    $('mobile-song').textContent = publication.label;
+    $('mobile-version').textContent = publication.status;
   } else {
     $('mobile-song').textContent = selectionReady ? selected.title : 'Choose a song';
     $('mobile-version').textContent = selectionReady ? `Selected · ${variantLabels[variant.kind] || variant.kind}` : 'No song selected';
@@ -1086,7 +1146,7 @@ function updateTransport(redraw = true) {
   $('mobile-time').value = $('time').value;
   // The selection belongs to Load; Play always belongs to the prepared audio.
   // Mirror the existing transport rather than introduce another playback state.
-  $('rail-selected-song').textContent = selected?.title || 'No song selected';
+  $('rail-selected-song').textContent = selected?.title || publication?.label || 'No song selected';
   $('rail-selected-version').textContent = variant ? variantLabels[variant.kind] || variant.kind : '';
   $('rail-load').disabled = rendering || !!pendingSongLoad || !selectionReady;
   $('rail-load').textContent = rendering ? 'Preparing…' : pendingSongLoad ? 'Loading…' : 'Load song';
@@ -1305,6 +1365,7 @@ $('cancel').onclick = cancel;
 
 let songLibrary = [], librarySelection = [], selectedSongId = '', songChoices = new Map(), libraryView = 'featured', catalogIndex, catalogResult;
 let libraryRequest, librarySequence = 0, libraryHistory = [], libraryCursor = null, loadedSong = null, linkedSelectionActive = false;
+let openingPublication = null;
 let previewWorker, previewAbort, previewSequence = 0, previewTimer;
 const catalog = createCatalog(assetBase, validDiscovery);
 const variantLabels = {standard: 'Original · saved', keys: 'Keys · saved ±30°', mirror: 'Keys mirror · saved ±30°'};
@@ -1434,8 +1495,8 @@ function libraryDetails() {
   $('selected-song-title').textContent = song?.title || (libraryView === 'featured' ? 'No matching favorites on these pages' : 'No matching song on these pages');
   if (!variant) {
     if (linkedSelectionActive) {
-      $('selected-song-title').textContent = 'Song from link';
-      $('song-detail').textContent = 'The linked song is in Player. Press Play, or choose Favorites or Browse all to select a replacement.';
+      $('selected-song-title').textContent = openingPublication?.label || 'Song from link';
+      $('song-detail').textContent = openingPublication?.status || 'The linked song is in Player. Press Play, or choose Favorites or Browse all to select a replacement.';
       $('song-discovery').textContent = ''; $('song-note').textContent = ''; return;
     }
     $('song-detail').textContent = (libraryView === 'featured' ? 'Browse all searches beyond Favorites with the same filters. ' : '')
@@ -1740,7 +1801,7 @@ function surfaceLinkedSelection(match = null) {
   $('library-view-detail').textContent = 'The incoming song is selected here. Choose Favorites or Browse all to resume browsing.';
   $('library-path').textContent = 'Source library › Song from link';
   $('library-status').textContent = match ? 'Linked saved version selected. Browse the library to choose another song.'
-    : 'The linked song is in Player; no unrelated library song is selected.';
+    : openingPublication?.status || 'The linked song is in Player; no unrelated library song is selected.';
   libraryVariants(match?.variant.kind);
 }
 // A link never supplies its display title. Only an exact path/hash match, or a
@@ -1983,10 +2044,26 @@ $('show-qr').onclick = async () => {
     openQr(url, {label:linkLabel, trigger:$('show-qr')});
   } catch (error) { if (lastResult === result) playerStatus(error.message); }
 };
-function loadLocationLink() {
-  if (isRecordLink(new URL(location.href))) loadLinkForPlayback(location.href).catch(() => {});
+function loadLocationLink(initial = false) {
+  const url = new URL(location.href);
+  if (!isRecordLink(url)) return;
+  const record = initial === true && !url.hash && url.pathname.match(/\/r\/([a-f0-9]{64})\/?$/);
+  let publication;
+  if (record) {
+    // Pending and failed descriptors deliberately withhold their title.
+    publication = {label:'Submitted song · ' + record[1].slice(0, 12), status:'Checking the submitted song…'};
+    openingPublication = publication;
+    linkedSelectionActive = true;
+    surfaceLinkedSelection();
+  }
+  loadLinkForPlayback(url.href).catch(error => {
+    if (publication && openingPublication === publication && linkedSelectionActive) {
+      publication.status = error.linkMessage || error.message;
+      surfaceLinkedSelection();
+    }
+  });
 }
-loadLocationLink();
+loadLocationLink(true);
 window.addEventListener('hashchange', loadLocationLink);
 if ('launchQueue' in window) window.launchQueue.setConsumer(async launch => {
   if (!launch.files?.length) return;

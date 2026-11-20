@@ -79,7 +79,11 @@ try {
     assets.set(name,await fs.readFile(path.join(root,'web',name)));
   assets.set('agent.mjs',await fs.readFile(own));
   assets.set('reference/recipes.txt',await fs.readFile(path.join(root,'data/recipes.txt')));
-  for (const name of ['authoring.mjs','analysis.mjs','analysis-runtime.mjs','analysis-view.json','analysis-view.wasm']) {
+  for (const name of ['analysis-view.json','analysis-view.wasm']) {
+    try { assets.set(name,await fs.readFile(path.join(web,name))); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+  }
+  for (const name of ['authoring.mjs','analysis.mjs','analysis-runtime.mjs']) {
     try { assets.set(name,await fs.readFile(path.join(root,'web',name))); }
     catch (error) {
       if (error.code !== 'ENOENT') throw error;
@@ -222,6 +226,18 @@ try {
     assert.equal(solo.result.authoring.selection.removedGateEvents,1);
     assert.deepEqual(solo.artifacts.tl,mute.artifacts.tl);assert.deepEqual(solo.artifacts.wav,mute.artifacts.wav);
     assert.notEqual(solo.result.pcmHash,full.result.pcmHash);
+    const sections=[{name:'ending',startSeconds:1}],progress=[];
+    const measured=await execute(context,'parts',input,{sections,onProgress:p=>progress.push(p.stream)});
+    assert.deepEqual(progress,['lead','bass']);assert.equal(measured.scope,'post_fx_solo');
+    const reference=await execute(context,'compose',input,{mode:'listen',analyze:true,truePeak:false,sections,soloStreams:['lead']});
+    const first=measured.parts[0];
+    assert.equal(first.stream,'lead');
+    assert.equal(first.sample_peak_dbfs,reference.result.analysis.sample_peak_dbfs);
+    assert.equal(first.sections[0].integrated_lufs,reference.result.analysis.sections[0].loudness.integrated_lufs);
+    const abort=new AbortController();
+    await assert.rejects(execute(context,'parts',input,{signal:abort.signal,onProgress:()=>abort.abort()}),/cancelled/);
+    await assert.rejects(execute(context,'parts',input,{streams:['missing']}),/declared/);
+    assert.throws(()=>execute(context,'parts',' '.repeat(1000001)+input),/1,000,000/);
     const text = new TextDecoder().decode(solo.artifacts.tl);
     assert.match(text,/delay 200000 16000 8000/);assert.match(text,/bass 0 pos -300 1000 0/);
     assert.match(text,/bass 0 send delay 30000/);assert.doesNotMatch(text,/bass 1 on/);
@@ -359,7 +375,8 @@ try {
     assets.set('worker.mjs',Buffer.from("throw Error('Audio worker reached');")); await manifestNow();
     try {
       const checked = await setup({site,cache});
-      await assert.rejects(execute(checked,'analyze',example,{sections:[{startSeconds:0,endSeconds:300}]}),/section.*inside/);
+      await assert.rejects(execute(checked,'analyze',example,{sections:[{name:'coda',endSeconds:300}]}),
+        /section 1 \("coda"\).*inside.*frames at 48000 Hz.*Omit endSeconds/);
       await assert.rejects(execute(checked,'analyze',example,{dryVoices:[63]}),/voice does not exist/);
       await assert.rejects(execute(checked,'analyze',example,{sections:[{startSeconds:0,endSeconds:.01}]}),/Audio worker reached/);
     } finally {assets.set('worker.mjs',original); await manifestNow(); await setup({site,cache});}
@@ -451,10 +468,14 @@ try {
     const text = example.replace(/^hash .*\n/m,'').replace('voice 0 sine',Array.from({length:32},(_,i) => 'voice ' + i + ' sine').join('\n'))
       .replace('0 golden 0 on 440000 32767','0 golden 0 on 440000 32767\n0 golden 1 on 440000 10000\n0 golden 2 on 440000 10000\n0 golden 2 off\n100000000 golden 1 on 440000 10000\n200000000 golden 1 off');
     await fs.writeFile(input,text);
-    const answer = await cli(site,'analyze',input,'--cache',cache,'--out',stem,'--dry-voices','[0]','--dry-max-bytes','44');
+    const answer = await cli(site,'analyze',input,'--cache',cache,'--out',stem,'--dry-voices','[0]','--dry-max-bytes','44',
+      '--sections','[{"name":"outro","startSeconds":0.25}]','--no-true-peak','--bands');
     assert.equal(answer.code,0,answer.stderr);
     const compact = JSON.parse(answer.stdout), saved = JSON.parse(await fs.readFile(stem + '.verification.json','utf8'));
     assert.ok(Buffer.byteLength(answer.stdout) < 7000); assert.equal(compact.diagnostics.voices,undefined);
+    assert.equal(saved.analysis.sections[0].end_frame,saved.analysis.frames);
+    assert.equal(saved.analysis.sections[0].bands.length,5);
+    assert.match(saved.analysis.loudness.true_peak_reason,/disabled/);
     assert.equal(compact.diagnostics.voiceCount,32); assert.equal(saved.diagnostics.voices.length,32);
     assert.ok(compact.diagnostics.warnings.some(row => row.code === 'held_voice_retrigger'));
     assert.ok(compact.diagnostics.warnings.some(row => row.code === 'on_then_off_same_frame'));

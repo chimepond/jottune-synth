@@ -9,7 +9,7 @@ import os from 'node:os';
 import crypto from 'node:crypto';
 import {fileURLToPath, pathToFileURL} from 'node:url';
 import {spawnSync} from 'node:child_process';
-import {analyzePCM, diagnoseEvents, createDryAnalyzer, analysisLimits} from '../web/analysis.mjs';
+import {analyzePCM, analysisSectionFrames, diagnoseEvents, createDryAnalyzer, analysisLimits} from '../web/analysis.mjs';
 import {analyzeDryVoices} from '../web/analysis-runtime.mjs';
 const own = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const root = path.resolve(process.argv[2] || own);
@@ -62,6 +62,77 @@ for (const seconds of [0,.1,.399,.4,2.99]) {
   const actual = await analyzePCM({pcm:signal(48000,1,seconds,'sine'),sampleRate:48000,channels:1});
   assert.equal(actual.loudness.short_term_max_lufs,null);
   if (seconds < .4) assert.equal(actual.loudness.integrated_lufs,null); ++checks;
+}
+// Exact end in a long record. Multiplying even a legal endpoint by fs can
+// produce a fractional roundoff, adding a phantom frame if passed to ceil.
+{
+  const fs = 48000, frames = 9831230;
+  assert.deepEqual(analysisSectionFrames({name:'coda',startSeconds:204},0,fs,frames),
+    {first:9792000,last:frames,name:'coda'});
+  assert.throws(() => analysisSectionFrames({name:'coda',startSeconds:204,endSeconds:204.82},1,fs,frames),
+    /section 2 \("coda"\).*204.82.*9831230 frames at 48000 Hz.*Omit endSeconds/);
+  for (const n of [7,59,77,299,4095]) {
+    assert.equal(analysisSectionFrames({endSeconds:n / fs},0,fs,n).last,n);
+    assert.equal(analysisSectionFrames({},0,fs,n).last,n);
+  }
+  assert.throws(() => analysisSectionFrames({name:'empty',startSeconds:.00101,endSeconds:.001011},0,fs,frames),/empty.*inside/);
+  checks += 13;
+}
+// Two bin-centred tones occupy different bands and stereo positions. An
+// overlapping section in the same FFT block must not borrow its neighbours.
+{
+  const fs = 8192, n = 2048, pcm = new Int16Array(2 * 2 * n);
+  for (let i = 0; i < 2 * n; i++) {
+    const sample = Math.round(9000 * Math.sin(2 * Math.PI * (i < n ? 128 : 2048) * i / fs));
+    pcm[2*i] = sample; pcm[2*i+1] = i < n ? sample : -sample;
+  }
+  const sections = [{name:'first',endSeconds:n/fs},{name:'rest',startSeconds:n/fs},
+    {name:'partial',startSeconds:.1,endSeconds:.3},{name:'whole'}];
+  const result = await analyzePCM({pcm,sampleRate:fs,channels:2},{sections,bands:true,truePeak:false});
+  const [first,rest,partial,all] = result.sections;
+  near(first.stereo.side_energy_fraction,0); near(rest.stereo.side_energy_fraction,1);
+  near(first.bands[1].energy_fraction,1,1e-6); near(rest.bands[3].energy_fraction,1,1e-6);
+  near(first.bands[1].mean_square_fs2,.5 * (9000 / 32768) ** 2,1e-6);
+  near(partial.bands.reduce((sum,band)=>sum+(band.energy_fraction ?? 0),0),1);
+  assert.deepEqual(result.bands,all.bands);
+  const alone = await analyzePCM({pcm,sampleRate:fs,channels:2},{sections:[sections[2]],bands:true,truePeak:false});
+  assert.deepEqual(alone.sections[0].bands,partial.bands);
+  const silent = await analyzePCM({pcm:new Int16Array(32),sampleRate:fs,channels:1},{bands:true,truePeak:false});
+  assert(silent.bands.every(band => band.energy_fraction === null)); assert.equal(silent.ending.below_threshold_from_frame,0);
+  checks += 4;
+}
+{
+  const fs = 8000, pcm = new Int16Array(fs);
+  pcm[2000] = 33; pcm[7999] = -32;
+  const source = {pcm,sampleRate:fs,channels:1, info:{fs,voices:1,frames:fs,events:2},
+    events:[{kind:'on',voice:0,time_ns:0,freq_millihz:440000},{kind:'off',voice:0,time_ns:125000000}]};
+  const {ending} = await analyzePCM(source,{truePeak:false});
+  assert.equal(ending.last_above_threshold_frame,2000); assert.equal(ending.below_threshold_from_frame,2001);
+  assert.equal(ending.final_window_frames,800); near(ending.final_window_peak_dbfs,20*Math.log10(32/32768));
+  near(ending.final_window_rms_dbfs,20*Math.log10(32/(Math.sqrt(800)*32768)));
+  const diagnostics = diagnoseEvents(source,ending);
+  assert.equal(diagnostics.final_gate_release_frame,1000); near(diagnostics.mix_settle_after_final_release_seconds,1001/fs);
+  for (const incomplete of [
+    {...source,eventsTruncated:true}, {...source,eventsError:'display limit'},
+    {...source,events:source.events.slice(0,1)}, {...source,events:[null,null]},
+    {...source,events:[source.events[0],{...source.events[1],kind:'unknown'}]},
+    {...source,events:[source.events[0],{...source.events[1],time_ns:null}]},
+    {...source,events:[source.events[0],{...source.events[1],frame:1001}]},
+    {...source,info:{...source.info,frames:1000}}
+  ]) {
+    const refused=diagnoseEvents(incomplete,ending);
+    assert.equal(refused.status,'unavailable'); assert.equal(refused.final_gate_release_frame,null);
+    assert.equal(refused.mix_settle_after_final_release_seconds,null); assert.equal(refused.voices,undefined);
+  }
+  const legacy={info:{fs:8000,voices:1},events:[
+    {kind:'on',voice:0,time_ns:0},{kind:'off',voice:0,time_ns:125000000}]};
+  assert.equal(diagnoseEvents(legacy,ending).status,'available');
+  assert.equal(diagnoseEvents({...legacy,info:{...legacy.info,events:3}},ending).status,'unavailable');
+  assert.equal(diagnoseEvents({...source,info:{...source.info,events:1},
+    events:[source.events[0],{...source.events[1],lane:0}]}).final_gate_release_frame,1000);
+  pcm[7999] = -33;
+  assert.equal((await analyzePCM(source,{truePeak:false})).ending.below_threshold_from_frame,null);
+  checks += 5;
 }
 // Named section peaks share whole-record interpolation context, including
 // selections across the FFT core boundary and overlapping/silent sections.

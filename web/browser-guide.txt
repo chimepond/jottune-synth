@@ -133,6 +133,27 @@ this is validation, not audio verification. Its source-map pointers and advisory
 indices still refer to the original score. Listen or Verify remains a separate call.
 This measures a new performance through the effects, not independent additive
 stems of the original: shared returns, dynamics and preceding audio can change.
+For a balance table in one call, use await IntFM.analyzeParts(score, {sections}).
+The report contains post-effects solo sample peaks (dBFS) and integrated loudness
+(LUFS), overall and per section. Null means the measurement is undefined, e.g.
+a section below the loudness gate. Each solo has its own effects history. The
+loaded song and its verification stay available. Pass streams:['lead','bass']
+to remeasure only changed parts. Sections accept {name,startSeconds}; omit
+endSeconds to include the tail to the exact last frame.
+
+For a browser automation tool with a short call limit, start this once:
+  window.balanceJob = {state:'running', controller:new AbortController()};
+  const job = window.balanceJob;
+  IntFM.analyzeParts(score, {signal:job.controller.signal,
+    onProgress:p=>{job.progress=p}, sections:[{name:'whole', startSeconds:0}]})
+    .then(report=>{job.report=report;job.state='done'},
+          error=>{job.error=error.message;job.state='failed'});
+  // Return immediately. Later calls read balanceJob.state and balanceJob.progress.
+  // On completion read balanceJob.report.parts. To stop: balanceJob.controller.abort().
+A terminal can run node agent.mjs "$SITE" parts song.score.json --sections
+'[{"name":"whole","startSeconds":0}]' as one command; stdout is JSON, stderr
+shows progress. Ctrl-C cancels. Only one part is rendered at a time.
+
 To compare each part through the effects in a named passage, render solos in
 sequence. Choose sections within the score duration. For example:
   const sections = [{name:'opening',startSeconds:0,endSeconds:1}];
@@ -284,6 +305,12 @@ IntFM.toWav(result, provenance={}): Blob preserving PCM, with WAV INFO credits.
 For a text-only browser session, send the editable score and the verified playback
 link. To transfer a large saved TL or URL through bounded text replies, call:
   await IntFM.exportChunk(saved, {format:'tl', offset:0, bytes:6000})
+For a text-only bridge, format:'tl-deflate' returns smaller chunks of the same
+canonical TL compressed with zlib/DEFLATE. Concatenate the decoded base64 chunks
+in offset order, verify payloadSha256, inflate once (e.g. node:zlib inflateSync),
+then check documentSha256 against the inflated bytes. Save song (.tl) or a verified
+hosted link is simpler when the tool can return a file or a short URL.
+
 Use format:'link' for the UTF-8 bytes of the pinned URL from IntFM.toLink(saved).
 Defaults are 'tl', offset 0 and 6000 bytes. Each request accepts 1..7200 bytes.
 Decode each reply's base64 separately and verify its chunkSha256. Request the

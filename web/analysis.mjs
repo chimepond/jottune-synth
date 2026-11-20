@@ -75,7 +75,7 @@ class Loudness {
   }
 }
 function accumulator(channels, fs, firstFrame, lastFrame, name, loudness) {
-  return {name, firstFrame, lastFrame, frames:0, peak:0, peakFrame:null, peakChannel:null,
+  return {name, firstFrame, lastFrame, frames:0, cross:0, peak:0, peakFrame:null, peakChannel:null,
     channels:Array.from({length:channels}, () => ({peak:0, peakFrame:null, sum:0, squares:0, rails:0})),
     meter:loudness ? new Loudness(fs) : null};
 }
@@ -104,7 +104,7 @@ function summarize(acc, fs, divisor = 32768) {
     peak_seconds:acc.peakFrame === null ? null : acc.peakFrame / fs, peak_channel:acc.peakChannel,
     rms_dbfs:db(n ? Math.sqrt(energy / (n * acc.channels.length)) / divisor : 0),
     full_scale_samples:per_channel.reduce((sum, c) => sum + c.full_scale_samples, 0),
-    per_channel, loudness:acc.meter?.result() ?? null};
+    ...(acc.bands ? {bands:acc.bands} : {}), per_channel, loudness:acc.meter?.result() ?? null};
 }
 
 // Band-limited 4x interpolation estimate, using the existing radix-two FFT.
@@ -168,6 +168,82 @@ async function truePeak(pcm, fs, channels, peak, peakFrame, peakChannel, options
   return {...values(best,bestFrame,bestChannel),sections:selected.map(section => values(section.best,section.frame,section.channel))};
 }
 
+// Non-overlapping FFT blocks on the record grid. Shared full blocks are
+// transformed once even if selections overlap. A partial selection boundary
+// uses just its own frames, with the remainder zero-padded.
+async function measureBands(pcm, fs, channels, selections, options) {
+  const size = 2048, plan = fftPlan(size), edges = [20,60,250,1000,4000,16000];
+  const names = ['sub','bass','lowmid','mid','high'];
+  const bins = edges.map(hz => Math.min(size / 2 + 1, Math.ceil(hz * size / fs)));
+  const totals = selections.map(() => new Float64Array(names.length));
+  const frames = pcm.length / channels;
+  for (let start = 0; start < frames; start += size) {
+    const cache = new Map();
+    for (const [index,section] of selections.entries()) {
+      const first = Math.max(start, section.firstFrame), last = Math.min(start + size, section.lastFrame);
+      if (first >= last) continue;
+      const key = (first - start) * (size + 1) + last - start;
+      let sums = cache.get(key);
+      if (!sums) {
+        sums = new Float64Array(names.length);
+        for (let c = 0; c < channels; ++c) {
+          plan.real.fill(0); plan.imaginary.fill(0);
+          for (let frame = first; frame < last; ++frame)
+            plan.real[plan.reverse[frame - start]] = pcm[frame * channels + c] / 32768;
+          transformFFT(plan);
+          for (let b = 0; b < names.length; ++b) for (let k = bins[b]; k < bins[b + 1]; ++k)
+            sums[b] += (k === size / 2 ? 1 : 2) * (plan.real[k] ** 2 + plan.imaginary[k] ** 2);
+        }
+        cache.set(key, sums);
+      }
+      for (let b = 0; b < sums.length; ++b) totals[index][b] += sums[b];
+    }
+    if (start % (64 * size) === 0) {await pause(); cancelled(options);}
+  }
+  selections.forEach((section,index) => {
+    const sum = totals[index].reduce((a,b) => a + b, 0);
+    const scale = size * (section.lastFrame - section.firstFrame) * channels;
+    section.bands = names.map((name,b) => ({name, minimum_hz:edges[b], maximum_hz:edges[b + 1],
+      mean_square_fs2:scale && bins[b] < bins[b + 1] ? totals[index][b] / scale : null,
+      energy_fraction:sum && bins[b] < bins[b + 1] ? totals[index][b] / sum : null}));
+  });
+}
+
+function stereoSummary(acc, scope) {
+  const {frames,cross} = acc;
+  if (acc.channels.length !== 2 || !frames) return null;
+  const [l, r] = acc.channels, cov = cross - l.sum * r.sum / frames;
+  const left = Math.max(0, l.squares - l.sum ** 2 / frames), right = Math.max(0, r.squares - r.sum ** 2 / frames);
+  const scale = 4 * frames * 32768 ** 2;
+  const mid = Math.max(0, (l.squares + r.squares + 2 * cross) / scale);
+  const side = Math.max(0, (l.squares + r.squares - 2 * cross) / scale);
+  return {correlation:left && right ? Math.max(-1, Math.min(1, cov / Math.sqrt(left * right))) : null,
+    left_minus_right_db:l.squares && r.squares ? 10 * Math.log10(l.squares / r.squares) : null,
+    mid_mean_square_fs2:mid, side_mean_square_fs2:side,
+    mid_rms_dbfs:db(Math.sqrt(mid)), side_rms_dbfs:db(Math.sqrt(side)),
+    side_energy_fraction:mid + side ? side / (mid + side) : null,
+    mid_side_method:'M=(L+R)/2; S=(L-R)/2; includes DC; ' + scope};
+}
+
+// The open endpoint is the exact integer frame count, even when converting
+// frames/fs back to frames would round up by one in binary floating point.
+export function analysisSectionFrames(section, index, fs, frames) {
+  requireValue(section && typeof section === 'object' && !Array.isArray(section), 'Each section must be an object.');
+  requireValue(Object.keys(section).every(k => ['name','startSeconds','endSeconds'].includes(k)),
+    'Analysis section '+(index+1)+' accepts name, startSeconds and endSeconds.');
+  requireValue(['startSeconds','endSeconds'].every(k => section[k] === undefined || Number.isFinite(section[k])),
+    'Section endpoints must be finite seconds. Omit endSeconds to use the exact record end.');
+  requireValue(section.name === undefined || (typeof section.name === 'string' && section.name.length <= 120), 'Invalid section name.');
+  const name = section.name ?? `section-${index + 1}`;
+  const duration = frames / fs;
+  const start = section.startSeconds ?? 0, end = section.endSeconds ?? duration;
+  const first = Math.ceil(start * fs), last = end === duration ? frames : Math.ceil(end * fs);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end > duration || last <= first)
+    throw Error(`Analysis section ${index + 1} (${JSON.stringify(name)}) must select frames inside the record. `
+      + `Requested ${start} to ${end} s. The exact record end is ${frames} frames at ${fs} Hz (${duration} s). Omit endSeconds to use it.`);
+  return {name, first, last};
+}
+
 export async function analyzePCM(result, options = {}) {
   cancelled(options);
   const {pcm, sampleRate:fs, channels} = result || {};
@@ -182,6 +258,7 @@ export async function analyzePCM(result, options = {}) {
   const step = Math.max(1, Math.round(windowSeconds * fs));
   const every = integer(options.yieldEveryFrames ?? 32768, 256, 1048576, 'analysis yield interval');
   const selections = options.sections ?? [];
+  requireValue(options.bands === undefined || typeof options.bands === 'boolean', 'bands must be a boolean.');
   requireValue(options.truePeak === undefined || typeof options.truePeak === 'boolean', 'truePeak must be a boolean.');
   requireValue(Array.isArray(selections) && selections.length <= analysisLimits.sections, 'At most 32 analysis sections are supported.');
   // One/two components are loudspeaker/ear channels. Raw ambisonic components
@@ -191,30 +268,32 @@ export async function analyzePCM(result, options = {}) {
   const windows = Array.from({length:Math.ceil(frames / step)}, (_, i) =>
     accumulator(channels, fs, i * step, Math.min(frames, (i + 1) * step), `window-${i + 1}`, audible));
   const sections = selections.map((section, i) => {
-    requireValue(section && typeof section === 'object', 'Each section must be an object.');
-    const start = section.startSeconds ?? 0, end = section.endSeconds ?? frames / fs;
-    requireValue(Number.isFinite(start) && Number.isFinite(end) && start >= 0 && end > start && end <= frames / fs,
-      'Section bounds must select a nonempty interval inside rendered audio.');
-    requireValue(section.name === undefined || (typeof section.name === 'string' && section.name.length <= 120), 'Invalid section name.');
-    const first = Math.ceil(start * fs), last = Math.ceil(end * fs);
-    requireValue(last > first, 'Section has no sample frames.');
-    return accumulator(channels, fs, first, last, section.name ?? `section-${i + 1}`, audible);
+    const {name,first,last} = analysisSectionFrames(section, i, fs, frames);
+    return accumulator(channels, fs, first, last, name, audible);
   });
+  if (options.bands && audible) await measureBands(pcm, fs, channels, [full, ...sections], options);
   const samples = new Float64Array(channels);
-  let cross = 0, lastNonzero = -1;
+  const endWindow = accumulator(channels, fs, Math.max(0, frames - Math.round(.1 * fs)), frames, 'ending', false);
+  const threshold = 32768 * .001; // -60 dBFS in amplitude.
+  let lastNonzero = -1, lastAboveThreshold = -1;
   for (let frame = 0; frame < frames; ++frame) {
     let power = 0;
     for (let c = 0; c < channels; ++c) {
       const x = samples[c] = pcm[frame * channels + c];
       if (x) lastNonzero = frame;
+      if (Math.abs(x) > threshold) lastAboveThreshold = frame;
       if (filters) {const y = filters[c][1].push(filters[c][0].push(x / 32768)); power += y * y;}
     }
     if (channels === 1) power *= 2; // Existing public meter/playback convention: dual mono.
-    if (channels === 2) cross += samples[0] * samples[1];
+    const cross = channels === 2 ? samples[0] * samples[1] : 0;
+    full.cross += cross;
     add(full, samples, frame, power, 32768, true);
     add(windows[Math.floor(frame / step)], samples, frame, power, 32768, true);
-    for (const section of sections) if (frame >= section.firstFrame && frame < section.lastFrame)
+    for (const section of sections) if (frame >= section.firstFrame && frame < section.lastFrame) {
+      section.cross += cross;
       add(section, samples, frame, power, 32768, true);
+    }
+    if (frame >= endWindow.firstFrame) add(endWindow, samples, frame, power, 32768, true);
     if ((frame + 1) % every === 0) {cancelled(options); await pause(); cancelled(options);}
   }
   cancelled(options);
@@ -234,22 +313,6 @@ export async function analyzePCM(result, options = {}) {
       sectionPeaks = sections.map(() => ({...interpolated}));
     }
   }
-  let stereo = null;
-  if (channels === 2 && frames) {
-    const [l, r] = full.channels, cov = cross - l.sum * r.sum / frames;
-    const left = Math.max(0, l.squares - l.sum ** 2 / frames), right = Math.max(0, r.squares - r.sum ** 2 / frames);
-    // Averaged M/S, including DC, in mean-square full-scale units. These
-    // describe this complete PCM record, not a stereo-width quality target.
-    const scale = 4 * frames * 32768 ** 2;
-    const mid = Math.max(0, (l.squares + r.squares + 2 * cross) / scale);
-    const side = Math.max(0, (l.squares + r.squares - 2 * cross) / scale);
-    stereo = {correlation:left && right ? Math.max(-1, Math.min(1, cov / Math.sqrt(left * right))) : null,
-      left_minus_right_db:l.squares && r.squares ? 10 * Math.log10(l.squares / r.squares) : null,
-      mid_mean_square_fs2:mid, side_mean_square_fs2:side,
-      mid_rms_dbfs:db(Math.sqrt(mid)), side_rms_dbfs:db(Math.sqrt(side)),
-      side_energy_fraction:mid + side ? side / (mid + side) : null,
-      mid_side_method:'M=(L+R)/2; S=(L-R)/2; includes DC; whole record'};
-  }
   return {...whole, status:'available', scope:'final_pcm', sample_rate:fs, channels,
     duration_seconds:frames / fs, loudness:{integrated_lufs:loudness?.integrated_lufs ?? null,
       short_term_max_lufs:loudness?.short_term_max_lufs ?? null,
@@ -258,37 +321,59 @@ export async function analyzePCM(result, options = {}) {
       method:audible ? 'BS.1770-4 K weighting from frame zero; 400 ms/100 ms, -70 LUFS and -10 LU gates' : null,
       reason:audible ? null : 'Raw field components have no speaker loudness assignment.',
       ...interpolated},
-    stereo, trailing_digital_silence_seconds:(frames - 1 - lastNonzero) / fs,
-    windows:windows.map(window => summarize(window, fs)), sections:sections.map((section,index) => ({...summarize(section, fs),...sectionPeaks[index]})),
+    stereo:stereoSummary(full, 'whole record'),
+    ending:{threshold_dbfs:-60, last_above_threshold_frame:lastAboveThreshold < 0 ? null : lastAboveThreshold,
+      below_threshold_from_frame:lastAboveThreshold + 1 < frames ? lastAboveThreshold + 1 : null,
+      final_window_frames:endWindow.frames, final_window_peak_dbfs:db(endWindow.peak / 32768),
+      final_window_rms_dbfs:summarize(endWindow, fs).rms_dbfs},
+    trailing_digital_silence_seconds:(frames - 1 - lastNonzero) / fs,
+    windows:windows.map(window => summarize(window, fs)), sections:sections.map((section,index) => ({...summarize(section, fs),stereo:stereoSummary(section, 'section'),...sectionPeaks[index]})),
     units:{samples:'PCM16 LSB', level:'dBFS', loudness:'LUFS', time:'seconds', channel:'zero based'},
     notes:['Window/section K weighting retains complete preceding filter history; gates apply within each selection.',
       'Full-scale samples count PCM rails, not internal clipping or limiter activity.',
       'Digital silence means exact zero; release tails and musical quality are not inferred.']};
 }
 
-export function diagnoseEvents(result) {
+export function diagnoseEvents(result, ending) {
   const structure = songStructure(result);
-  const events = result?.events, count = Number(result?.info?.voices), fs = Number(result?.sampleRate || result?.info?.fs);
-  if (!Array.isArray(events) || result?.eventsError || !Number.isInteger(count) || count < 1 || count > 64 ||
-      events.length > analysisLimits.events || !Number.isSafeInteger(fs) || fs <= 0)
-    return {status:'unavailable', scope:'native_event_gates', reason:'Complete native events and voice geometry are required.', structure};
+  const unavailable = reason => ({status:'unavailable', scope:'native_event_gates', reason, structure,
+    final_gate_release_frame:null, mix_settle_after_final_release_seconds:null});
+  const uint = (value, maximum = Number.MAX_SAFE_INTEGER) =>
+    (typeof value === 'number' || typeof value === 'string' && /^\d+$/.test(value)) &&
+    Number.isSafeInteger(Number(value)) && Number(value) >= 0 && Number(value) <= maximum;
+  const info = result?.info, events = result?.events;
+  const count = Number(info?.voices), fs = Number(result?.sampleRate ?? info?.fs);
+  if (!Array.isArray(events) || result.eventsError || result.eventsTruncated || events.length > analysisLimits.events ||
+      !uint(info?.voices,64) || !count || !uint(fs,0xffffffff) || !fs ||
+      (info.fs !== undefined && (!uint(info.fs,0xffffffff) || Number(info.fs) !== fs)) ||
+      (info.frames !== undefined && (!uint(info.frames,0xffffffff) || !Number(info.frames))))
+    return unavailable('Complete native events and valid voice geometry are required.');
+  // Older callers may provide gate times without frame totals or pitch fields.
+  // An explicit native count covers authored rows only; named lanes are generated.
+  if (info.events !== undefined && (!uint(info.events,analysisLimits.events) ||
+      events.filter(event => event?.lane === undefined).length !== Number(info.events)))
+    return unavailable('Native event count differs from the complete listing.');
   const voices = Array.from({length:count}, (_, voice) => ({voice, streams:new Set(), patches:new Set(),
     onsets:0, offs:0, held_retriggers:0, same_frame_on_off:0, first_on_seconds:null, last_on_seconds:null,
     explicit_position_before_first_on:false, held:false, positioned:false, lastOnFrame:null}));
   const streams = new Map();
-  // Native EVENT rows and GEN_EVENT rows arrive in two ordered lists; sorting
-  // by native time is stable, retaining tie order. Generated voices are reserved.
+  // Native authored rows precede generated rows within the same sample frame.
   const ordered = [];
   for (const event of events) {
-    if (!['on','off','pos','move','pitch','control'].includes(event.kind)) continue;
-    const voice = Number(event.voice), ns = Number(event.time_ns);
-    if (!Number.isInteger(voice) || !voices[voice] || !Number.isSafeInteger(ns) || ns < 0)
-      return {status:'unavailable', scope:'native_event_gates', reason:'Incomplete native event fields.', structure};
-    ordered.push({...event, voice, ns});
+    if (!event || !['on','off','pos','move','pitch','control'].includes(event.kind) ||
+        !uint(event.voice,count-1) || !uint(event.time_ns) ||
+        (['on','pitch'].includes(event.kind) && event.freq_millihz !== undefined && !uint(event.freq_millihz,0xffffffff)))
+      return unavailable('Incomplete or unsupported native event fields.');
+    const ns = Number(event.time_ns), frame = Number(BigInt(ns) * BigInt(fs) / 1000000000n);
+    if (!Number.isSafeInteger(frame) || (info.frames !== undefined && frame >= Number(info.frames)) ||
+        (event.frame !== undefined && (!uint(event.frame) || Number(event.frame) !== frame)))
+      return unavailable('Native event timing is inconsistent with the recording.');
+    ordered.push({...event, voice:Number(event.voice), ns, frame});
   }
-  ordered.sort((a, b) => a.ns - b.ns);
+  ordered.sort((a, b) => a.frame - b.frame);
+  let finalReleaseFrame = null;
   for (const event of ordered) {
-    const voice = voices[event.voice], frame = Number(BigInt(event.ns) * BigInt(fs) / 1000000000n);
+    const voice = voices[event.voice], frame = event.frame;
     if (event.kind === 'pos' || event.kind === 'move') voice.positioned = true;
     if (event.kind === 'on') {
       const stream = String(event.stream ?? (event.lane === undefined ? 'unknown' : `generator-${event.lane}`));
@@ -302,6 +387,7 @@ export function diagnoseEvents(result) {
       if (!streams.has(stream)) streams.set(stream, {stream, voices:new Set(), onsets:0});
       streams.get(stream).voices.add(event.voice); ++streams.get(stream).onsets;
     } else if (event.kind === 'off') {
+      if (voice.held) finalReleaseFrame = frame;
       ++voice.offs; if (voice.held && voice.lastOnFrame === frame) ++voice.same_frame_on_off;
       voice.held = false;
     }
@@ -314,7 +400,12 @@ export function diagnoseEvents(result) {
       count:voice.held_retriggers, message:'Note-on retriggers a voice whose previous gate is still on.'});
     if (voice.held) warnings.push({code:'gate_at_end', voice:voice.voice, message:'The last native gate remains on at the record end.'});
   }
-  return {status:'available', scope:'native_event_gates', structure, voices:voices.map(({held,positioned,lastOnFrame,...voice}) =>
+  if (structure.status !== 'available' || voices.some(voice => voice.held)) finalReleaseFrame = null;
+  const settledFrame = ending?.below_threshold_from_frame;
+  return {status:'available', scope:'native_event_gates', structure, final_gate_release_frame:finalReleaseFrame,
+    mix_settle_after_final_release_seconds:finalReleaseFrame !== null && Number.isInteger(settledFrame)
+      ? Math.max(0, settledFrame - finalReleaseFrame) / fs : null,
+    voices:voices.map(({held,positioned,lastOnFrame,...voice}) =>
     ({...voice, streams:[...voice.streams], patches:[...voice.patches], gate_at_end:held})),
     streams:[...streams.values()].map(stream => ({...stream, voices:[...stream.voices]})), warnings,
     sends:{status:'unavailable', reason:'This native event export labels sends as generic control rows; bus identity is not exposed.'},

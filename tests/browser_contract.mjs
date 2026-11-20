@@ -436,6 +436,8 @@ test('WebMCP returns score pointers, native refusals and file-only results for d
   const result = toolValue(response); assert.equal(response.isError,undefined);
   assert.equal(result.url,null); assert.match(result.urlError,/no kept release/); assert.equal(result.urlBytes,undefined);
   assert.equal(result.tl.verified,true);
+  const compressed = toolValue(await tool.execute({documentSha256:result.tl.documentSha256,offset:0,format:'tl-deflate'}))['tl-deflate'];
+  assert.deepEqual((await import('node:zlib')).inflateSync(Buffer.from(compressed.base64,'base64')),Buffer.from(canonical));
   const link = await tool.execute({documentSha256:result.tl.documentSha256,offset:0,format:'link'});
   assert.match(toolValue(link).error,/unavailable/);
 }));
@@ -2398,6 +2400,24 @@ test('pending and failed hosted descriptors stop before protected raw downloads 
   assert.doesNotMatch(linkProblem(failed),/private|unknown-internal/);
 });
 
+test('a cold pending submission identifies its hash and keeps an unrelated favorite out of the player', async () => {
+  const sha='f'.repeat(64),href='https://player.invalid/web/r/'+sha;
+  await withPage(async page=>{
+    await nextTurn();
+    for (const id of ['selected-song-title','mobile-song','rail-selected-song','loaded-song'])
+      assert.equal(page.get(id).textContent,'Submitted song · '+sha.slice(0,12));
+    assert.match(page.get('song-detail').textContent,/waiting for independent technical verification/);
+    assert.match(page.get('status').textContent,/waiting for independent technical verification/);
+    assert.equal(selectedSongId(page),'');assert.equal(page.get('mobile-play').disabled,true);
+    assert.equal(page.get('rail-load').disabled,true);assert.equal(page.audioCreations(),0);
+    assert(!page.requests.some(value=>value.endsWith('/r/'+sha+'.tl')));
+    await page.get('library-featured').click();await nextTurn();
+    assert.equal(page.get('selected-song-title').textContent,'Second song');
+    assert.equal(page.get('rail-load').disabled,false);assert.equal(page.get('mobile-play').disabled,true);
+  },{href,catalog:curatedCatalog(),network:{['/web/api/records/'+sha]:{
+    record_sha256:sha,renderer_release:'test',record_url:'r/'+sha+'.tl',details_withheld:true,verification:{status:'pending'}}}});
+});
+
 test('verified hosted links remain playable while approval and advisory warnings affect no direct download',()=>withPage(async page=>{
   const loaded=await page.api.loadLink('https://player.invalid/preview/r/'+'a'.repeat(64));
   assert.equal(loaded.recordText,'verified minimal song');
@@ -2959,6 +2979,16 @@ test('chunk exports preserve exact TL and URL bytes and bind each reply to the s
     assert.equal(final.base64,''); assert.equal(final.nextOffset,null);assert.equal(final.chunkSha256,digest(Buffer.alloc(0)));
     await assert.rejects(page.api.exportChunk(result,{format,offset:expected.length+1}),/exceeds/);
   }
+  const compressed = [];
+  let nextOffset = 0, compressedHash;
+  while (nextOffset !== null) {
+    const chunk = await page.api.exportChunk(result,{format:'tl-deflate',offset:nextOffset,bytes:23});
+    compressed.push(Buffer.from(chunk.base64,'base64'));nextOffset=chunk.nextOffset;
+    assert.equal(chunk.documentSha256,checksum);compressedHash=chunk.payloadSha256;
+  }
+  const payload = Buffer.concat(compressed);
+  assert.equal(digest(payload),compressedHash);
+  assert.deepEqual((await import('node:zlib')).inflateSync(payload),Buffer.from(canonical));
   const first=await page.api.exportChunk();assert.equal(Buffer.from(first.base64,'base64').length,6000);
   const damaged=Buffer.from(first.base64,'base64');damaged[0]^=1;assert.notEqual(digest(damaged),first.chunkSha256);
   for(const opts of [null,[],{format:'wav'},{offset:-1},{offset:0.5},{offset:Number.MAX_SAFE_INTEGER+1},{bytes:0},{bytes:7201},{bytes:'2'},{unexpected:true}])
@@ -2969,6 +2999,22 @@ test('chunk exports preserve exact TL and URL bytes and bind each reply to the s
   await assert.rejects(page.api.exportChunk({...result,canonical:modified}),/SHA-256 differs/);
   assert.equal(page.requests.length,requests);assert.equal(page.downloaded.length,0);assert.equal(page.copied.length,0);assert.equal(page.audioCreations(),0);
 }));
+test('part measurements report progress, support interruption, and keep the prepared mix',()=>withPage(async page=>{
+  const current=await complete(page,'original mix',validResult()),progress=[],controller=new AbortController();
+  const run=page.api.analyzeParts({streams:['lead']},{onProgress:p=>progress.push(p),signal:controller.signal});
+  await nextTurn();const worker=page.workers.at(-1);
+  assert.equal(worker.request.operation,'analyze-parts');
+  await assert.rejects(page.api.analyzeParts({streams:['lead']}),/already running/);
+  worker.reply({type:'part-progress',stream:'lead',completed:0,total:1});
+  assert.deepEqual(progress,[{stream:'lead',completed:0,total:1}]);
+  controller.abort();await assert.rejects(run,/cancelled/);assert(worker.terminated);
+  worker.onmessage({data:{type:'part-progress',stream:'late',completed:0,total:1}});assert.equal(progress.length,1);
+  assert.strictEqual(page.api.result(),current);
+  const second=page.api.analyzeParts({streams:['lead']});await nextTurn();
+  page.workers.at(-1).reply({type:'part-report',parts:[]});assert.deepEqual((await second).parts,[]);
+  assert.strictEqual(page.api.result(),current);
+}));
+
 test('phone score file import and pasted score compile and prepare silently with advisory report',()=>withPage(async page=>{
   page.ready({default:'test',engines:[{id:'test',identity:'int-fm-synth 1'}]});
   const score=JSON.parse(readFileSync(new URL('../web/starter.score.json',import.meta.url),'utf8'));

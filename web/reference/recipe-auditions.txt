@@ -1,0 +1,111 @@
+Copyright (c) 2026 Nenad Micic
+SPDX-License-Identifier: Apache-2.0
+
+RECIPE AUDITIONS AND REVERB DECAY
+
+These stereo measurements use renderer 2026-10-26-8443cd5 at 48000 Hz.
+Each default recipe plays one A4 (440 Hz) at velocity_q15 24000, held for
+one second and released for one second. One voice, default position, no sends
+or master effects. Peak is the highest absolute output sample in dBFS.
+Loudness is the integrated K-weighted, gated measurement in analyze(). A4 is
+a comparison pitch even for percussion. Other pitches, playing techniques,
+dynamics, gates, routing and envelopes can give very different measurements.
+
+Recipe                    Peak dBFS  Integrated LUFS
+bassoon                       -18.0            -17.7
+bell                          -17.1            -25.1
+boogie-bass                   -13.3            -21.1
+brass                         -23.1            -24.7
+celesta                       -14.6            -24.5
+clap                          -14.5            -26.4
+clap-white                    -23.9            -40.7
+clarinet                      -19.0            -17.5
+clav-rs                       -21.2            -33.6
+cowbell                       -20.6            -31.1
+crash                         -17.1            -24.7
+drone                         -40.0            -45.7
+ep-4op                        -16.9            -24.0
+ep-body                       -19.1            -24.2
+ep-tine                       -29.7            -40.9
+epiano                        -21.8            -29.5
+flute                         -14.0            -17.8
+glide                         -29.7            -29.8
+harmonica                     -16.3            -18.2
+harp                          -22.9            -35.6
+harpsichord                   -17.0            -26.1
+hat                           -20.8            -36.7
+hat-fixed                     -20.2            -35.1
+hat-ring                      -24.4            -44.0
+hollow                        -17.0            -18.0
+kick                          -12.4            -26.7
+kick-drop                     -18.5            -35.2
+marimba                       -16.1            -29.0
+motor-bass                    -16.3            -27.2
+night-pad                     -42.6            -48.2
+noise-tail                    -41.0            -40.9
+oboe                          -20.0            -20.6
+open-hat                      -21.2            -31.8
+organ                         -20.6            -22.4
+pin-click                     -41.5            -64.8
+planet-1.4                    -16.3            -21.7
+planet-2.76                   -18.3            -24.0
+planet-3.17                   -20.3            -27.7
+plucked-bass                  -16.3            -22.6
+round-bass                    -17.3            -21.0
+saw                           -18.0            -19.3
+snare-3op                     -10.3            -29.6
+snare-body                    -12.9            -33.2
+snare-white                   -19.4            -39.6
+snare-wires                   -13.2            -25.3
+square                        -15.0            -13.4
+star                          -23.2            -35.4
+strings                       -27.9            -31.7
+sub-bass                      -15.7            -20.4
+tick                          -22.9            -44.5
+timpani                       -17.3            -28.2
+tock                          -21.0            -39.5
+tom                           -16.3            -15.6
+tooth                         -18.6            -29.0
+triangle                      -11.0            -11.3
+vox                           -20.3            -23.9
+vox-formant                   -34.3            -33.1
+warm-pad                      -25.9            -30.5
+warm-pad-x                    -25.9            -30.5
+wood-drum                     -18.6            -32.3
+
+To repeat one row in the player, choose the recipe and renderer you want:
+
+  const id = 'flute';
+  const score = {version:1, fs:48000, clock:{bars:1, meter:[{bar:1, quarters:4}],
+    tempo:[{bar:1,bpm:120}], ramp:'step', tail_ns:0},
+    declarations:'space stereo\nblock 64\nnear 100\nrecipe voice '+id+'\n',
+    streams:['part'], voices:['voice'], events:[{kind:'note', stream:'part',
+      voice:0, at:0, duration:2, pitch:{midi:69}, velocity_q15:24000}]};
+  const draft = await IntFM.compose(score);
+  const take = await IntFM.listen(draft.draftText, {release:draft.rendererRelease});
+  const {pcm} = await IntFM.analyze(take, {truePeak:false});
+  console.log(pcm.sample_peak_dbfs, pcm.loudness.integrated_lufs);
+
+REVERB DECAY EXAMPLE
+
+One wood-drum hit, same sample rate, pitch and stereo setup. Use reverb ROOM
+DAMP, reverb send level_q15 32768 at time 0, velocity_q15 30000, note duration
+"1/4" quarter (125 ms), three 4/4 bars at 120 BPM and a 2-second tail.
+Measure stereo RMS in adjacent 100 ms windows. The reference window starts
+300 ms after the note-on. The columns give the elapsed seconds from that
+reference to the first later window 20 or 40 dB below it.
+
+   ROOM   DAMP    20 dB drop (s)    40 dB drop (s)
+    600    300               0.5               1.1
+    600    600               0.5               1.1
+    720    300               0.8               1.5
+    720    600               0.8               1.5
+    850    300               1.1               2.4
+    850    600               1.1               2.4
+    930    300               1.6               3.5
+    930    600               1.6               3.4
+
+For this hit, ROOM shifts the broadband decay substantially. DAMP also
+changes the spectrum, even when these broadband times coincide at 100 ms
+resolution. Choose the tail from a measurement of the actual last notes,
+sends and effects in your song.

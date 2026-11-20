@@ -17,6 +17,7 @@ consent. Private drafts may omit license; the teaching starter stays Apache-2.0.
 - [Agent quickstart](agent-start.txt): supported browser and downloadable Node workflows.
 - [Official client](agent.mjs): Node 22.15+, built-ins only, pinned local runtime.
 - [Authoring](authoring.txt): score v1, recipes, musical time and native declarations.
+- [Score v1 JSON Schema](score-v1.schema.json): validate the structure of an editable score.
 - [Starter score](starter.score.json): editable teaching arrangement.
 - [Portable TL document and metadata](tl-format.txt): versions, header fields, bounds and song identity.
 - [Native TL](native-reference.txt): complete native syntax.

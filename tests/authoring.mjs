@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {spawnSync} from 'node:child_process';
-import {compileScore, selectScoreStreams, pitchMillihz, recipe, recipeGain, listRecipes, ScoreError} from '../web/authoring.mjs';
+import {compileScore, selectScoreStreams, pitchMillihz, recipe, recipeGain, listRecipes, authoringDescription, ScoreError} from '../web/authoring.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const sourceRoot = process.env.JOTTUNE_SOURCE_ROOT || root;
@@ -96,9 +96,32 @@ for (const {id,carriers} of listRecipes()) for (const delta of [6,-6,0,.05,.15,-
   s.declarations='recipe tone '+id+' '+carriers.map(c=>c.tweak+'='+delta).join(' ')+'\n';
   s.events=[note()];cases.push(s);
 }
+// The expanded velocity field, Python comment formatting and half-even rounding
+// are checked for every hosted preset and all of its operators.
+for (const {id,velocity} of listRecipes()) {
+  const s=base();s.name='Recipe velocity '+id;s.events=[note()];
+  s.declarations='recipe tone '+id+' c_level=1 '+velocity.map((op,i)=>
+    op.tweak+'='+[121.5,-401,55.5,500][i]).join(' ')+'\n';
+  cases.push(s);
+}
 for (const delta of ['0.049999999999999','0.050000000000001','0.0000001','-0.0000001','1234567','-1234567']) {
   const s=base();s.declarations='recipe tone flute c_level='+delta+'\n';s.events=[note()];cases.push(s);
 }
+// Each accepted event kind in the compiler fixtures must match its structural
+// schema alternative, including the exact fields allowed on that kind.
+const scoreSchema=JSON.parse(fs.readFileSync(path.join(root,'web/score-v1.schema.json'),'utf8'));
+const eventShapes=new Map(scoreSchema.definitions.event.oneOf.map(row=>[row.properties.kind.const,row]));
+assert.deepEqual(new Set(eventShapes.keys()),new Set(authoringDescription().eventKinds));
+assert.equal(authoringDescription().structuralSchema,'score-v1.schema.json');
+const seenKinds=new Set();
+for(const s of cases) for(const event of s.events) {
+  const shape=eventShapes.get(event.kind);
+  assert(shape,event.kind);
+  assert.deepEqual(Object.keys(event).sort(),[...shape.required].sort());
+  assert.equal(shape.maxProperties,shape.required.length);
+  seenKinds.add(event.kind);
+}
+assert.deepEqual(seenKinds,new Set(eventShapes.keys()));
 const starter = JSON.parse(fs.readFileSync(path.join(root,'web/starter.score.json'),'utf8')); cases.push(starter);
 const python = String.raw`
 import importlib.util,json,pathlib,sys
@@ -115,13 +138,14 @@ for source in json.load(sys.stdin):
  lowered=sc.lower_score(sc.validate_score(source),composer=cp,engine=sys.argv[2],statements=statements)
  view=sc.inspect_source(source,composer=cp)
  out.append(dict(authored_tl=lowered['authored_tl'],line_map=lowered['line_map'],counts=lowered['counts'],length_ns=lowered['length_ns'],quarter_extent=lowered['quarter_extent'],advisories=view['advisories']))
-carriers={}
+carriers={};velocity={}
 for name in cp.RECIPES:
  c,m,_,extra=cp.recipe(name);source=cp.RECIPES[name];meta=source[3] if len(source)>3 else {}
  ops=[source[0],source[1]]+meta.get('more',[])
+ velocity[name]=[op.get('vel',0) for op in ops]
  carriers[name]=[dict(operator=i,tweak=('c','m','o2','o3')[i]+'_level',attenuationDb=op.get('level',0.0))
                  for i,op in enumerate(ops) if extra.get('carriers',1)>>i&1]
-print(json.dumps(dict(cases=out,pitches=[cp.mhz_m(i) for i in range(128)],carriers=carriers)))
+print(json.dumps(dict(cases=out,pitches=[cp.mhz_m(i) for i in range(128)],carriers=carriers,velocity=velocity)))
 `;
 const oracle = spawnSync(process.env.PYTHON || 'python3',['-B','-c',python,sourceRoot,engine],
   {input:JSON.stringify(cases),encoding:'utf8',maxBuffer:8*1024*1024});
@@ -148,6 +172,7 @@ bad(s=>{s.about=['\udc00'];});bad(s=>{s.clock.tail_ns=600000000000;});
 bad(s=>{s.about=['x'.repeat(1048576)];});bad(s=>{s.events=Array.from({length:8193},()=>note());});
 for (const row of ['hash 0','voice 5 tone','0 first 0 off','recipe tone unknown','recipe tone epiano time=2']) bad(s=>{s.declarations=row;});
 for (const row of ['recipe tone flute m_level=6','recipe tone ep-4op m_level=6','recipe tone ep-4op o3_level=6',
+  'recipe tone flute c_vel=3 c_vel=4','recipe tone flute o2_vel=120','recipe tone flute m_vel=NaN',
   'recipe tone flute c_level=6 c_level=3','recipe tone flute c_level=1e2','recipe tone flute c_level=NaN'])
   bad(s=>{s.declarations=row;});
 const cycle=base(); cycle.about=[cycle]; assert.throws(()=>compileScore(cycle,{engine}),ScoreError);
@@ -155,8 +180,13 @@ const future=base();future.declarations+='future-native-field 1\n';
 assert.throws(()=>compileScore(future,{engine}),ScoreError);
 assert.match(compileScore(future,{engine,statements:[...['space','block','near','patch','future-native-field'].map(name=>({row:'STATEMENT',section:'header',name}))]}).draftText,/future-native-field 1/);
 assert.equal(/^recipe /m.test(recipe('epiano','ep')),false);
-for (const {id,carriers} of listRecipes()) {
+for (const {id,carriers,velocity} of listRecipes()) {
   assert.deepEqual(carriers,expected.carriers[id],id+' carrier metadata');
+  assert.deepEqual(velocity.map(op=>op.sensitivityQ8),expected.velocity[id],id+' native velocity sensitivities');
+  velocity.forEach((op,i)=>{
+    assert.equal(op.tweak,['c_vel','m_vel','o2_vel','o3_vel'][i]);assert.equal(op.operator,i);
+    assert(Math.abs(op.halfVelocityGainDb - 20*Math.log10((512-expected.velocity[id][i])/512)) <= .005);
+  });
   assert.equal(recipeGain(id,'tone',0),recipe(id,'tone'));
   assert.equal(recipeGain(id,'tone',-6),recipe(id,'tone',Object.fromEntries(carriers.map(c=>[c.tweak,6]))));
   const loudest=Math.min(...carriers.map(c=>c.attenuationDb)),quietest=Math.max(...carriers.map(c=>c.attenuationDb-120));
@@ -203,6 +233,22 @@ try {
   assert.ok(Number(/peak=(\d+)/.exec(saved.stdout)[1])>0);assert.deepEqual(fs.readFileSync(canonical),fs.readFileSync(replay));
   const wrong=fs.readFileSync(canonical,'utf8').replace(/^hash .+$/m,'hash 0000000000000000');fs.writeFileSync(draft,wrong);
   const mismatch=spawnSync(harness,['--play',draft],{encoding:'utf8'});assert.equal(mismatch.status,3);assert.match(mismatch.stdout,/match=NO/);
+  // Freeze modulation sensitivity so the observed peak ratio isolates carrier velocity.
+  function flutePeak(cVel, noteVelocity) {
+    const s=base();s.clock.bars=1;
+    s.declarations='recipe tone flute c_vel='+cVel+' m_vel=-150\n';
+    s.events=[{...note(),velocity_q15:noteVelocity}];
+    fs.writeFileSync(draft,compileScore(s,{engine}).draftText);
+    const output=run(['--play',draft,'--metrics']).stdout;
+    return Number(/peak=(\d+)/.exec(output)[1]);
+  }
+  const full=flutePeak(0,32767);
+  assert(full>1000);
+  for (const [delta,sensitivity] of [[-100,0],[0,100],[120,220],[156,256]]) {
+    assert.equal(flutePeak(delta,32767),full);
+    const expectedGain=1-(sensitivity/256)*(1-16384/32767);
+    assert(Math.abs(flutePeak(delta,16384)/full-expectedGain)<.002);
+  }
   // Every hosted default preset is a native-accepted complete instrument.
   for(const {id} of listRecipes()) {
     const s=base();s.clock.bars=1;s.declarations='recipe tone '+id+'\n';s.events=[note()];
