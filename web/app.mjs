@@ -373,7 +373,7 @@ function invalidate(retainProfile = false, retainRelease = false) {
   spectrumController?.abort(); spectrumController = null; spectrumResult = null;
   $('spectrum-cancel').hidden = true;
   $('spectrum-status').textContent = 'Render a song to inspect its sound.';
-  for (const id of ['play', 'stop', 'wav-download', 'spectrum', 'tl-download', 'svg-download', 'share', 'show-qr', 'png-download', 'verify-saved', 'analyze-audio']) $(id).disabled = true;
+  for (const id of ['play', 'stop', 'wav-download', 'spectrum', 'tl-download', 'svg-download', 'share', 'link-download', 'show-qr', 'png-download', 'verify-saved', 'analyze-audio']) $(id).disabled = true;
   $('verdict').textContent = 'Not ready'; $('verdict').className = 'badge';
   $('timeline').textContent = 'Render the current record to inspect it.'; $('facts').replaceChildren();
   $('raw').textContent = 'No output for the current text.'; $('spectrogram').hidden = true;
@@ -1242,7 +1242,7 @@ function show(result) {
   const rendered = !!result.pcm && result.verdict === 'valid';
   for (const id of ['play', 'stop']) $(id).disabled = !canAudition(result);
   for (const id of ['wav-download', 'spectrum']) $(id).disabled = !rendered;
-  for (const id of ['tl-download', 'svg-download', 'share', 'show-qr']) $(id).disabled = !(result.verdict === 'valid' && result.recordSha256);
+  for (const id of ['tl-download', 'svg-download', 'share', 'link-download', 'show-qr']) $(id).disabled = !(result.verdict === 'valid' && result.recordSha256);
   $('png-download').disabled = true; $('spectrogram').hidden = true;
   $('analyze-audio').disabled = result.verdict !== 'valid' || !result.pcm?.length;
   $('verify-saved').disabled = !(result.verdict === 'valid' && result.canonical?.length && !result.verified);
@@ -1962,6 +1962,16 @@ $('share').onclick = async () => {
     catch { if (lastResult === result) { openQr(url, {label:linkLabel, trigger:$('share'), selectLink:true}); playerStatus('Clipboard access is unavailable. The song link is selected in the dialog; copy it manually. Nothing was published.'); } return; }
     if (lastResult !== result) return;
     playerStatus(portable ? 'Portable record link copied. Nothing was published.' : 'Song link copied for this exact saved version. Nothing was published.');
+  } catch (error) { if (lastResult === result) playerStatus(error.message); }
+};
+$('link-download').onclick = async () => {
+  const result = lastResult;
+  if (result?.verdict !== 'valid') return;
+  try {
+    const {url} = await loadedSongLink(result);
+    if (lastResult !== result) return;
+    download(new Blob([url, '\n'], {type:'text/plain;charset=utf-8'}), downloadName('link.txt'));
+    playerStatus('Song link file ready to save.');
   } catch (error) { if (lastResult === result) playerStatus(error.message); }
 };
 $('show-qr').onclick = async () => {

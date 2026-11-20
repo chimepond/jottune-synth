@@ -66,7 +66,8 @@ For pasted JSON, open Song source and choose Prepare pasted input. Once ready,
 choose Verify saved render in Song source and wait for Verified. Use Save editable
 score (.score.json) to keep the source for revisions and Save song (.tl) to
 download the verified timeline. Use Copy song link (Share song link on supported
-touch devices) for the playable URL. Tap Play only if you want to listen.
+touch devices) for the playable URL. For a long URL, use Save song link (.txt)
+and send the downloaded file as an attachment. Tap Play only if you want to listen.
 
 For a measured report, open Record details → Audio measurements → Analyze audio
 after verification. Wait for analysis to finish, then choose Copy report for your

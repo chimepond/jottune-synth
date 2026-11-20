@@ -603,7 +603,7 @@ async function prepared(page, pending, text, result = validResult({play: {match:
   return page.api.result();
 }
 function invalidActions(page) {
-  for (const id of ['play', 'share', 'show-qr', 'tl-download']) {
+  for (const id of ['play', 'share', 'link-download', 'show-qr', 'tl-download']) {
     assert.equal(page.get(id).disabled, true, id + ' must be disabled');
     page.get(id).click();
   }
@@ -764,7 +764,7 @@ test('agent render updates the visible result and export controls', () => withPa
   assert.match(page.get('raw').textContent, /PLAY match=yes/);
   assert.match(page.get('timeline').innerHTML, /^<svg /);
   assert(page.get('facts').children.some(child => child.textContent === result.recordSha256));
-  for (const id of ['play', 'share', 'show-qr', 'tl-download']) assert.equal(page.get(id).disabled, false);
+  for (const id of ['play', 'share', 'link-download', 'show-qr', 'tl-download']) assert.equal(page.get(id).disabled, false);
 }));
 
 test('local portable and legacy files show compatibility versions and declared metadata in Facts',async()=>{
@@ -894,11 +894,12 @@ test('clear removes player text and result and announces invalidation', () => wi
   invalidActions(page);
 }));
 
-test('clearing during portable-link preparation cannot show or copy the old song', () => withPage(async page => {
+test('clearing during portable-link preparation cannot show, copy or download the old song', () => withPage(async page => {
   await complete(page);
-  const qr=page.get('show-qr').onclick(), copy=page.get('share').onclick();
+  const qr=page.get('show-qr').onclick(), copy=page.get('share').onclick(), save=page.get('link-download').onclick();
   page.api.clear();
-  await Promise.all([qr,copy]);
+  await Promise.all([qr,copy,save]);
+  assert.equal(page.downloaded.length,0);
   assert.equal(page.api.result() ?? null,null);
   assert.equal(page.copied.length,0);
   assert.equal(page.get('status').textContent,'Record cleared.');
@@ -2674,6 +2675,14 @@ test('metadata-only edits export portable links that reopen the complete edited 
       const url=await page.api.toLink(result),part=await page.api.exportChunk(result,{format:'link'});
       assert(new URL(url).hash.startsWith(fragment));assert.equal(part.nextOffset,null);
       assert.equal(Buffer.from(part.base64,'base64').toString('utf8'),url);
+      const copies = page.copied.length;
+      await page.get('link-download').click();
+      const file = page.downloaded.at(-1);
+      assert.equal(file.type, 'text/plain;charset=utf-8');
+      assert.deepEqual(Buffer.from(await file.arrayBuffer()), Buffer.from(url + '\n'));
+      assert.match(page.filenames.at(-1), /\.link\.txt$/);
+      assert.equal(page.copied.length, copies);
+      assert.equal(page.audioCreations(), 0);
       await page.get('share').click();assert.equal(page.copied.at(-1),url);
       const reopened=await resolveLink(url,document.baseURI);
       assert.equal(reopened.recordText,text);assert.equal(await documentSha256(reopened.recordText),result.documentSha256);
@@ -2694,6 +2703,10 @@ test('touch devices share the song link through the native sheet, and the clipbo
     assert.match(shared[0].url, /#song=songs%2Ffirst-standard.tl&sha=a{64}&catalog=catalog%2Fall-1.json$/);
     assert.equal(page.copied.length, 0);
     assert.equal(page.get('status').textContent, 'Song link shared for this exact saved version. Nothing was published.');
+    await page.get('link-download').click();
+    assert.equal(shared.length, 1, 'Saving a URL file on touch devices leaves the share sheet closed');
+    assert.equal(page.copied.length, 0);
+    assert.equal(await page.downloaded.at(-1).text(), shared[0].url + '\n');
     failure = Object.assign(Error('Share canceled'), {name:'AbortError'});
     await page.get('share').click();
     assert.equal(page.copied.length, 0, 'Closing the sheet copies nothing');

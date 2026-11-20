@@ -77,12 +77,24 @@ async function report(page) {
   const text=await page.locator('#agent-report-manual').inputValue(), value=JSON.parse(text);
   compact(value,text); return value;
 }
-async function canonicalDownload(page) {
-  const pending=page.waitForEvent('download'); await page.locator('#tl-download').click(); const download=await pending;
-  assert.match(download.suggestedFilename(),/\.tl$/); assert.equal(await download.failure(),null);
+async function downloadBytes(page, button, filename) {
+  const [download]=await Promise.all([page.waitForEvent('download'),button.tap()]);
+  assert.match(download.suggestedFilename(),filename); assert.equal(await download.failure(),null);
   const stream=await download.createReadStream(), chunks=[];
   for await(const chunk of stream) chunks.push(chunk);
-  return Buffer.concat(chunks).toString('utf8');
+  return Buffer.concat(chunks);
+}
+async function canonicalDownload(page) {
+  return (await downloadBytes(page,page.locator('#tl-download'),/\.tl$/)).toString('utf8');
+}
+async function savedIdentity(page) {
+  await openDetails(page,'source-panel');
+  await page.locator('#verify-saved').tap();
+  await page.waitForFunction(()=>/^Verified/.test(document.getElementById('verdict').textContent));
+  return page.evaluate(()=>{
+    const {documentSha256,recordSha256,pcmHash,rendererRelease}=window.IntFM.summary();
+    return {documentSha256,recordSha256,pcmHash,rendererRelease:rendererRelease ?? null};
+  });
 }
 async function damagedLink(page,{missingCompression=false}={}) {
   const before={record:await page.locator('#record').inputValue(),facts:await facts(page),verdict:await page.locator('#verdict').textContent()};
@@ -94,7 +106,7 @@ async function damagedLink(page,{missingCompression=false}={}) {
   assert.deepEqual({record:await page.locator('#record').inputValue(),facts:await facts(page),verdict:await page.locator('#verdict').textContent()},before);
   assert(await page.locator('#play').isEnabled());
 }
-async function withPage(name,run,{reader=false,missingCompression=false,delayFile=false,intercept,width=390}={}) {
+async function withPage(name,run,{reader=false,missingCompression=false,delayFile=false,intercept,width=390,url=base}={}) {
   const context=await browser.newContext({viewport:{width,height:844},hasTouch:true,isMobile:true,
     javaScriptEnabled:!reader,serviceWorkers:'block',acceptDownloads:true});
   const forbidden=[],errors=[],methods=new Set();
@@ -124,7 +136,7 @@ async function withPage(name,run,{reader=false,missingCompression=false,delayFil
   },{missingCompression,delayFile});
   const page=await context.newPage();page.setDefaultTimeout(45000);page.on('pageerror',error=>errors.push(error.message));
   try {
-    await page.goto(base,{waitUntil:'domcontentloaded'});
+    await page.goto(url,{waitUntil:'domcontentloaded'});
     if(!reader) await page.waitForFunction(()=>typeof document.getElementById('prepare-input')?.onclick==='function');
     await run(page,context);
     assert.deepEqual(forbidden,[],'HTTP methods must remain GET/HEAD.');assert.deepEqual(errors,[],'Unexpected page errors.');
@@ -209,6 +221,39 @@ try {
     await page.locator('#play').tap();await page.waitForFunction(()=>window.__handoffAudioContexts>0);
     await page.waitForFunction(()=>document.getElementById('play').textContent==='Pause');await page.locator('#stop').tap();
   });
+
+  let savedURL, originalIdentity;
+  await withPage('touch download preserves a long portable song URL byte for byte',async page=>{
+    const button=page.getByRole('button',{name:'Save song link (.txt)',exact:true});
+    assert(await button.isDisabled());
+    const score=fixture('Long link handoff');
+    score.clock.bars=6;
+    score.events=Array.from({length:1536},(_,index)=>({
+      kind:'note',at:index+'/64',duration:'1/64',stream:'lead',voice:0,
+      pitch:{midi:48+(index*7%35)},velocity_q15:14000+(index*3911%16000)
+    }));
+    await upload(page,score); await ready(page,score.metadata.title);
+    originalIdentity=await savedIdentity(page);
+    assert.match(originalIdentity.documentSha256,/^[a-f0-9]{64}$/);
+    assert.match(originalIdentity.recordSha256,/^[a-f0-9]{64}$/);
+    assert.match(originalIdentity.pcmHash,/^[a-f0-9]+$/);
+    const expected=await page.evaluate(()=>window.IntFM.toLink());
+    const bytes=await downloadBytes(page,button,/\.link\.txt$/);
+    assert(bytes.equals(Buffer.from(expected+'\n','utf8')),'Downloaded bytes must contain the complete URL and one LF.');
+    savedURL=bytes.toString('utf8').slice(0,-1);
+    assert(savedURL.length>13000,'Exercise a URL long enough to be truncated when copied into chat.');
+    const url=new URL(savedURL);
+    assert.match(url.hash,/^#v1\./);
+    assert.equal(url.searchParams.get('release'),originalIdentity.rendererRelease);
+    assert.equal(await audioCount(page),0);
+    console.log(`Saved ${savedURL.length} URL characters on ${type}.`);
+  });
+
+  await withPage('a fresh browser context reopens the saved URL and verifies the same render',async page=>{
+    await ready(page,'Long link handoff');
+    assert.deepEqual(await savedIdentity(page),originalIdentity);
+    assert.equal(await audioCount(page),0);
+  },{url:savedURL});
 
   await withPage('320px layout fits initial page, prepared score and manual report',async page=>{
     await mobileLayout(page,'320px initial');

@@ -242,7 +242,8 @@ For pasted JSON, open Song source and choose Prepare pasted input. Once ready,
 choose Verify saved render in Song source and wait for Verified. Use Save editable
 score (.score.json) to keep the source for revisions and Save song (.tl) to
 download the verified timeline. Use Copy song link (Share song link on supported
-touch devices) for the playable URL. Tap Play only if you want to listen.
+touch devices) for the playable URL, or choose Save song link (.txt) and attach
+the file to your chat. Tap Play only if you want to listen.
 
 For a measured report, open Record details → Audio measurements → Analyze audio
 after verification. Wait for analysis to finish, then choose Copy report for your
@@ -361,7 +362,9 @@ The static workbench includes no publishing service. The legacy #r form reads
 r/<sha256>.tl directly. ?release= names an exact registry entry; a conflicting
 service descriptor is refused. Unrelated anchors such as #agent do not load TL.
 
-Copy song link and Song QR code are beside the Player's exports. On touch
+Copy song link, Save song link (.txt) and Song QR code are beside the Player's
+exports. The .link.txt file contains the complete playable URL and a trailing
+newline, like the command-line export. Use it when chat shortens a link. On touch
 devices whose browser can share links, the button reads Share song link and
 opens the system share sheet; otherwise it copies the link. Exact library
 versions use compact references to existing TL bytes with their content identity.
