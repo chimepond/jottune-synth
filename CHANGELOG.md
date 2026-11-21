@@ -1,5 +1,7 @@
 # Changelog
 
+Copyright (c) 2026 Nenad Micic. SPDX-License-Identifier: Apache-2.0
+
 ## 0.1.0 beta
 
 - Compose and revise a musical-time score in the player, verify saved TL, and

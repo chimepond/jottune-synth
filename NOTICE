@@ -1,6 +1,11 @@
 JotTune Synth
 Copyright (c) 2026 Nenad Micic
 
+JotTune Synth and the ChimePond song-sharing platform are part of Nenad Micic's
+independent software and digital hobby project. Project home: https://www.nmic.app/
+Contact: chimepond@nmic.app
+ChimePond organizations: https://github.com/chimepond and https://huggingface.co/chimepond
+
 The DX7 import helper and invariant checks adapt lookup tables and LFO constants
 from music-synthesizer-for-android (msfa):
 Copyright 2012 Google Inc.

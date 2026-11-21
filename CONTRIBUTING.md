@@ -1,5 +1,7 @@
 # Code contributions
 
+Copyright (c) 2026 Nenad Micic. SPDX-License-Identifier: Apache-2.0
+
 Describe the problem and intended behavior, and include the relevant checks in
 any pull request. Keep synthesis integer-only and preserve existing TL output;
 changing established audio or public format behavior requires explicit review.

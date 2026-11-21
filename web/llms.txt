@@ -29,10 +29,20 @@ consent. Private drafts may omit license; the teaching starter stays Apache-2.0.
 - [Static checksums](agent-manifest.json) and [renderer registry](engines.json):
   artifact integrity and kept versions; same-origin hashes are not independent authenticity.
 
-All URLs stay relative to this player base. Creating and rendering a song is
+All instrument references above are relative to this player base. Creating and rendering a song is
 local. This player does not upload songs.
 For offline work, retain a complete cache from online setup, or use `--bundle`
 with a complete trusted bundle when supplied. A bundle can initialize a cold
 cache without network setup. Offline use cannot establish current revocation.
 A render with a computed hash is not full verification. Score solo/mute is a rerender through effects,
 not additive mix stems. No genre, loudness or width target is prescribed.
+
+## Project and contact
+
+JotTune Synth and documentation copyright (c) 2026 Nenad Micic. SPDX-License-Identifier: Apache-2.0
+
+JotTune is the instrument. ChimePond is the song-sharing platform. Both belong to
+Nenad Micic’s [independent software and digital hobby project](https://www.nmic.app/).
+The JotTune site, www.jottune.app, will open with the source release.
+Contact [chimepond@nmic.app](mailto:chimepond@nmic.app).
+ChimePond organizations: [GitHub](https://github.com/chimepond) and [Hugging Face](https://huggingface.co/chimepond).

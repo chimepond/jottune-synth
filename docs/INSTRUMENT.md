@@ -1997,6 +1997,8 @@ and [native reader](../src/host/harness.c).
 
 ## Native instrument and timeline reference
 
+Reference documentation © 2026 Nenad Micic. SPDX-License-Identifier: Apache-2.0
+
 This section describes the implemented timeline reader, not proposed engine families. Text examples below are fragments to combine with the enclosing session header and voice/events shown here. Preserve a generated record with its engine identity and replay hash after validating a composition.
 
 The approved composition build is `SINE_BITS=12 EXP_BITS=10 PHASE64=1 ENV64=1`, with `FM_FB_AVG=1` and `FM_CTL=64`. These are the Makefile defaults. Work at 48000 or 44100 Hz unless deliberately testing another supported rate. The record's `engine` line must exactly match the executable, including its table hash; obtain it from that build's emitted record or the composer, never invent it. Source: [Makefile](../Makefile), [reader and CLI](../src/host/harness.c).

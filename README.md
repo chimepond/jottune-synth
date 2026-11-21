@@ -82,7 +82,16 @@ Repository links become available when the public beta is published.
 
 See [security and rights reporting](SECURITY.md) and [code contributions](CONTRIBUTING.md).
 
+## Project and contact
+
+JotTune and ChimePond are part of Nenad Micic’s [independent software and digital hobby project](https://www.nmic.app/).
+The JotTune site, www.jottune.app, will open with the source release.
+Contact [chimepond@nmic.app](mailto:chimepond@nmic.app). Find ChimePond on
+[GitHub](https://github.com/chimepond) and [Hugging Face](https://huggingface.co/chimepond).
+
 ## Licence
+
+JotTune Synth © 2026 Nenad Micic.
 
 Code and included examples are Apache-2.0 unless a file states otherwise.
 See [NOTICE](NOTICE) for adapted third-party tables. Third-party components
