@@ -385,6 +385,11 @@ links under the application's path prefix: r/<sha256> and s/<submission-id>.
 Those service links require api/records/<sha256> or api/submissions/<id> to
 return {record_sha256, renderer_release, record_url}. record_url stays within
 that service's origin and prefix. Rendering checks the requested canonical hash.
+When a shared song is preparing, opening its page or using IntFM.prepareLink
+checks for verified audio automatically. Play becomes available when ready.
+After about 21 minutes of visible checks, reopen the link to check again.
+IntFM.loadLink returns the current status immediately on a pending link (error
+with verificationStatus "pending").
 The static workbench includes no publishing service. The legacy #r form reads
 r/<sha256>.tl directly. ?release= names an exact registry entry; a conflicting
 service descriptor is refused. Unrelated anchors such as #agent do not load TL.

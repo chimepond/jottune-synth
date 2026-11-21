@@ -1097,6 +1097,21 @@ test('loading a catalog variant checks the declared canonical SHA before enablin
   assert.equal(page.get('play').disabled, true); assert.equal(page.get('tl-download').disabled, true);
 }, {catalog:curatedCatalog(),network:{'/web/songs/second.tl':'different canonical fixture'}}));
 
+test('Browse all distinguishes a packaged song from a listed submission in the active render',()=>withPage(async page=>{
+  const sha='a'.repeat(64),uploaded={kind:'standard',path:'/r/'+sha+'.tl',record_sha256:sha,
+    shareUrl:'/r/'+sha,rendererRelease:'test',publication:{listed:true,reviewStatus:'approved'}};
+  const packaged=await prepared(page,page.get('song-load').click(),'packaged',validResult({recordSha256:'b'.repeat(64)}));
+  assert.deepEqual(packaged.source,{kind:'library',recordSha256:'b'.repeat(64)});
+  for (const id of ['collection','genre','model','tempo']) {
+    const select=page.get('song-'+id);Object.defineProperty(select,'options',{get(){return this.children;}});
+  }
+  page.api.setLibrarySource(async()=>({songs:[{id:'submitted:'+sha,title:'A submitted song',
+    collection:'Submitted songs',variants:[uploaded],defaultKind:'standard'}],next:null}));
+  await page.get('library-all').click();await nextTurn();selectSong(page,'submitted:'+sha);
+  const result=await prepared(page,page.get('song-load').click(),'uploaded');
+  assert.deepEqual(result.source,{kind:'publication',recordSha256:sha,listed:true,reviewStatus:'approved'});
+},{catalog:curatedCatalog(),network:{'/web/songs/second.tl':'packaged',['/r/'+'a'.repeat(64)+'.tl']:'uploaded'}}));
+
 test('song catalog defaults to Keys when available and otherwise Standard', () => withPage(async page => {
   assert.equal(selectedSongId(page), 'songs/first.tl');
   assert.equal(page.get('song-variant').value, 'keys');
@@ -2406,16 +2421,85 @@ test('a cold pending submission identifies its hash and keeps an unrelated favor
     await nextTurn();
     for (const id of ['selected-song-title','mobile-song','rail-selected-song','loaded-song'])
       assert.equal(page.get(id).textContent,'Submitted song · '+sha.slice(0,12));
-    assert.match(page.get('song-detail').textContent,/waiting for independent technical verification/);
-    assert.match(page.get('status').textContent,/waiting for independent technical verification/);
+    assert.equal(page.get('song-detail').textContent,'Preparing audio… Playback will become available here automatically.');
+    assert.equal(page.get('status').textContent,page.get('song-detail').textContent);
     assert.equal(selectedSongId(page),'');assert.equal(page.get('mobile-play').disabled,true);
     assert.equal(page.get('rail-load').disabled,true);assert.equal(page.audioCreations(),0);
     assert(!page.requests.some(value=>value.endsWith('/r/'+sha+'.tl')));
     await page.get('library-featured').click();await nextTurn();
     assert.equal(page.get('selected-song-title').textContent,'Second song');
     assert.equal(page.get('rail-load').disabled,false);assert.equal(page.get('mobile-play').disabled,true);
+    page.expire(5000);await nextTurn();
+    assert.equal(page.requests.filter(value=>value.endsWith('/api/records/'+sha)).length,1);
+    assert.doesNotMatch(page.get('rail-status').textContent,/automatically/);
   },{href,catalog:curatedCatalog(),network:{['/web/api/records/'+sha]:{
     record_sha256:sha,renderer_release:'test',record_url:'r/'+sha+'.tl',details_withheld:true,verification:{status:'pending'}}}});
+});
+
+test('a pending share link prepares exactly once when verified, waits in a hidden tab, and requires Play', async () => {
+  const sha='a'.repeat(64), descriptor={record_sha256:sha,renderer_release:'test',record_url:'r/'+sha+'.tl',listed:false,review:{status:'pending'}};
+  let requests=0;
+  await withPage(async page=>{
+    const pending=page.api.prepareLink('/web/r/'+sha);await nextTurn();
+    assert.equal(requests,1);assert.match(page.get('status').textContent,/Preparing audio…/);
+    page.setHidden(true);page.expire(5000);await nextTurn();
+    assert.equal(requests,1);assert.equal(page.workers.length,0);assert.equal(page.get('mobile-play').disabled,true);
+    page.setHidden(false);await nextTurn();assert.equal(requests,2);assert.equal(page.workers.length,0);
+    page.expire(10000);
+    const result=await prepared(page,pending,'ready record');
+    assert.equal(requests,3);
+    assert.deepEqual(result.source,{kind:'publication',recordSha256:sha,listed:false,reviewStatus:'pending'});
+    assert.equal(page.requests.filter(value=>value.endsWith('/r/'+sha+'.tl')).length,1);
+    assert.equal(page.get('play').disabled,false);assert.equal(page.audioCreations(),0);
+    page.get('record').value='new local draft';page.get('record').dispatch('input');
+    const local=await complete(page,'new local draft');assert.equal(local.source,undefined);
+  },{network:{['/web/api/records/'+sha]:options=>{
+    assert.equal(options.cache,'no-store');
+    requests++;
+    if(requests===2) return new Response('',{status:503});
+    return Response.json({...descriptor,verification:{status:requests===1?'pending':'verified'}});
+  },['/web/r/'+sha+'.tl']:'ready record'}});
+});
+
+test('a pending link stops on failure, withdrawal, or exhaustion without fetching audio', async () => {
+  const sha='b'.repeat(64),endpoint='/web/api/records/'+sha;
+  for (const outcome of ['failed','withdrawn','still pending']) {
+    let requests=0;
+    await withPage(async page=>{
+      const pending=page.api.prepareLink('/web/r/'+sha);
+      const rejected=assert.rejects(pending,error=>{
+        const text=error.linkMessage;
+        return outcome==='withdrawn'?/not available/.test(text):outcome==='failed'?/silent-render/.test(text):/Reopen this song link/.test(text);
+      });
+      await nextTurn();
+      for (let i=0;i<(outcome==='still pending'?24:1);i++) {
+        page.expire(Math.min(60000,5000*2**i));await nextTurn();
+      }
+      await rejected;
+      assert.equal(requests,outcome==='still pending'?25:2);assert.equal(page.workers.length,0);
+      assert.equal(page.get('mobile-play').disabled,true);assert.equal(page.audioCreations(),0);
+      assert(!page.requests.some(url=>url.endsWith('/r/'+sha+'.tl')));
+    },{network:{[endpoint]:()=>{
+      requests++;
+      if (outcome==='withdrawn' && requests>1) return new Response('',{status:410});
+      const status=outcome==='failed' && requests>1?'failed':'pending';
+      return Response.json({record_sha256:sha,renderer_release:'test',record_url:'r/'+sha+'.tl',verification:{status,failure:'silent-render'}});
+    }}});
+  }
+});
+
+test('editing while verification is in flight prevents a stale fetch and render', async () => {
+  const sha='a'.repeat(64),retry=deferred();let count=0;
+  const descriptor={record_sha256:sha,renderer_release:'test',record_url:'r/'+sha+'.tl'};
+  await withPage(async page=>{
+    const pending=page.api.prepareLink('/web/r/'+sha);
+    const cancelled=assert.rejects(pending,/Loading cancelled/);
+    await nextTurn();page.expire(5000);await nextTurn();assert.equal(count,2);
+    page.get('record').value='new local draft';page.get('record').dispatch('input');
+    retry.resolve(Response.json({...descriptor,verification:{status:'verified'}}));await cancelled;
+    assert.equal(page.get('record').value,'new local draft');assert.equal(page.workers.length,0);
+    assert(!page.requests.some(url=>url.endsWith('/r/'+sha+'.tl')));
+  },{network:{['/web/api/records/'+sha]:()=>++count===1?Response.json({...descriptor,verification:{status:'pending'}}):retry.promise}});
 });
 
 test('verified hosted links remain playable while approval and advisory warnings affect no direct download',()=>withPage(async page=>{
@@ -2463,6 +2547,7 @@ test('a profile checks a linked source identity separately from its derived iden
     sourceRecordSha256:'a'.repeat(64), recordSha256:'b'.repeat(64)})); await pending;
   assert.equal(page.api.result().verdict, 'valid');
   assert.equal(page.api.result().recordSha256, 'b'.repeat(64));
+  assert.deepEqual(page.api.result().source,{kind:'publication',recordSha256:'a'.repeat(64),listeningProfile:true});
   assert.equal(page.get('tl-download').disabled, false);
   page.get('listening-profile').value = '75';
   pending = page.get('profile-apply').click(); await nextTurn();
@@ -2470,6 +2555,7 @@ test('a profile checks a linked source identity separately from its derived iden
     sourceRecordSha256:'c'.repeat(64), recordSha256:'a'.repeat(64)})); await pending;
   assert.match(page.api.result().verdict, /record identity differs/);
   assert.equal(page.api.result().canonical.length, 0);
+  assert.equal(page.api.result().source,undefined);
   assert.equal(page.get('tl-download').disabled, true);
 }, {network:{
   ['/preview/api/records/' + 'a'.repeat(64)]:{record_sha256:'a'.repeat(64),renderer_release:'test',record_url:'r/song.tl'},

@@ -101,7 +101,7 @@ export function libraryLink(path, sha, base, release, catalogPage) {
   return url.href;
 }
 
-export async function resolveLink(value, base) {
+export async function resolveLink(value, base, {signal} = {}) {
   const url = httpURL(value, base);
   const release = url.searchParams.has('release') ? options({release: url.searchParams.get('release')}).release : undefined;
   if (url.hash.startsWith('#song=')) {
@@ -112,7 +112,7 @@ export async function resolveLink(value, base) {
     const {path, sha} = libraryReference(fields.get('song'), fields.get('sha'));
     // This is only a bounded metadata hint. Invalid hints never change which
     // TL is fetched or prevent its independent saved-identity verification.
-    return {recordText:await fetchRecord(path, new URL('./', url)), recordSha256:sha, release,
+    return {recordText:await fetchRecord(path, new URL('./', url), {signal}), recordSha256:sha, release,
       libraryPath:path, catalogPage:catalogPageHint(fields.get('catalog'))};
   }
   if (url.hash.startsWith('#v1.')) {
@@ -132,17 +132,18 @@ export async function resolveLink(value, base) {
   }
   if (/^#r=[0-9a-f]{64}$/.test(url.hash)) {
     const recordSha256 = url.hash.slice(3);
-    return {recordText: await fetchRecord('r/' + recordSha256 + '.tl', new URL('./', url)), recordSha256, release};
+    return {recordText: await fetchRecord('r/' + recordSha256 + '.tl', new URL('./', url), {signal}), recordSha256, release, publication:{}};
   }
   const staticRecord = url.pathname.match(/\/records\/([0-9a-f]{64})\.tl$/);
-  if (staticRecord) return {recordText:await fetchRecord(url),recordSha256:staticRecord[1],release};
+  if (staticRecord) return {recordText:await fetchRecord(url, undefined, {signal}),recordSha256:staticRecord[1],release};
   const record = url.pathname.match(/^(.*\/)r\/([0-9a-f]{64})\/?$/);
   const submission = url.pathname.match(/^(.*\/)s\/([A-Za-z0-9_-]{1,128})\/?$/);
-  if (!record && !submission) return {recordText: await fetchRecord(url), release};
+  if (!record && !submission) return {recordText: await fetchRecord(url, undefined, {signal}), release};
   const serviceBase = new URL((record || submission)[1], url);
   const endpoint = new URL('api/' + (record ? 'records/' + record[2] : 'submissions/' + submission[2]), serviceBase);
   if (release) endpoint.searchParams.set('release', release);
-  const descriptor = JSON.parse(await boundedText(await request(endpoint)));
+  const descriptor = JSON.parse(await boundedText(await request(endpoint, {signal, cache:'no-store'})));
+  if (signal?.aborted) throw new DOMException('Loading cancelled.', 'AbortError');
   if (!descriptor || !/^[0-9a-f]{64}$/.test(descriptor.record_sha256)
       || typeof descriptor.record_url !== 'string' || typeof descriptor.renderer_release !== 'string')
     throw Error('The service did not return a complete record descriptor.');
@@ -154,12 +155,15 @@ export async function resolveLink(value, base) {
     throw Error('Record descriptors must reference their own service origin and path prefix.');
   const verificationStatus = descriptor.verification?.status;
   if (verificationStatus === 'pending' || verificationStatus === 'failed') {
-    const error = Object.assign(Error(), {verificationStatus, verificationFailure:descriptor.verification.failure});
+    const error = Object.assign(Error(), {verificationStatus, verificationFailure:descriptor.verification.failure, recordSha256:descriptor.record_sha256});
     error.message = linkProblem(error); throw error;
   }
   if (verificationStatus !== undefined && verificationStatus !== 'verified')
     throw Error('The service returned an invalid verification status.');
-  return {recordText: await fetchRecord(recordURL), recordSha256: descriptor.record_sha256,
+  const publication = {};
+  if (typeof descriptor.listed === 'boolean') publication.listed = descriptor.listed;
+  if (['approved','pending','not_required'].includes(descriptor.review?.status)) publication.reviewStatus = descriptor.review.status;
+  return {recordText: await fetchRecord(recordURL, undefined, {signal}), recordSha256: descriptor.record_sha256, publication,
     release: namedRelease, submissionId: submission?.[2]};
 }
 

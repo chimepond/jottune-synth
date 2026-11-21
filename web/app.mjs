@@ -286,6 +286,7 @@ let mediaTitle = null;
 let spectrumController, spectrumResult, displayView = 'live';
 let liveOnscreen = true;
 let profileBase = null, appliedProfile = null, loadedIdentity = null, linkedMetadata = null, pendingSongLoad = null;
+let hostedSource = null, linkInFlight = null;
 let originalScoreText = null;
 const instrumentView = createInstrumentView($('live-panel'), {onSeek: seconds => seekTo(seconds)});
 instrumentView.setVisible(!document.hidden);
@@ -343,6 +344,7 @@ function busy(value) {
   updateTransport();
 }
 function cancel() {
+  linkInFlight?.controller.abort();
   cancelAnalysis();
   generation++;
   const reject = activeReject; activeReject = null;
@@ -366,7 +368,7 @@ function invalidate(retainProfile = false, retainRelease = false) {
   instrumentView.clear();
   if (!retainProfile) {
     profileBase = null; appliedProfile = null; loadedIdentity = null; loadedSong = null; linkedSelectionActive = false;
-    openingPublication = null;
+    openingPublication = null; hostedSource = null;
     originalScoreText = null; $('score-download').hidden = true;
     linkedMetadata?.controller.abort(); clearTimeout(linkedMetadata?.timer); linkedMetadata = null;
   }
@@ -840,6 +842,14 @@ async function render(recordText, value = {}, {sourceContext, replaySaved = fals
     }
     Object.assign(result, verification(result));
     if (result.verdict === 'valid' && result.canonical?.length) {
+      if (hostedSource) {
+        if (config.profile && result.sourceRecordSha256 === hostedSource.recordSha256)
+          result.source = {...hostedSource,listeningProfile:true};
+        else if (!config.profile && result.recordSha256 === hostedSource.recordSha256)
+          result.source = {...hostedSource};
+        else if (appliedProfile && !config.profile && (sameText || replaySaved) && expected === result.recordSha256)
+          result.source = {...hostedSource,listeningProfile:true};
+      }
       profileBase ||= sourceContext || {text: recordText, release: config.release, expected};
       if (config.profile) {
         appliedProfile = config.profile;
@@ -1431,7 +1441,7 @@ function songChoice(song, label) {
   songChoices.set(song.id,radio);
   radio.addEventListener('change',() => {
     if (!radio.checked || $('song-select').disabled || songChoices.get(song.id) !== radio) return;
-    linkedSelectionActive = false; selectedSongId = song.id;
+    leaveLinkedSelection(); selectedSongId = song.id;
     for (const [id,choice] of songChoices) choice.checked = id === selectedSongId;
     libraryVariants();
   });
@@ -1594,8 +1604,15 @@ function categoryForFilters() {
   }
   return category || categories.find(item => item.id === 'all');
 }
+function leaveLinkedSelection() {
+  if (linkInFlight) {
+    linkInFlight.controller.abort();
+    playerStatus('Selection changed. Load the selected song when ready.');
+  }
+  linkedSelectionActive = false;
+}
 async function librarySongs({cursor = null, reset = true, preserveLinked = false} = {}) {
-  if (!preserveLinked) linkedSelectionActive = false;
+  if (!preserveLinked) leaveLinkedSelection();
   if (!catalogIndex) return;
   if (libraryView === 'all') refreshAdditional();
   libraryRequest?.abort(); libraryRequest = new AbortController();
@@ -1726,7 +1743,7 @@ for (const side of ['left','right']) {
     void jogPage(direction).finally(() => setTimeout(() => {jogWheelCooling = false;},120));
   }, {passive:false});
 }
-$('song-variant').onchange = () => {linkedSelectionActive = false; libraryDetails();};
+$('song-variant').onchange = () => {leaveLinkedSelection(); libraryDetails();};
 function showPlayer() { followSection('player-panel'); }
 function updateMobileSongAction() {
   const load = currentSection === 'library-panel' && $('library-panel').open && !!selectedVariant();
@@ -1756,6 +1773,9 @@ $('song-load').onclick = async () => {
     const text = await loadCatalogText(variant,pending.controller.signal);
     if (requestGeneration !== generation || selectedSong() !== song || selectedVariant() !== variant) return;
     checkRecord(text); $('record').value = text; expectedRecordSha = variant.record_sha256 || null;
+    if (expectedRecordSha) hostedSource = variant.shareUrl ? {kind:'publication',recordSha256:expectedRecordSha,
+      listed:variant.publication?.listed, reviewStatus:variant.publication?.reviewStatus}
+      : {kind:'library',recordSha256:expectedRecordSha};
     loadedSong = {song,variant}; loadedIdentity = {title:song.title,version:variantLabels[variant.kind] || variant.kind};
     return await preparePlayback(text,{release:variant.rendererRelease});
   } catch (error) {if (requestGeneration === generation) playerStatus(error.message);}
@@ -1897,21 +1917,77 @@ async function hydrateLinkedIdentity(context) {
 }
 // The link is resolved and checked before anything is replaced, so a failed
 // link keeps the current song and selection and reports the problem plainly.
-let linkRequest = 0;
+const preparingAudio = 'Preparing audio… Playback will become available here automatically.';
+const linkCheckLimit = 24;
+function waitForLinkCheck(link, delay) {
+  return new Promise((resolve, reject) => {
+    const signal = link.controller.signal;
+    const finish = () => {
+      clearTimeout(timer);
+      link.whenVisible = null;
+      signal.removeEventListener('abort', finish);
+      if (signal.aborted) reject(Error('Loading cancelled.'));
+      else resolve();
+    };
+    const timer = setTimeout(() => {
+      if (document.hidden) link.whenVisible = finish;
+      else finish();
+    }, delay);
+    signal.addEventListener('abort', finish, {once:true});
+    if (signal.aborted) finish();
+  });
+}
 const linkGenerations = new WeakMap();
-async function loadLink(value) {
-  const request = ++linkRequest, requestGeneration = generation, current = () => request === linkRequest && requestGeneration === generation;
+async function resolveForPlayer(value, link, followPending) {
+  for (let check = 0; ; check++) {
+    try { return await resolveLink(value, location.href, {signal:link.controller.signal}); }
+    catch (error) {
+      const pending = error.verificationStatus === 'pending';
+      const interrupted = error.unreachable || error.status === 429 || error.status >= 500;
+      if (!followPending || link.controller.signal.aborted || !(pending || check > 0 && interrupted)) throw error;
+      if (check >= linkCheckLimit) {
+        error.linkMessage = (pending ? 'Audio is still being prepared.' : 'The player could not check whether audio is ready.')
+          + ' Reopen this song link to check again.';
+        throw error;
+      }
+      if (check === 0) {
+        playerStatus(preparingAudio);
+        if (openingPublication && linkedSelectionActive) {
+          openingPublication.label = 'Submitted song · ' + error.recordSha256.slice(0, 12);
+          openingPublication.status = preparingAudio;
+          surfaceLinkedSelection();
+        }
+      }
+      await waitForLinkCheck(link, Math.min(60000, 5000 * 2 ** check));
+    }
+  }
+}
+async function loadLink(value, followPending = false) {
+  linkInFlight?.controller.abort();
+  const link = {controller:new AbortController(),whenVisible:null};
+  linkInFlight = link;
+  const requestGeneration = generation;
+  const current = () => !link.controller.signal.aborted && requestGeneration === generation;
   playerStatus('Loading record…');
   try {
     let loaded;
-    try { loaded = await resolveLink(value, location.href); }
-    catch (error) { if (current()) error.linkMessage = linkProblem(error); throw error; }
+    try { loaded = await resolveForPlayer(value, link, followPending); }
+    catch (error) {
+      if (!current()) throw Error('Loading cancelled.');
+      error.linkMessage ||= linkProblem(error);
+      throw error;
+    }
     if (!current()) throw Error('Loading cancelled.');
     checkRecord(loaded.recordText);
     const cachedMatch=loaded.libraryPath && loaded.recordSha256 ? catalog.cached(loaded.libraryPath,loaded.recordSha256) : null;
     if(cachedMatch)await checkCatalogDocument(loaded.recordText,cachedMatch.variant);
     if (!current()) throw Error('Loading cancelled.');
+    linkInFlight = null;
     invalidate(); linkedSelectionActive = true; surfaceLinkedSelection(); linkGenerations.set(loaded, generation);
+    if (new URL(value, location.href).origin === new URL(location.href).origin && loaded.recordSha256) {
+      if (loaded.publication) hostedSource = {kind:'publication',recordSha256:loaded.recordSha256,...loaded.publication};
+      else if (loaded.libraryPath) hostedSource = {kind:'library',recordSha256:loaded.recordSha256};
+    }
     $('record').value = loaded.recordText; expectedRecordSha = loaded.recordSha256 || null; loadedRelease = loaded.release;
     loadedIdentity = {title:'Linked song',version:'Linked saved version'};
     if (loaded.libraryPath && loaded.recordSha256) {
@@ -1923,13 +1999,21 @@ async function loadLink(value) {
     playerStatus('Record loaded. Listen or verify.');
     return loaded;
   } catch (error) {
-    if (current()) playerStatus((error.linkMessage || error.message)
-      + ($('record').value.trim() ? ' The current song is unchanged.' : ''));
+    if (current()) {
+      const message = error.linkMessage || error.message;
+      playerStatus(message + ($('record').value.trim() ? ' The current song is unchanged.' : ''));
+      if (openingPublication && linkedSelectionActive) {
+        openingPublication.status = message;
+        surfaceLinkedSelection();
+      }
+    }
     throw error;
+  } finally {
+    if (linkInFlight === link) linkInFlight = null;
   }
 }
 async function loadLinkForPlayback(value) {
-  const loaded = await loadLink(value);
+  const loaded = await loadLink(value, true);
   if (linkGenerations.get(loaded) !== generation) throw Error('Loading cancelled.');
   return preparePlayback(loaded.recordText);
 }
@@ -2025,6 +2109,7 @@ document.addEventListener?.('visibilitychange', () => {
   synchronizeLiveAnimation();
   if (document.hidden) pauseSpectrum();
   else {
+    linkInFlight?.whenVisible?.();
     updateTransport();
     if (displayView === 'spectrum') void showSpectrum();
   }
@@ -2103,20 +2188,13 @@ function loadLocationLink(initial = false) {
   const url = new URL(location.href);
   if (!isRecordLink(url)) return;
   const record = initial === true && !url.hash && url.pathname.match(/\/r\/([a-f0-9]{64})\/?$/);
-  let publication;
   if (record) {
     // Pending and failed descriptors deliberately withhold their title.
-    publication = {label:'Submitted song · ' + record[1].slice(0, 12), status:'Checking the submitted song…'};
-    openingPublication = publication;
+    openingPublication = {label:'Submitted song · ' + record[1].slice(0, 12), status:'Checking the submitted song…'};
     linkedSelectionActive = true;
     surfaceLinkedSelection();
   }
-  loadLinkForPlayback(url.href).catch(error => {
-    if (publication && openingPublication === publication && linkedSelectionActive) {
-      publication.status = error.linkMessage || error.message;
-      surfaceLinkedSelection();
-    }
-  });
+  loadLinkForPlayback(url.href).catch(() => {});
 }
 loadLocationLink(true);
 window.addEventListener('hashchange', loadLocationLink);
