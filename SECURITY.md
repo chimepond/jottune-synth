@@ -1,6 +1,6 @@
 # Security and rights reports
 
-Send suspected security vulnerabilities privately to [chimepond@nmic.app](mailto:chimepond@nmic.app).
+Send suspected security vulnerabilities privately to [support@chimepond.com](mailto:support@chimepond.com).
 Include the affected version, a description and a minimal reproduction when safe.
 Do not post credentials, private songs or personal data in a public issue.
 This address also receives copyright, takedown and other rights reports; identify

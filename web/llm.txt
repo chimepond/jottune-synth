@@ -7,5 +7,6 @@ Open the [complete index](llms.txt) beside this file. Start with the
 [quick card](agent-quick.txt) for a working score and the
 [TL format](tl-format.txt) for portable metadata.
 
-For project questions, contact [chimepond@nmic.app](mailto:chimepond@nmic.app).
+For help, email [support@chimepond.com](mailto:support@chimepond.com).
+To contact Nenad about the project, email [chimepond@nmic.app](mailto:chimepond@nmic.app).
 See [llms.txt](llms.txt) for the project homepage and ChimePond organizations.

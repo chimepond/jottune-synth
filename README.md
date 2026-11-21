@@ -86,7 +86,8 @@ See [security and rights reporting](SECURITY.md) and [code contributions](CONTRI
 
 JotTune and ChimePond are part of Nenad Micic’s [independent software and digital hobby project](https://www.nmic.app/).
 The JotTune site, www.jottune.app, will open with the source release.
-Contact [chimepond@nmic.app](mailto:chimepond@nmic.app). Find ChimePond on
+For help, email [support@chimepond.com](mailto:support@chimepond.com).
+To contact Nenad about the project, email [chimepond@nmic.app](mailto:chimepond@nmic.app). Find ChimePond on
 [GitHub](https://github.com/chimepond) and [Hugging Face](https://huggingface.co/chimepond).
 
 ## Licence
