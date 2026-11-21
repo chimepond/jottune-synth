@@ -31,3 +31,7 @@ jobs:
           node --test tests/tl_document.test.mjs tests/profile_worker.mjs
       - name: Browser package lifecycle
         run: python3 -B tests/package_web.py
+      - name: Browser player, song links and offline agent bundles
+        run: |
+          node tests/browser_contract.mjs
+          node --test tests/links_problem.test.mjs tests/agent_bundle.test.mjs

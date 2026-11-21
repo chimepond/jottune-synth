@@ -1,3 +1,6 @@
+Copyright (c) 2026 Nenad Micic
+SPDX-License-Identifier: Apache-2.0
+
 # JotTune agent documentation
 
 Open the [complete index](llms.txt) beside this file. Start with the

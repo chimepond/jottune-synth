@@ -5,6 +5,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {resolveLink, linkProblem} from '../web/links.mjs';
+import {limits} from '../web/policy.mjs';
+import {deflateSync} from 'node:zlib';
 
 const base = 'https://player.invalid/preview/';
 async function failure(link, respond) {
@@ -42,4 +44,10 @@ test('a malformed link is described as incomplete or damaged', async () => {
 test('an aborted request is not relabelled as unreachable', async () => {
   const error = await failure(base + '#r=' + 'c'.repeat(64), () => { throw new DOMException('stop', 'AbortError'); });
   assert.equal(error.name, 'AbortError'); assert.equal(error.unreachable, undefined);
+});
+
+test('a complete portable link reports the decoded song size limit', async () => {
+  const encoded = deflateSync(Buffer.alloc(limits.recordBytes + 1, 65)).toString('base64url');
+  const error = await failure(base + '#v1.' + encoded);
+  assert.match(linkProblem(error), /1 MB input limit/);
 });

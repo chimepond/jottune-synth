@@ -1,6 +1,15 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 beta
+
+- Compose and revise a musical-time score in the player, verify saved TL, and
+  deliver the score, TL and audio. Browser agents can read the quick card, use
+  the local tools and export large artifacts in checked chunks.
+- Solo or mute named score streams and measure their post-effects levels.
+  Recipe audition notes describe how instrument controls affect dynamics.
+- Save a playable song link as a text file. The receiver can reopen it
+  with the named renderer. Offline agent bundles include a selected renderer
+  and its authoring assets for local use.
 
 - Add portable TL metadata headers with uint32 format/engine requirements, strict bounded validation, stable music-body IDs and full-document preservation. Existing archive files and PCM hashes remain unchanged.
 
@@ -54,8 +63,6 @@
   song with a genre or tempo.
 - `tools/fm.py` declares `API_VERSION = 1`, which `jottune-mcp doctor` reports and checks against
   the versions that server supports.
-
-## 0.1.0 beta — prepared, not published
 
 - Preserve eight Favorites and prefer saved Keys ±30° when selecting a song.
 - Integer synthesis, generators, effects and spatial rendering.

@@ -2,16 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 import {limits, options} from './policy.mjs';
 
+class LinkSizeError extends Error {}
+
 async function boundedText(response) {
   if (!response.ok) throw Object.assign(Error('Record request returned ' + response.status), {status:response.status});
-  if (Number(response.headers.get('content-length')) > limits.recordBytes) throw Error('Record exceeds the 1 MB input limit.');
+  if (Number(response.headers.get('content-length')) > limits.recordBytes) throw new LinkSizeError('Record exceeds the 1 MB input limit.');
   const reader = response.body.getReader(), chunks = [];
   let size = 0;
   while (true) {
     const {value, done} = await reader.read();
     if (done) break;
     size += value.length;
-    if (size > limits.recordBytes) { await reader.cancel(); throw Error('Record exceeds the 1 MB input limit.'); }
+    if (size > limits.recordBytes) { await reader.cancel(); throw new LinkSizeError('Record exceeds the 1 MB input limit.'); }
     chunks.push(value);
   }
   const bytes = new Uint8Array(size);
@@ -43,6 +45,7 @@ export async function fetchRecord(value, base, {signal} = {}) {
 // Plain-language text for a link that could not be opened. The thrown error
 // keeps its technical detail for programmatic callers.
 export function linkProblem(error) {
+  if (error instanceof LinkSizeError) return error.message;
   if (error?.portableUnsupported) return 'This browser cannot open compressed song links. Ask for the .tl file and open it in the player.';
   if (Number.isSafeInteger(error?.portableCharacters))
     return 'This link is incomplete or damaged ('+error.portableCharacters+' fragment characters received). Ask for a new link or the .tl file.';
@@ -67,7 +70,6 @@ export function linkProblem(error) {
     return 'This link points to a song that is not available. It may have been removed, or the link may be incomplete.';
   if (error?.status) return 'The linked song could not be fetched just now. Try the link again later.';
   if (error?.unreachable) return 'The linked song could not be reached. Check your connection and try the link again.';
-  if (/1 MB input limit/.test(error?.message)) return 'The linked song is larger than the 1 MB record limit, so it was not opened.';
   return 'This link is incomplete or damaged, so no song could be opened from it.';
 }
 
@@ -115,7 +117,7 @@ export async function resolveLink(value, base) {
   }
   if (url.hash.startsWith('#v1.')) {
     const encoded = url.hash.slice(4);
-    if (encoded.length > limits.fragmentCharacters) throw Error('Record link is too large.');
+    if (encoded.length > limits.fragmentCharacters) throw new LinkSizeError('This song link exceeds the player’s link length limit. Ask for the .tl file.');
     if (typeof DecompressionStream !== 'function') {
       const error=Object.assign(Error(),{portableUnsupported:true}); error.message=linkProblem(error); throw error;
     }
@@ -124,6 +126,7 @@ export async function resolveLink(value, base) {
       const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate'));
       return {recordText: await boundedText(new Response(stream)), release};
     } catch (cause) {
+      if (cause instanceof LinkSizeError) throw cause;
       const error=Object.assign(Error(),{portableCharacters:url.hash.length});error.message=linkProblem(error);throw error;
     }
   }
