@@ -106,3 +106,27 @@ test('nested exporter checksums survive normalization and must agree with top-le
     await assert.rejects(fresh().lookup(path,variant.path,variant.record_sha256),/Invalid song catalog/);
   } finally {documents[path]=original;}
 });
+
+test('additional songs share the ordered Browse all cursor and leave Favorites intact', async () => {
+  const catalog=fresh(); await catalog.open();
+  const extra=(id,title,collection='Submitted songs')=>({id,title,collection,variants:[{kind:'standard',
+    discovery:{metadata:{genre:{value:'ambient'}},provenance:{model:'model-1'}}}]});
+  const added=[extra('y','Echo'),extra('x','Baker'),extra('z','Aardvark','all')];
+  catalog.setAdditional(added);
+  const categories=catalog.categories();
+  const group=categories.find(item=>item.id==='all'), favorites=categories.find(item=>item.id==='featured');
+  const titles=result=>result.items.map(item=>item.song.title);
+  const get=(category,cursor,n)=>catalog.browse(category,song=>song.variants,cursor,undefined,n);
+  const first=await get(group,null,3);
+  const second=await get(group,first.next,3);
+  const last=await get(group,second.next,3);
+  assert.deepEqual([...titles(first),...titles(second),...titles(last)],['Aardvark','Alpha','Baker','Bravo','Charlie','Delta','Echo']);
+  assert.equal(last.next,null);
+  assert.deepEqual(titles(await get(favorites,null,8)),['Alpha','Charlie']);
+  assert.deepEqual(titles(await get(categories.find(c=>c.title==='Submitted songs'),null,8)),['Baker','Echo']);
+  assert.equal(categories.find(c=>c.title==='Genre: ambient').count,3);
+  assert.equal(categories.find(c=>c.title==='Model: model-1').count,3);
+  assert.ok(categories.some(c=>c.id.startsWith('collection-') && c.title==='all'));
+  catalog.setAdditional([]);
+  assert.equal(catalog.categories().find(c=>c.id==='all').count,4);
+});

@@ -51,7 +51,50 @@ export async function catalogJSON(base, path, signal) {
   return JSON.parse(text);
 }
 export function createCatalog(base, validDiscovery) {
-  let index, opening;
+  let index, opening, collections;
+  // Hosted players can supply additional songs. Keep the packaged pages and
+  // their integrity rules independent of that optional collection.
+  // Match the exporter’s NFKC / Unicode casefold ordering. JavaScript compares
+  // UTF-16 units; the Python exporter compares Unicode code points.
+  const folded = text => [...text.normalize('NFKC')].map(c => {
+    if (c === 'ı') return c;
+    if (c === 'ẞ') return 'ss';
+    if (/\p{Script=Cherokee}/u.test(c)) return c.toUpperCase();
+    return c.toUpperCase().toLowerCase();
+  }).join('');
+  function compare(a,b) {
+    const left=[...a],right=[...b];
+    for (let i=0;i<Math.min(left.length,right.length);i++) {
+      const diff=left[i].codePointAt(0)-right[i].codePointAt(0);
+      if (diff) return diff;
+    }
+    return left.length-right.length;
+  }
+  const compareSongs = (a,b) => compare(folded(a.title), folded(b.title))
+    || compare(folded(a.collection), folded(b.collection)) || compare(a.id,b.id);
+  function setAdditional(songs) {
+    collections = null;
+    if (!songs.length) return;
+    const key = (group,title) => group === 'all' ? 'all' : group+'\0'+title;
+    const sections = new Map(index.categories.map(category =>
+      [key(category.id.split('-')[0],category.title), {category, additional:[]}]));
+    const add = (group, title, song) => {
+      const id=key(group,title);
+      if (!sections.has(id)) sections.set(id,{category:{id:group+'-additional-'+sections.size,title,count:0,first_page:null},additional:[]});
+      sections.get(id).additional.push(song);
+    };
+    for (const song of [...songs].sort(compareSongs)) {
+      add('all', 'Browse all', song);
+      add('collection', song.collection, song);
+      const variant=song.variants[0];
+      const genre=variant.discovery?.metadata?.genre?.value, model=variant.discovery?.provenance?.model;
+      if (genre) add('genre','Genre: '+genre,song);
+      if (model) add('model','Model: '+model,song);
+    }
+    collections = [...sections.values()].map(({category,additional}) => additional.length
+      ? {...category,count:category.count+additional.length,packaged:category,additional} : category);
+  }
+  const categories = () => collections || index.categories;
   const cache = new Map();
   function normalize(row) {
     check(row && typeof row.id === 'string' && row.id && typeof row.title === 'string'
@@ -156,25 +199,33 @@ export function createCatalog(base, validDiscovery) {
     return findIn(result.items, recordPath, sha) || cached(recordPath, sha, result.items);
   }
   async function browse(category, matches, cursor = null, signal, want = 8) {
-    check(index && index.categories.includes(category));
-    const start = cursor || {path:category.first_page, offset:0, examined:0, matched:0};
-    let path = start.path, offset = start.offset, examined = start.examined, matched = start.matched;
-    let pagesRead = 0, pageNumber = path ? Number(path.match(/-(\d+)\.json$/)[1]) : 0;
+    check(index && categories().includes(category));
+    const additional = category.additional || [], packaged = category.packaged || category;
+    const start = cursor || {path:packaged.first_page, offset:0, examined:0, matched:0};
+    let {path,offset,examined,matched} = start, extra = start.extra || 0;
+    let pagesRead = 0, currentPage, pageNumber = 0;
     const items = [];
-    // At most four static requests per explicit browse step, even for no-match searches.
-    while (path && items.length < want && pagesRead < 4) {
+    // Merge two ordered sources without downloading or sorting packaged catalog pages.
+    while ((path || extra < additional.length) && items.length < want && examined - start.examined < 96) {
       signal?.throwIfAborted();
-      const value = await page(path, category, signal); pagesRead++;
-      pageNumber = Number(path.match(/-(\d+)\.json$/)[1]);
-      while (offset < value.items.length && items.length < want) {
-        const song = value.items[offset++]; examined++;
-        const variants = matches(song);
-        if (variants.length) {items.push({song, variants}); matched++;}
+      if (path && !currentPage) {
+        if (pagesRead === 4) break;
+        currentPage = await page(path, packaged, signal); pagesRead++;
+        pageNumber = Number(path.match(/-(\d+)\.json$/)[1]);
       }
-      if (offset === value.items.length) {path = value.next; offset = 0;}
+      const local = currentPage?.items[offset], nextExtra = additional[extra];
+      let song;
+      if (nextExtra && (!local || compareSongs(nextExtra, local) < 0)) song = additional[extra++];
+      else {
+        song = local; offset++;
+        if (offset === currentPage.items.length) {path = currentPage.next; offset = 0; currentPage = null;}
+      }
+      examined++;
+      const variants = matches(song);
+      if (variants.length) {items.push({song, variants}); matched++;}
     }
-    return {items, start, next:path ? {path, offset, examined, matched} : null, examined, matched,
-      pageNumber, pageCount:Math.ceil(category.count / 24), total:category.count};
+    const next = path || extra < additional.length ? {path,offset,examined,matched,...(extra ? {extra} : {})} : null;
+    return {items,start,next,examined,matched,pageNumber,pageCount:Math.ceil(category.count / 24),total:category.count};
   }
-  return {open, browse, cached, lookup};
+  return {open, browse, cached, lookup, categories, setAdditional};
 }

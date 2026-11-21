@@ -954,7 +954,7 @@ async function preparePlayback(text, value = {}) {
     throw error;
   }
 }
-window.IntFM = Object.freeze({describe, summary, toText, toLink, exportChunk, compose, recipes:listRecipes, recipe, recipeGain, analyze, analyzeParts, cancelAnalysis, render: (text, value) => render(text, value), listen, verify, verifySaved, cancel, clear, loadLink, prepareLink: loadLinkForPlayback, showQr: openQr, closeQr, result: () => lastResult,
+window.IntFM = Object.freeze({describe, summary, setLibrarySource, toText, toLink, exportChunk, compose, recipes:listRecipes, recipe, recipeGain, analyze, analyzeParts, cancelAnalysis, render: (text, value) => render(text, value), listen, verify, verifySaved, cancel, clear, loadLink, prepareLink: loadLinkForPlayback, showQr: openQr, closeQr, result: () => lastResult,
   metrics: async (text, value) => (await render(text, value)).metrics, toWav, toSvg, guide, reference});
 window.addEventListener('message', async event => {
   if (event.origin !== location.origin || !event.source || event.data?.protocol !== 'intfm-v1') return;
@@ -1368,8 +1368,57 @@ let libraryRequest, librarySequence = 0, libraryHistory = [], libraryCursor = nu
 let openingPublication = null;
 let previewWorker, previewAbort, previewSequence = 0, previewTimer;
 const catalog = createCatalog(assetBase, validDiscovery);
+let extraSource, extraRequest, extraRead = false, extraCursor = null, extraStatus = '';
+const extraRows = new Map(), extraCursors = new Set();
+function setLibrarySource(loader) {
+  if (typeof loader !== 'function') throw Error('The song collection needs a loader.');
+  extraRequest?.abort(); extraSource = loader; extraRead = false;
+  if (catalogIndex && libraryView === 'all') void librarySongs({preserveLinked:true});
+}
+function resetAdditional() {
+  extraCursor = null; extraCursors.clear(); extraRows.clear();
+  catalog.setAdditional([]);
+}
+function refreshAdditional(more = false) {
+  if (!extraSource || !catalogIndex || (more ? !extraCursor || extraRequest : extraRead)) return;
+  const cursor = more ? extraCursor : null;
+  if (!more) resetAdditional();
+  extraRead = true; extraStatus = ' Checking online songs…';
+  const request = new AbortController(); extraRequest = request;
+  const fieldNames=['collection','genre','model','tempo'];
+  function redraw() {
+    if (libraryView !== 'all') return;
+    const selected=fieldNames.map(field => $('song-'+field).value);
+    libraryFilters();
+    fieldNames.forEach((field,i) => {
+      const select=$('song-'+field);
+      if ([...select.options].some(option => option.value === selected[i])) select.value=selected[i];
+    });
+    void librarySongs({preserveLinked:true}).then(collectionGenres);
+  }
+  Promise.resolve().then(() => extraSource(request.signal,cursor)).then(({songs,next}) => {
+    if (request.signal.aborted) return;
+    if (!Array.isArray(songs) || next !== null && (typeof next !== 'string' || !next || extraCursors.has(next)))
+      throw Error('Invalid supplemental song page.');
+    if (next) extraCursors.add(next);
+    for (const song of songs) extraRows.set(song.id,song);
+    extraCursor=next; extraRequest=null;
+    catalog.setAdditional([...extraRows.values()]);
+    extraStatus=next ? ' More submissions are available. Browse all again includes the next group, then reorders loaded songs by title.' : '';
+    redraw();
+  }).catch(() => {
+    if (request.signal.aborted) return;
+    extraRequest=null; resetAdditional();
+    extraStatus = ' Online songs are unavailable. Choose Browse all to retry.';
+    redraw();
+  });
+}
+function loadCatalogText(variant,signal) {
+  return Promise.resolve(variant.checkAvailable?.(signal)).then(() =>
+    fetchRecord(new URL(variant.path,assetBase),undefined,{signal})).then(text => checkCatalogDocument(text,variant));
+}
 const variantLabels = {standard: 'Original · saved', keys: 'Keys · saved ±30°', mirror: 'Keys mirror · saved ±30°'};
-const songLabel = (song, variant) => `${song.title} · ${time(variant.duration_seconds)}`;
+const songLabel = (song, variant) => Number.isFinite(variant.duration_seconds) ? `${song.title} · ${time(variant.duration_seconds)}` : song.title;
 function libraryOption(value, label) {
   const option = document.createElement('option'); option.value = value; option.textContent = label; return option;
 }
@@ -1457,7 +1506,7 @@ const genreLabel = value => (value => value.charAt(0).toLocaleUpperCase() + valu
 const plural = (count, one, many = one + 's') => `${count} ${count === 1 ? one : many}`;
 // With genres (a Set, or null for every genre) only the genre choices are refilled.
 function libraryFilters(genres) {
-  const categories = catalogIndex.categories, current = $('song-genre').value.replace(/^value:/, '');
+  const categories = catalog.categories(), current = $('song-genre').value.replace(/^value:/, '');
   const fill = (id, label, prefix, trim = '') => {
     $(id).replaceChildren(libraryOption('', label), ...categories.filter(item => item.id.startsWith(prefix)).flatMap(item => {
       const value = item.title.replace(trim, '');
@@ -1505,7 +1554,10 @@ function libraryDetails() {
   }
   const larger = variant.bytes > limits.recordBytes || variant.duration_seconds > limits.durationSeconds;
   $('song-preview').disabled = larger;
-  $('song-detail').textContent = `${song.collection} · ${time(variant.duration_seconds)} · ${(variant.bytes / 1000).toFixed(1)} kB. `
+  const facts = [song.collection];
+  if (Number.isFinite(variant.duration_seconds)) facts.push(time(variant.duration_seconds));
+  if (Number.isFinite(variant.bytes)) facts.push((variant.bytes/1000).toFixed(1)+' kB');
+  $('song-detail').textContent = facts.join(' · ')+'. '
     + (larger ? 'Exceeds the browser profile; use the local CLI or app.' : 'Load song prepares it silently. Then press Play.');
   const meta = metadataOf(variant), sourceLabel = value => value === 'retained-score' ? 'retained score' : value === 'creator-declared' ? 'creator declaration' : value;
   const tempo = meta.tempo ? (meta.tempo.min_bpm === meta.tempo.max_bpm ? `${meta.tempo.min_bpm} BPM`
@@ -1532,7 +1584,7 @@ function preferredLibraryVariant(variants) {
     || variants.find(variant => variant.kind === 'standard') || variants[0];
 }
 function categoryForFilters() {
-  const categories = catalogIndex.categories;
+  const categories = catalog.categories();
   let category = categories.find(item => item.id === libraryView);
   if (libraryView === 'all') {
     const collection = $('song-collection').value, genre = $('song-genre').value, model = $('song-model').value;
@@ -1545,6 +1597,7 @@ function categoryForFilters() {
 async function librarySongs({cursor = null, reset = true, preserveLinked = false} = {}) {
   if (!preserveLinked) linkedSelectionActive = false;
   if (!catalogIndex) return;
+  if (libraryView === 'all') refreshAdditional();
   libraryRequest?.abort(); libraryRequest = new AbortController();
   const request = ++librarySequence, signal = libraryRequest.signal;
   cancelPreview();
@@ -1601,8 +1654,9 @@ async function librarySongs({cursor = null, reset = true, preserveLinked = false
     $('library-status').textContent = filtered
       ? `Results ${range}. Searched ${result.examined} of ${plural(result.total, 'song')}. ${result.next ? 'More songs may match; choose Next results.' : `${plural(result.matched, 'match', 'matches')} in this source selection.`}`
       : `${result.total ? range : 0} of ${plural(result.total, 'song')}`;
+    if (libraryView === 'all' && extraStatus) $('library-status').textContent += extraStatus;
     $('library-previous').disabled = !libraryHistory.length;
-    $('library-next').disabled = !result.next;
+    $('library-next').disabled = !result.next && !(libraryView === 'all' && extraCursor);
     libraryVariants(selectedSongId === previous ? kind : undefined);
     reconcileLinkedIdentity();
   } catch (error) {
@@ -1623,13 +1677,17 @@ async function loadLibrary() {
   }
 }
 $('song-search').addEventListener('input', () => {if ($('song-search').value.trim()) libraryView = 'all'; void librarySongs();});
-for (const view of ['featured','all']) $('library-' + view).onclick = () => {libraryView = view; return librarySongs();};
+for (const view of ['featured','all']) $('library-' + view).onclick = () => {
+  if (view === 'all' && libraryView === 'all' && extraCursor) {refreshAdditional(true);return;}
+  extraRequest?.abort(); extraRequest=null; extraRead=false; extraStatus='';
+  libraryView = view; return librarySongs();
+};
 // Genre choices follow the chosen collection when its songs fit one bounded
 // read of at most four pages; a larger collection keeps every genre choice.
 let genreRequest = 0;
 async function collectionGenres() {
   const request = ++genreRequest, collection = $('song-collection').value;
-  const category = collection && catalogIndex?.categories.find(item => item.id.startsWith('collection-') && item.title === collection);
+  const category = collection && catalogIndex && catalog.categories().find(item => item.id.startsWith('collection-') && item.title === collection);
   let genres = null;
   if (category && category.count <= 96) try {
     const result = await catalog.browse(category, song => song.variants, null, undefined, category.count);
@@ -1642,7 +1700,7 @@ for (const field of ['collection','genre','tempo','model']) $('song-' + field).o
   return field === 'collection' ? librarySongs().then(collectionGenres) : librarySongs();
 };
 $('library-clear').onclick = () => {for (const field of ['search','collection','genre','tempo','model']) $('song-' + field).value = ''; return librarySongs().then(collectionGenres);};
-$('library-next').onclick = () => {if (!catalogResult?.next) return; libraryHistory.push(libraryCursor); if (libraryHistory.length > 128) libraryHistory.shift(); return librarySongs({cursor:catalogResult.next,reset:false});};
+$('library-next').onclick = () => {if (!catalogResult?.next) {if (libraryView === 'all') refreshAdditional(true); return;} libraryHistory.push(libraryCursor); if (libraryHistory.length > 128) libraryHistory.shift(); return librarySongs({cursor:catalogResult.next,reset:false});};
 $('library-previous').onclick = () => {if (!libraryHistory.length) return; return librarySongs({cursor:libraryHistory.pop(),reset:false});};
 function updateJogControls() {
   for (const side of ['left','right']) {
@@ -1695,12 +1753,11 @@ $('song-load').onclick = async () => {
   playerStatus('Loading ' + song.title + '…');
   const pending = {song,variant,controller:new AbortController()}; pendingSongLoad = pending; updateTransport(false);
   try {
-    const text = await checkCatalogDocument(await fetchRecord(new URL(variant.path, assetBase), undefined,
-      {signal:pending.controller.signal}),variant);
+    const text = await loadCatalogText(variant,pending.controller.signal);
     if (requestGeneration !== generation || selectedSong() !== song || selectedVariant() !== variant) return;
     checkRecord(text); $('record').value = text; expectedRecordSha = variant.record_sha256 || null;
     loadedSong = {song,variant}; loadedIdentity = {title:song.title,version:variantLabels[variant.kind] || variant.kind};
-    return await preparePlayback(text);
+    return await preparePlayback(text,{release:variant.rendererRelease});
   } catch (error) {if (requestGeneration === generation) playerStatus(error.message);}
   finally {if (pendingSongLoad === pending) {pendingSongLoad = null; updateTransport(false);}}
 };
@@ -1724,12 +1781,10 @@ $('song-preview').onclick = async () => {
   const failed = error => {if (request === previewSequence) cancelPreview('Note preview unavailable: ' + error.message + ' Playback is unchanged.');};
   previewTimer = setTimeout(() => failed(Error('Inspection exceeded 30 seconds.')), 30000);
   try {
-    const [recordText,registry] = await Promise.all([fetchRecord(new URL(variant.path, assetBase), undefined, {signal}),registryPromise]);
+    const [recordText,registry] = await Promise.all([loadCatalogText(variant,signal),registryPromise]);
     if (request !== previewSequence) return;
     checkRecord(recordText);
-    await checkCatalogDocument(recordText,variant);
-    if (request !== previewSequence) return;
-    const engine = selectEngine(registry, new URL(location.href).searchParams.get('release') || undefined);
+    const engine = selectEngine(registry, variant.rendererRelease || new URL(location.href).searchParams.get('release') || undefined);
     const worker = new Worker(new URL('worker.mjs',assetBase),{type:'module'}); previewWorker = worker;
     worker.onmessage = ({data}) => {
       if (request !== previewSequence) return;
@@ -1989,7 +2044,7 @@ async function loadedSongLink(result) {
   for (const song of songLibrary) {
     const variant = song.variants.find(item => item.record_sha256 === result.recordSha256 && documentHash &&
       (item.document_sha256 ?? item.discovery?.document_sha256 ?? item.record_sha256) === documentHash);
-    if (variant) return {url:libraryLink(variant.path, variant.record_sha256, assetBase, result.rendererRelease, song.catalogPage),
+    if (variant) return {url:variant.shareUrl || libraryLink(variant.path, variant.record_sha256, assetBase, result.rendererRelease, song.catalogPage),
       label:song.title + ' · ' + (variantLabels[variant.kind] || variant.kind), portable:false};
   }
   return {url:await portableLink(result.canonical, assetBase, result.rendererRelease), label:'Portable song link', portable:true};
