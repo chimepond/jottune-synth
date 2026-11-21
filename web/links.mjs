@@ -66,7 +66,9 @@ export function linkProblem(error) {
       (Object.hasOwn(reasons, error.verificationFailure) ? ' because ' + reasons[error.verificationFailure] : '') +
       '. Its share link is not available for playback.';
   }
-  if (error?.status === 404 || error?.status === 410)
+  if (error?.status === 410) return 'This song is not available. It may have been withdrawn, removed or expired.';
+  if (error?.status === 451) return 'This song is unavailable following a policy decision.';
+  if (error?.status === 404)
     return 'This link points to a song that is not available. It may have been removed, or the link may be incomplete.';
   if (error?.status) return 'The linked song could not be fetched just now. Try the link again later.';
   if (error?.unreachable) return 'The linked song could not be reached. Check your connection and try the link again.';
@@ -155,7 +157,7 @@ export async function resolveLink(value, base, {signal} = {}) {
     throw Error('Record descriptors must reference their own service origin and path prefix.');
   const verificationStatus = descriptor.verification?.status;
   if (verificationStatus === 'pending' || verificationStatus === 'failed') {
-    const error = Object.assign(Error(), {verificationStatus, verificationFailure:descriptor.verification.failure, recordSha256:descriptor.record_sha256});
+    const error = Object.assign(Error(), {verificationStatus, verificationFailure:descriptor.verification.failure, recordSha256:descriptor.record_sha256, serviceBase:serviceBase.href});
     error.message = linkProblem(error); throw error;
   }
   if (verificationStatus !== undefined && verificationStatus !== 'verified')

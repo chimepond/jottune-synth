@@ -2422,6 +2422,7 @@ test('a cold pending submission identifies its hash and keeps an unrelated favor
     for (const id of ['selected-song-title','mobile-song','rail-selected-song','loaded-song'])
       assert.equal(page.get(id).textContent,'Submitted song · '+sha.slice(0,12));
     assert.equal(page.get('song-detail').textContent,'Preparing audio… Playback will become available here automatically.');
+    assert.deepEqual(page.api.preparingPublication(),{kind:'publication',recordSha256:sha,preparing:true});
     assert.equal(page.get('status').textContent,page.get('song-detail').textContent);
     assert.equal(selectedSongId(page),'');assert.equal(page.get('mobile-play').disabled,true);
     assert.equal(page.get('rail-load').disabled,true);assert.equal(page.audioCreations(),0);
@@ -2430,6 +2431,7 @@ test('a cold pending submission identifies its hash and keeps an unrelated favor
     assert.equal(page.get('selected-song-title').textContent,'Second song');
     assert.equal(page.get('rail-load').disabled,false);assert.equal(page.get('mobile-play').disabled,true);
     page.expire(5000);await nextTurn();
+    assert.equal(page.api.preparingPublication(),null);
     assert.equal(page.requests.filter(value=>value.endsWith('/api/records/'+sha)).length,1);
     assert.doesNotMatch(page.get('rail-status').textContent,/automatically/);
   },{href,catalog:curatedCatalog(),network:{['/web/api/records/'+sha]:{
@@ -2445,8 +2447,11 @@ test('a pending share link prepares exactly once when verified, waits in a hidde
     page.setHidden(true);page.expire(5000);await nextTurn();
     assert.equal(requests,1);assert.equal(page.workers.length,0);assert.equal(page.get('mobile-play').disabled,true);
     page.setHidden(false);await nextTurn();assert.equal(requests,2);assert.equal(page.workers.length,0);
-    page.expire(10000);
+    page.expire(10000);page.ready();await nextTurn();
+    assert.equal(page.workers.length,1);
+    assert.equal(page.api.preparingPublication().recordSha256,sha,'The same report target survives local render startup');
     const result=await prepared(page,pending,'ready record');
+    assert.equal(page.api.preparingPublication(),null,'The completed result now owns the active source');
     assert.equal(requests,3);
     assert.deepEqual(result.source,{kind:'publication',recordSha256:sha,listed:false,reviewStatus:'pending'});
     assert.equal(page.requests.filter(value=>value.endsWith('/r/'+sha+'.tl')).length,1);
@@ -2459,6 +2464,22 @@ test('a pending share link prepares exactly once when verified, waits in a hidde
     if(requests===2) return new Response('',{status:503});
     return Response.json({...descriptor,verification:{status:requests===1?'pending':'verified'}});
   },['/web/r/'+sha+'.tl']:'ready record'}});
+});
+
+test('a draft, unconfirmed location or pending descriptor from another service cannot claim a hosted report target', async () => {
+  const sha='a'.repeat(64);
+  for (const base of ['https://player.invalid/web/','https://external.invalid/web/','https://player.invalid/another/']) {
+    const response=deferred();
+    await withPage(async page=>{
+      const pending=page.api.prepareLink(base+'r/'+sha);const cancelled=assert.rejects(pending,/Loading cancelled/);
+      assert.equal(page.api.preparingPublication(),null);
+      response.resolve(Response.json({record_sha256:sha,record_url:'r/'+sha+'.tl',renderer_release:'test',verification:{status:'pending'}}));
+      await nextTurn();
+      assert.equal(page.api.preparingPublication()?.recordSha256??null,base==='https://player.invalid/web/'?sha:null);
+      page.get('record').value='my own draft';page.get('record').dispatch('input');await cancelled;
+      assert.equal(page.api.preparingPublication(),null);assert.equal(page.workers.length,0);
+    },{network:{[new URL('api/records/'+sha,base).pathname]:()=>response.promise}});
+  }
 });
 
 test('a pending link stops on failure, withdrawal, or exhaustion without fetching audio', async () => {
@@ -2476,6 +2497,7 @@ test('a pending link stops on failure, withdrawal, or exhaustion without fetchin
         page.expire(Math.min(60000,5000*2**i));await nextTurn();
       }
       await rejected;
+      assert.equal(page.api.preparingPublication(),null);
       assert.equal(requests,outcome==='still pending'?25:2);assert.equal(page.workers.length,0);
       assert.equal(page.get('mobile-play').disabled,true);assert.equal(page.audioCreations(),0);
       assert(!page.requests.some(url=>url.endsWith('/r/'+sha+'.tl')));

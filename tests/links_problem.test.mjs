@@ -26,6 +26,13 @@ test('a missing record is reported as not available, not as an HTTP status', asy
   assert.match(text, /not available/); assert.doesNotMatch(text, /404|request|Record/);
 });
 
+test('a withdrawn or blocked song is distinguished from a temporary check failure', () => {
+  assert.match(linkProblem({status:410}), /withdrawn, removed or expired/);
+  assert.match(linkProblem({status:451}), /policy decision/);
+  for (const error of [{unreachable:true},{status:503}])
+    assert.doesNotMatch(linkProblem(error),/withdrawn|removed|policy decision/);
+});
+
 test('a server failure and an unreachable network get their own plain messages', async () => {
   const server = await failure(base + 'r/' + 'a'.repeat(64), () => new Response('', {status:503}));
   assert.match(linkProblem(server), /could not be fetched just now/);

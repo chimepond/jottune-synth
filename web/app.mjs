@@ -287,6 +287,12 @@ let spectrumController, spectrumResult, displayView = 'live';
 let liveOnscreen = true;
 let profileBase = null, appliedProfile = null, loadedIdentity = null, linkedMetadata = null, pendingSongLoad = null;
 let hostedSource = null, linkInFlight = null;
+let preparingPublication = null;
+function setPreparingPublication(source) {
+  if (preparingPublication === source) return;
+  preparingPublication = source;
+  window.dispatchEvent?.(new CustomEvent('intfm-pending-publication', {detail:null}));
+}
 let originalScoreText = null;
 const instrumentView = createInstrumentView($('live-panel'), {onSeek: seconds => seekTo(seconds)});
 instrumentView.setVisible(!document.hidden);
@@ -343,7 +349,8 @@ function busy(value) {
   updateProfileControls();
   updateTransport();
 }
-function cancel() {
+function cancel(keepPreparing = false) {
+  if (keepPreparing !== true) setPreparingPublication(null);
   linkInFlight?.controller.abort();
   cancelAnalysis();
   generation++;
@@ -354,11 +361,11 @@ function cancel() {
     reject(Error('Rendering cancelled.'));
   }
 }
-function invalidate(retainProfile = false, retainRelease = false) {
+function invalidate(retainProfile = false, retainRelease = false, keepPreparing = false) {
   pendingSongLoad?.controller.abort(); pendingSongLoad = null;
   updateOfflineStatus();
   closeQr();
-  cancel(); stop(); lastResult = null; analysisResult = null;
+  cancel(keepPreparing); stop(); lastResult = null; analysisResult = null;
   inputProblem = null; $('agent-report').disabled = true; $('agent-report-manual').hidden = true; $('agent-report-manual').value = '';
   $('analysis-status').textContent = 'Analyze the prepared audio without rendering again.';
   $('analysis-output').textContent = ''; $('analysis-download').disabled = true; $('analysis-cancel').hidden = true; expectedRecordSha = null;
@@ -387,8 +394,8 @@ function invalidate(retainProfile = false, retainRelease = false) {
 function clear() { invalidate(); $('record').value = ''; playerStatus('Record cleared.'); }
 $('record').addEventListener('input', () => { invalidate(false, true); playerStatus('Record changed. Listen or verify.'); });
 
-function rawRender(recordText, config) {
-  cancel();
+function rawRender(recordText, config, keepPreparing = false) {
+  cancel(keepPreparing);
   const requestGeneration = generation;
   return new Promise((resolve, reject) => {
     let worker = null;
@@ -822,13 +829,15 @@ async function render(recordText, value = {}, {sourceContext, replaySaved = fals
   // A projection attempt replaces the editor with its source. Until success,
   // no previous projected label may describe that source after a refusal/cancel.
   if (sourceContext) appliedProfile = null;
-  invalidate(!!sourceContext || replaySaved || sameText); expectedRecordSha = expected; loadedRelease = config.release;
+  const preparing = sameText && preparingPublication?.recordSha256 === expected ? preparingPublication : null;
+  invalidate(!!sourceContext || replaySaved || sameText, false, !!preparing);
+  expectedRecordSha = expected; loadedRelease = config.release;
   $('record').value = recordText;
   try { checkRecord(recordText); }
-  catch (error) { playerStatus(error.message); throw error; }
+  catch (error) { setPreparingPublication(null); playerStatus(error.message); throw error; }
   playerStatus(config.profile ? 'Computing and verifying the listening profile…'
     : config.mode === 'listen' ? 'Rendering once for listening…' : 'Rendering twice to verify…');
-  const pending = rawRender(recordText, config), requestGeneration = generation;
+  const pending = rawRender(recordText, config, !!preparing), requestGeneration = generation;
   busy(true);
   try {
     const result = await pending;
@@ -864,7 +873,10 @@ async function render(recordText, value = {}, {sourceContext, replaySaved = fals
     if (requestGeneration === generation) playerStatus(error.message);
     throw error;
   } finally {
-    if (requestGeneration === generation) busy(false);
+    if (requestGeneration === generation) {
+      busy(false);
+      if (preparing === preparingPublication) setPreparingPublication(null);
+    }
   }
 }
 const listen = (text, value = {}) => render(text, {...value, mode: 'listen'});
@@ -964,7 +976,7 @@ async function preparePlayback(text, value = {}) {
     throw error;
   }
 }
-window.IntFM = Object.freeze({describe, summary, setLibrarySource, toText, toLink, exportChunk, compose, recipes:listRecipes, recipe, recipeGain, analyze, analyzeParts, cancelAnalysis, render: (text, value) => render(text, value), listen, verify, verifySaved, cancel, clear, loadLink, prepareLink: loadLinkForPlayback, showQr: openQr, closeQr, result: () => lastResult,
+window.IntFM = Object.freeze({describe, summary, setLibrarySource, toText, toLink, exportChunk, compose, recipes:listRecipes, recipe, recipeGain, analyze, analyzeParts, cancelAnalysis, render: (text, value) => render(text, value), listen, verify, verifySaved, cancel: () => cancel(), clear, loadLink: value => loadLink(value), prepareLink: loadLinkForPlayback, showQr: openQr, closeQr, result: () => lastResult, preparingPublication: () => preparingPublication,
   metrics: async (text, value) => (await render(text, value)).metrics, toWav, toSvg, guide, reference});
 window.addEventListener('message', async event => {
   if (event.origin !== location.origin || !event.source || event.data?.protocol !== 'intfm-v1') return;
@@ -1605,6 +1617,7 @@ function categoryForFilters() {
   return category || categories.find(item => item.id === 'all');
 }
 function leaveLinkedSelection() {
+  if (preparingPublication && !linkInFlight) cancel();
   if (linkInFlight) {
     linkInFlight.controller.abort();
     playerStatus('Selection changed. Load the selected song when ready.');
@@ -1952,6 +1965,12 @@ async function resolveForPlayer(value, link, followPending) {
       }
       if (check === 0) {
         playerStatus(preparingAudio);
+        // Only a descriptor returned by this site's service can identify a
+        // user submission. A URL or a same-named file supplies no such proof.
+        const site = new URL('./', document.baseURI || assetBase);
+        if (site.origin === new URL(location.href).origin && error.serviceBase === site.href) {
+          setPreparingPublication(Object.freeze({kind:'publication',recordSha256:error.recordSha256,preparing:true}));
+        }
         if (openingPublication && linkedSelectionActive) {
           openingPublication.label = 'Submitted song · ' + error.recordSha256.slice(0, 12);
           openingPublication.status = preparingAudio;
@@ -1964,8 +1983,12 @@ async function resolveForPlayer(value, link, followPending) {
 }
 async function loadLink(value, followPending = false) {
   linkInFlight?.controller.abort();
+  setPreparingPublication(null);
   const link = {controller:new AbortController(),whenVisible:null};
   linkInFlight = link;
+  link.controller.signal.addEventListener('abort', () => {
+    if (linkInFlight === link) setPreparingPublication(null);
+  }, {once:true});
   const requestGeneration = generation;
   const current = () => !link.controller.signal.aborted && requestGeneration === generation;
   playerStatus('Loading record…');
@@ -1983,7 +2006,9 @@ async function loadLink(value, followPending = false) {
     if(cachedMatch)await checkCatalogDocument(loaded.recordText,cachedMatch.variant);
     if (!current()) throw Error('Loading cancelled.');
     linkInFlight = null;
-    invalidate(); linkedSelectionActive = true; surfaceLinkedSelection(); linkGenerations.set(loaded, generation);
+    // Keep the confirmed report target while the same song renders locally.
+    const samePublication = loaded.publication && loaded.recordSha256 === preparingPublication?.recordSha256;
+    invalidate(false, false, !!samePublication); linkedSelectionActive = true; surfaceLinkedSelection(); linkGenerations.set(loaded, generation);
     if (new URL(value, location.href).origin === new URL(location.href).origin && loaded.recordSha256) {
       if (loaded.publication) hostedSource = {kind:'publication',recordSha256:loaded.recordSha256,...loaded.publication};
       else if (loaded.libraryPath) hostedSource = {kind:'library',recordSha256:loaded.recordSha256};
@@ -2009,7 +2034,10 @@ async function loadLink(value, followPending = false) {
     }
     throw error;
   } finally {
-    if (linkInFlight === link) linkInFlight = null;
+    if (linkInFlight === link) {
+      linkInFlight = null;
+      setPreparingPublication(null);
+    }
   }
 }
 async function loadLinkForPlayback(value) {
