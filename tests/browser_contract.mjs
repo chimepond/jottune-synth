@@ -762,7 +762,7 @@ test('agent render updates the visible result and export controls', () => withPa
   assert.equal(page.get('status').textContent, 'Ready. Press Play to listen.');
   assert.equal(page.workers[0].request.mode, 'verify');
   assert.equal(result.verified, true);
-  assert.equal(page.pageEvents.at(-1).detail, result);
+  assert.equal(page.pageEvents.findLast(event => event.type === 'intfm-result').detail, result);
   assert.match(page.get('raw').textContent, /PLAY match=yes/);
   assert.match(page.get('timeline').innerHTML, /^<svg /);
   assert(page.get('facts').children.some(child => child.textContent === result.recordSha256));
@@ -879,7 +879,7 @@ test('optional native view failures preserve audio and keep compiled modules pri
   assert.equal(result.pcm, pcm); assert.equal(result.canonical, canonical);
   assert.equal(Object.hasOwn(result, 'spatialModule'), false);
   assert.equal(Object.hasOwn(page.api.result(), 'spatialModule'), false);
-  assert.equal(Object.hasOwn(page.pageEvents.at(-1).detail, 'spatialModule'), false);
+  assert.equal(Object.hasOwn(page.pageEvents.findLast(event => event.type === 'intfm-result').detail, 'spatialModule'), false);
   const visual = page.visualCalls.filter(row => row[0] === 'result').at(-1)[2];
   assert.equal(visual.spatialSampler, null);
   assert.match(visual.spatialWarning, /metadata is invalid/);
@@ -1938,6 +1938,29 @@ function transportResult() {
   return validResult({sampleRate: 1000, channels: 2, pcm,
     info: {route: '0', voices: '1', length_ns: '10000000000', pcm_bytes: String(pcm.byteLength)}});
 }
+
+test('a second transport stays on the review row and acts only on its prepared result', () => withPage(async page => {
+  const song = await complete(page, 'listen to this revision', transportResult());
+  const changes = () => page.pageEvents.filter(event => event.type === 'intfm-transport').length;
+  assert.equal(page.api.reviewPlayback(song), 'play');
+  const before = changes();
+  page.advance(0); page.advance(0);
+  assert.equal(changes(), before);
+  assert.equal(await page.api.toggleReviewPlayback(song), 'pause');
+  page.advance(0.25);
+  assert.equal(await page.api.toggleReviewPlayback(song), 'resume');
+  assert.equal(await page.api.toggleReviewPlayback(song), 'pause');
+  page.audioSources.at(-1).onended();
+  assert.equal(page.api.reviewPlayback(song), 'play');
+  assert.deepEqual(page.sectionJumps, []);
+  assert.equal(page.get('auto-move').checked, true);
+  assert.equal(changes(), before + 4);
+  const next = await complete(page, 'other revision', transportResult());
+  assert.equal(page.api.reviewPlayback(song), null);
+  assert.equal(await page.api.toggleReviewPlayback(song), null);
+  assert.equal(page.api.reviewPlayback(next), 'play');
+  assert.equal(page.audioSources.length, 2);
+}));
 
 test('Auto move follows explicit mirrored Load and Play through natural finish without changing the chosen visual', () => withPage(async page=>{
   assert.equal(page.get('song-load-right').disabled,page.get('song-load').disabled);

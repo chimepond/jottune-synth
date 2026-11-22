@@ -164,7 +164,7 @@ export async function resolveLink(value, base, {signal} = {}) {
     throw Error('The service returned an invalid verification status.');
   const publication = {};
   if (typeof descriptor.listed === 'boolean') publication.listed = descriptor.listed;
-  if (['approved','pending','not_required'].includes(descriptor.review?.status)) publication.reviewStatus = descriptor.review.status;
+  if (['approved','declined','pending','not_required'].includes(descriptor.review?.status)) publication.reviewStatus = descriptor.review.status;
   return {recordText: await fetchRecord(recordURL, undefined, {signal}), recordSha256: descriptor.record_sha256, publication,
     release: namedRelease, submissionId: submission?.[2]};
 }

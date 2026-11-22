@@ -281,6 +281,7 @@ let analysisJob, analysisResult, analysisSequence = 0;
 let inputProblem = null, inputRequest = 0, reportRequest = 0;
 let generation = 0, expectedRecordSha = null, loadedRelease;
 let rendering = false, playbackRequest = 0, playbackBuffer, playbackBufferResult;
+let reportedTransportResult, reportedTransportAction;
 const mediaSession = (() => {try {return navigator.mediaSession || null;} catch {return null;}})();
 let mediaTitle = null;
 let spectrumController, spectrumResult, displayView = 'live';
@@ -976,7 +977,7 @@ async function preparePlayback(text, value = {}) {
     throw error;
   }
 }
-window.IntFM = Object.freeze({describe, summary, setLibrarySource, toText, toLink, exportChunk, compose, recipes:listRecipes, recipe, recipeGain, analyze, analyzeParts, cancelAnalysis, render: (text, value) => render(text, value), listen, verify, verifySaved, cancel: () => cancel(), clear, loadLink: value => loadLink(value), prepareLink: loadLinkForPlayback, showQr: openQr, closeQr, result: () => lastResult, preparingPublication: () => preparingPublication,
+window.IntFM = Object.freeze({describe, summary, setLibrarySource, toText, toLink, exportChunk, compose, recipes:listRecipes, recipe, recipeGain, analyze, analyzeParts, cancelAnalysis, render: (text, value) => render(text, value), listen, verify, verifySaved, cancel: () => cancel(), clear, loadLink: value => loadLink(value), prepareLink: loadLinkForPlayback, reviewPlayback, toggleReviewPlayback, showQr: openQr, closeQr, result: () => lastResult, preparingPublication: () => preparingPublication,
   metrics: async (text, value) => (await render(text, value)).metrics, toWav, toSvg, guide, reference});
 window.addEventListener('message', async event => {
   if (event.origin !== location.origin || !event.source || event.data?.protocol !== 'intfm-v1') return;
@@ -1126,6 +1127,12 @@ function position() {
   const duration = durationOf(), now = source ? audio.currentTime - started : elapsed;
   return Math.max(0, source?.loop && duration ? now % duration : Math.min(now, duration));
 }
+// The caller keeps the result that was prepared. Replacing it disables its transport.
+function reviewPlayback(result) {
+  if (result !== lastResult || rendering || pendingSongLoad || !canAudition(result)) return null;
+  if (source) return 'pause';
+  return elapsed > 0 && elapsed < durationOf(result) ? 'resume' : 'play';
+}
 function updateTransport(redraw = true) {
   const duration = durationOf(), current = position();
   $('time').value = time(current) + ' / ' + time(duration);
@@ -1186,6 +1193,12 @@ function updateTransport(redraw = true) {
   updateMediaSession(title, prepared && canAudition(lastResult));
   if (redraw && liveVisible()) instrumentView.update(current, !!source);
   synchronizeLiveAnimation();
+  const action = reviewPlayback(lastResult);
+  if (reportedTransportResult !== lastResult || reportedTransportAction !== action) {
+    reportedTransportResult = lastResult;
+    reportedTransportAction = action;
+    window.dispatchEvent?.(new CustomEvent('intfm-transport', {detail:action}));
+  }
 }
 function pause() {
   playbackRequest++; elapsed = position(); releaseSource(); updateTransport();
@@ -1245,11 +1258,10 @@ function audition(result, offset = 0, followEpoch = null, followStart = false) {
   next.start(0, elapsed); updateTransport(); playerStatus('Playing.');
   if (followStart && followEpoch !== null) followSection('live-views', followEpoch);
 }
-$('play').onclick = async () => {
-  const result = lastResult;
-  if (!canAudition(result)) return;
+async function togglePlayback(result, followEpoch) {
+  if (result !== lastResult || !canAudition(result)) return;
   if (source) { pause(); return; }
-  const request = ++playbackRequest, offset = elapsed, followEpoch = autoMoveEpoch;
+  const request = ++playbackRequest, offset = elapsed;
   try {
     const resumed = prepareAudio();
     playerStatus(audio.state === 'suspended' ? 'Waiting for audio. Press Play again if it stays silent.' : 'Starting audio…');
@@ -1257,8 +1269,19 @@ $('play').onclick = async () => {
     if (lastResult !== result || request !== playbackRequest) return;
     if (audio.state && audio.state !== 'running') throw Error('Audio is suspended. Press Play to retry.');
     audition(result, offset, followEpoch, true);
-  } catch (error) { if (lastResult === result && request === playbackRequest) playerStatus(error.message); }
-};
+  } catch (error) {
+    if (lastResult !== result || request !== playbackRequest) return;
+    playerStatus(error.message);
+    throw error;
+  }
+}
+async function toggleReviewPlayback(result) {
+  if (!reviewPlayback(result)) return null;
+  // A secondary transport keeps the listener in its own view, including at natural end.
+  await togglePlayback(result, null);
+  return reviewPlayback(result);
+}
+$('play').onclick = () => togglePlayback(lastResult, autoMoveEpoch).catch(() => {});
 $('play-right').onclick = () => { if (!$('play').disabled) return $('play').click(); };
 $('listen').onclick = async () => {
   let requestGeneration = generation, request = playbackRequest; const followEpoch = autoMoveEpoch;

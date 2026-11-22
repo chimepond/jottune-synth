@@ -58,3 +58,15 @@ test('a complete portable link reports the decoded song size limit', async () =>
   const error = await failure(base + '#v1.' + encoded);
   assert.match(linkProblem(error), /1 MB input limit/);
 });
+
+test('a verified song declined for listing still resolves to its shared TL', async () => {
+  const sha = 'c'.repeat(64), original = globalThis.fetch;
+  const descriptor = {record_sha256:sha, renderer_release:'test', record_url:'r/'+sha+'.tl',
+    listed:false, verification:{status:'verified'}, review:{required:true,status:'declined'}};
+  globalThis.fetch = async url => new URL(url).pathname.endsWith('.tl') ? new Response('shared TL') : Response.json(descriptor);
+  try {
+    const loaded = await resolveLink(base + 'r/' + sha, base);
+    assert.equal(loaded.recordText, 'shared TL');
+    assert.deepEqual(loaded.publication, {listed:false, reviewStatus:'declined'});
+  } finally { globalThis.fetch = original; }
+});
