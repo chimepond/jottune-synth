@@ -43,7 +43,7 @@ JotTune Synth and documentation copyright (c) 2026 Nenad Micic. SPDX-License-Ide
 
 JotTune is the instrument. ChimePond is the song-sharing platform. Both belong to
 Nenad Micic’s [independent software and digital hobby project](https://www.nmic.app/).
-The JotTune site, www.jottune.app, will open with the source release.
+JotTune project site — https://jottune.app/
 For help, email [support@chimepond.com](mailto:support@chimepond.com).
 To contact Nenad about the project, email [chimepond@nmic.app](mailto:chimepond@nmic.app).
 ChimePond organizations: [GitHub](https://github.com/chimepond) and [Hugging Face](https://huggingface.co/chimepond).
