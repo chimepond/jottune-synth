@@ -76,7 +76,8 @@ notarization are separate from building the source.
 
 The [JotTune MCP repository](https://github.com/chimepond/jottune-mcp) provides
 the local interface for agent clients. Start with the [included songs](examples/)
-or listen to the wider collection on [ChimePond](https://chimepond.com).
+or download a complete TL from the [song collection](https://github.com/chimepond/tunes).
+You can also listen on [ChimePond](https://chimepond.com).
 The standalone player also works offline.
 
 See [security and rights reporting](SECURITY.md) and [code contributions](CONTRIBUTING.md).
