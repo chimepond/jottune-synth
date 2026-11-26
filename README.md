@@ -11,6 +11,18 @@ physical-model voices, seeded generators and spatial effects. Agents can compose
 inspect, revise and render through the documented tools; people can play files,
 inspect the piano roll and fine-tune sounds in the native instrument.
 
+## Compose with an AI agent
+
+On macOS or Linux, install JotTune MCP to let your agent compose, inspect and
+render TL songs locally. The npm package includes the synth SDK.
+
+```sh
+npm install -g @chimepond/jottune-mcp
+```
+
+Set up Python, build the renderer and connect your client using the
+[MCP setup guide](https://github.com/chimepond/jottune-mcp#install-from-npm).
+
 ## Build and play
 
 Use a C99 compiler, Make and Python 3.10 or later:
@@ -74,9 +86,8 @@ notarization are separate from building the source.
 - [Render and decode: tl2wav, wav2tl and MIDI import](docs/DECODING.md)
 - [Shared native bridge](bindings/native/README.md)
 
-The [JotTune MCP repository](https://github.com/chimepond/jottune-mcp) provides
-the local interface for agent clients. Start with the [included songs](examples/)
-or download a complete TL from the [song collection](https://github.com/chimepond/tunes).
+Start with the [included songs](examples/) or download a complete TL from the
+[song collection](https://github.com/chimepond/tunes).
 You can also listen on [ChimePond](https://chimepond.com).
 The standalone player also works offline.
 
