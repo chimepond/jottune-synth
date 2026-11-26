@@ -806,14 +806,14 @@ fi
 #H14: file/field modes must refuse options they do not consume.
 bad= n=0
 for mode in --play --fxref --gen-events --gen-soak --gen-params --field-test --field-cost; do
-    unused_record=()
-    case "$mode" in
-        --play|--fxref|--gen-events|--gen-soak) unused_record=(tests/golden/48000/abs.tl) ;;
-    esac
     for flag in --fs --out; do
         value=44100
         [ "$flag" != --out ] || value=$tmp/unused-output
-        "$main" "$mode" "$flag" "$value" "${unused_record[@]}" > "$tmp/unused-option.out" 2> "$tmp/unused-option.err"
+        unused_args=("$mode" "$flag" "$value")
+        case "$mode" in
+            --play|--fxref|--gen-events|--gen-soak) unused_args+=(tests/golden/48000/abs.tl) ;;
+        esac
+        "$main" "${unused_args[@]}" > "$tmp/unused-option.out" 2> "$tmp/unused-option.err"
         rc=$?
         n=$((n + 1))
         if [ "$rc" -ne 2 ] || [ -s "$tmp/unused-option.out" ] ||
