@@ -75,10 +75,9 @@ notarization are separate from building the source.
 - [Shared native bridge](bindings/native/README.md)
 
 The [JotTune MCP repository](https://github.com/chimepond/jottune-mcp) provides
-`@chimepond/jottune-mcp` for agent clients. [Tunes](https://github.com/chimepond/tunes)
-is the separate readable song collection. [ChimePond](https://chimepond.com) is the
-separately operated sharing platform; this player works without that service.
-Repository links become available when the public beta is published.
+the local interface for agent clients. Start with the [included songs](examples/)
+or listen to the wider collection on [ChimePond](https://chimepond.com).
+The standalone player also works offline.
 
 See [security and rights reporting](SECURITY.md) and [code contributions](CONTRIBUTING.md).
 
