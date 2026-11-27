@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 Nenad Micic
 # SPDX-License-Identifier: Apache-2.0
-"""Render every .tl in a ChimePond tunes checkout or HTTPS Git repository."""
+"""Play or export the timelines in a ChimePond tunes checkout or HTTPS Git repository."""
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import random
 import re
 import shutil
 import subprocess
@@ -103,7 +104,8 @@ class Track:
     profile: str
 
 
-def tracks(root, fmt):
+def tracks(root, fmt=None):
+    """List a playlist in catalog order, or assign output paths for an export."""
     catalog = {}
     library = root / "library.json"
     if library.is_file() and not library.is_symlink():
@@ -118,9 +120,10 @@ def tracks(root, fmt):
                     profile = {"standard": "Standard", "keys": "Keys ±30°",
                                "mirror": "Keys mirror ±30°"}.get(variant["kind"], variant["kind"])
                     catalog[rel] = (
-                        name + "." + fmt, f"{song['title']} ({variant['kind']})", song["collection"],
+                        name, f"{song['title']} ({variant['kind']})", song["collection"],
                         variant.get("discovery", {}).get("document_sha256"), song["title"], profile,
                     )
+    positions = {relative: i for i, relative in enumerate(catalog)} if fmt is None else {}
     result = []
     seen = set()
     for directory, dirs, files in os.walk(root):
@@ -133,18 +136,20 @@ def tracks(root, fmt):
                 raise ValueError(f"Expected a regular TL file: {tl}")
             relative = tl.relative_to(root)
             name, title, collection, doc_sha, picture_title, profile = catalog.pop(
-                relative.as_posix(), (relative.with_suffix("." + fmt), tl.stem, "", None, tl.stem, "Original")
+                relative.as_posix(), (None, tl.stem, "", None, tl.stem, "Original")
             )
-            output = Path(name)
-            if output in seen:
-                raise ValueError(f"Duplicate output path: {output}")
-            seen.add(output)
+            output = relative
+            if fmt is not None:
+                output = Path(f"{name}.{fmt}") if name else relative.with_suffix("." + fmt)
+                if output in seen:
+                    raise ValueError(f"Duplicate output path: {output}")
+                seen.add(output)
             result.append(Track(tl, relative.as_posix(), output, title, collection, doc_sha, picture_title, profile))
     if catalog:
         raise ValueError(f"Catalog references missing TL files, including {next(iter(catalog))}")
     if not result:
         raise ValueError(f"No .tl files found under {root}")
-    return sorted(result, key=lambda item: item.relative)
+    return sorted(result, key=lambda item: (positions.get(item.relative, len(positions)), item.relative))
 
 
 def encode(encoder, wav, output, track, rate):
@@ -351,6 +356,63 @@ def export(args, scratch, out):
     return int(bool(report["failed"]))
 
 
+def play_track(renderer, player, path):
+    """Play a complete native TL over a private WAV pipe. Creates no audio files."""
+    # Native --wav-fd requires an inherited pipe and a pre-allocation PCM limit.
+    # Match the existing native audio analysis limit in tools/measure.py.
+    pcm_limit = 512 * 1024 * 1024
+    read_fd, write_fd = os.pipe()
+    producer = consumer = None
+    try:
+        with os.fdopen(read_fd, "rb") as reader, os.fdopen(write_fd, "wb") as writer:
+            producer = subprocess.Popen(
+                [renderer, "--play-once", "--wav-fd", str(writer.fileno()),
+                 "--pcm-limit", str(pcm_limit), "--", path],
+                pass_fds=(writer.fileno(),), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            )
+            consumer = subprocess.Popen(
+                [player, "-nodisp", "-autoexit", "-hide_banner", "-loglevel", "error",
+                 "-f", "wav", "-i", "pipe:0"],
+                stdin=reader, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                text=True, errors="replace",
+            )
+        # Close both parent copies before waiting, so EOF and EPIPE propagate.
+        _, player_error = consumer.communicate()
+        native_status = producer.wait()
+        # ffplay can report a missing audio device on stderr and still exit 0.
+        if native_status or consumer.returncode or player_error.strip():
+            details = f": {player_error.strip()}" if player_error.strip() else ""
+            raise RuntimeError(f"Playback failed for {path} (renderer {native_status}, "
+                               f"ffplay {consumer.returncode}){details}")
+    finally:
+        for child in (consumer, producer):
+            if child is not None and child.poll() is None:
+                child.kill()
+        for child in (consumer, producer):
+            if child is not None:
+                child.wait()
+        if consumer is not None:
+            consumer.stderr.close()
+
+
+def play_playlist(args, scratch):
+    player = shutil.which("ffplay")
+    if not player:
+        raise ValueError("Install FFmpeg with ffplay for command-line playback")
+    root = get_source(args.source, scratch)
+    playlist = tracks(root)
+    renderer = get_renderer(args.harness, scratch)
+    if args.shuffle:
+        random.shuffle(playlist)
+    print(f"Playlist: {len(playlist)}. Press Ctrl+C to stop.", flush=True)
+    for index, track in enumerate(playlist, 1):
+        print(f"[{index}/{len(playlist)}] {track.title}", flush=True)
+        if track.document_sha256 is not None and digest(track.source) != track.document_sha256:
+            raise ValueError(f"{track.relative} differs from its catalog document_sha256")
+        play_track(renderer, player, track.source)
+    return 0
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter, epilog="""Examples:
@@ -358,8 +420,11 @@ def main():
   python3 render_tunes.py https://github.com/chimepond/tunes/ -o songs -j 4
   python3 render_tunes.py ./tunes --format wav -o wav
   python3 render_tunes.py ./tunes --piano-roll -o songs
+  python3 render_tunes.py ./tunes --play
+  python3 render_tunes.py ./tunes --play --shuffle
 
 Linux/macOS requirements: Python 3.10+, Git, Make and a C99 compiler.
+Playback uses FFmpeg's ffplay and writes no audio files. Press Ctrl+C to stop.
 MP3 uses LAME V2 or FFmpeg with libmp3lame. WAV preserves native PCM.
 See tools/README.md for Node.js, Playwright and Chromium setup for PNGs.
 Uses this checkout's renderer, or builds the pinned release when run standalone.
@@ -368,11 +433,22 @@ refresh changed catalog tags. Use a new folder for changed TL audio, removed
 tracks, different renderer/encoder settings or a different format.""")
     parser.add_argument("source", nargs="?", default=TUNES, help="tunes repository URL or local directory")
     parser.add_argument("-o", "--out", type=Path, help="output folder (default: chimepond-mp3 or chimepond-wav)")
-    parser.add_argument("--format", choices=["mp3", "wav"], default="mp3")
+    parser.add_argument("--format", choices=["mp3", "wav"], help="export file format (default: mp3)")
+    parser.add_argument("--play", action="store_true", help="play each track through ffplay in catalog order")
+    parser.add_argument("--shuffle", action="store_true", help="with --play, play each track once in random order")
     parser.add_argument("--piano-roll", action="store_true", help="also write a 1200 × 1200 piano-roll PNG per track")
-    parser.add_argument("-j", "--jobs", type=int, default=2, help="parallel tracks (default: 2)")
+    parser.add_argument("-j", "--jobs", type=int, help="parallel export workers (default: 2)")
     parser.add_argument("--harness", type=Path, help="existing JotTune Synth harness")
     args = parser.parse_args()
+    if args.play:
+        if args.out is not None or args.format or args.piano_roll or args.jobs is not None:
+            parser.error("--out, --format, --piano-roll and --jobs are export options")
+        with tempfile.TemporaryDirectory(prefix="chimepond-tunes-") as scratch:
+            return play_playlist(args, Path(scratch))
+    if args.shuffle:
+        parser.error("--shuffle requires --play")
+    args.format = args.format or "mp3"
+    args.jobs = 2 if args.jobs is None else args.jobs
     if args.jobs < 1:
         parser.error("--jobs must be positive")
     out = (args.out or Path("chimepond-" + args.format)).expanduser().resolve()
@@ -392,5 +468,8 @@ tracks, different renderer/encoder settings or a different format.""")
 if __name__ == "__main__":
     try:
         sys.exit(main())
+    except KeyboardInterrupt:
+        print("\nStopped.", file=sys.stderr)
+        sys.exit(130)
     except (OSError, ValueError, RuntimeError, KeyError) as exc:
         sys.exit(f"render_tunes: {exc}")

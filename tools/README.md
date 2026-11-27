@@ -17,6 +17,33 @@ validates and packages an explicitly selected catalog of complete TL songs.
 
 The MCP transport and npm launcher are maintained in `chimepond/jottune-mcp`.
 
+## Listen from the terminal
+
+On Linux or macOS, install Python 3.10+, Git, Make, a C99 compiler and FFmpeg
+with `ffplay`. If you need a copy of the scores, clone the tunes collection
+beside this synth checkout.
+
+```sh
+git clone https://github.com/chimepond/tunes.git ../tunes
+```
+
+**Catalog order**
+
+```sh
+python3 tools/render_tunes.py ../tunes --play
+```
+
+**Shuffle, once per saved version**
+
+```sh
+python3 tools/render_tunes.py ../tunes --play --shuffle
+```
+
+The CLI prints the current title and version. It renders one track in memory
+and sends audio directly to `ffplay`, with no WAV or MP3 files on disk.
+Press **Ctrl+C** to stop. For a directory of loose TL files, ordered playback
+follows relative filenames. In a catalog, loose files follow the listed tracks.
+
 ## Batch export
 
 Run these commands from the synth checkout on Linux or macOS. The default
