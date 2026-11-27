@@ -60,6 +60,7 @@ clean:
 .PHONY: all portable ubsan check macos clean
 
 quick: all check-catalog
+	python3 -B tests/render_tunes.py
 	python3 -I -B tests/tl_document.py --harness $(abspath $(B)/harness)
 	python3 -I -B tests/tl_document_native.py
 	node --test tests/tl_document.test.mjs

@@ -38,6 +38,9 @@ To render a piece directory or several TL files to a new WAV, use
 `python3 tools/fm.py tl2wav IN -o OUT.wav`. It and the command-line-only
 approximate `wav2tl` draft tool are described in [DECODING.md](docs/DECODING.md).
 
+To export a whole tunes collection as individual MP3 or WAV files with optional
+piano-roll PNGs, see the [batch exporter](tools/README.md#batch-export).
+
 `--play` verifies the saved render and block independence. `--play-once` prepares
 one render for listening without claiming block independence. Host-side tools
 may use floating point; the five synthesis modules use integer arithmetic.

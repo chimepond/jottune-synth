@@ -89,8 +89,7 @@ export function instrumentSnapshot(model, seconds, {peaks: includePeaks = true} 
   }))};
 }
 
-export function createInstrumentView(container, {onSeek} = {}) {
-  const document = container.ownerDocument;
+function viewElements(document) {
   const make = (tag, id, text, className) => {
     const node = document.createElement(tag);
     if (id) node.id = id;
@@ -103,13 +102,11 @@ export function createInstrumentView(container, {onSeek} = {}) {
     for (const [key, value] of Object.entries(attributes)) node.setAttribute(key, String(value));
     return node;
   };
-  const root = make('div', null, null, 'instrument');
-  const header = make('div', null, null, 'instrument-header');
-  const route = make('strong', 'instrument-route', 'Live instrument');
-  const clock = make('span', 'instrument-clock', '0.00 s');
-  header.append(route, clock);
-  const status = make('p', 'instrument-status', 'Load a song to inspect its audio, voices and spatial targets.', 'instrument-caption');
-  status.setAttribute('role', 'status');
+  return {make, svg};
+}
+
+export function createPianoRoll(document) {
+  const {make, svg} = viewElements(document);
   const roll = make('section', 'instrument-roll', null, 'instrument-roll');
   roll.append(make('h3', null, 'Piano roll · frequency (Hz)'));
   const rollChart = make('div', null, null, 'instrument-roll-chart');
@@ -124,6 +121,59 @@ export function createInstrumentView(container, {onSeek} = {}) {
   const legend = make('div', 'instrument-roll-legend', null, 'instrument-roll-legend');
   roll.append(rollChart, rollTimes, legend, make('p', null,
     'Native gates, not release tails or audible pitch modulation. Colours identify streams; the bottom strip marks commands.', 'instrument-caption'));
+
+  function clear() {
+    rollNotes.replaceChildren();rollMarks.replaceChildren();pitchAxis.replaceChildren();rollTimes.replaceChildren();legend.replaceChildren();
+    rollDescription.textContent = 'No native note gates loaded.';rollHead.setAttribute('x1','0');rollHead.setAttribute('x2','0');delete rollHead.dataset.time;
+  }
+
+  function setTime(seconds, duration) {
+    const x = seconds / duration * 1000;
+    rollHead.setAttribute('x1', String(x));rollHead.setAttribute('x2', String(x));
+    rollHead.dataset.time = String(seconds);
+  }
+  function draw(model) {
+    clear();
+    const geometry = pianoRollGeometry(model);
+    for (const tick of geometry.ticks) {
+      rollNotes.append(svg('path', {d:`M0 ${tick.y}H1000`, stroke:'#304650', 'stroke-width':.6}));
+      const label = make('span', null, tick.label);
+      label.style.top = (tick.y / 214 * 100)+'%';pitchAxis.append(label);
+    }
+    for (const note of geometry.bars) {
+      const bar = svg('rect', {x:note.x, y:note.y, width:note.width, height:note.height, rx:1, fill:note.color});
+      bar.dataset.voice = String(note.voice);bar.dataset.start = String(note.start);bar.dataset.end = String(note.end);
+      const title = svg('title');title.textContent = `Stream ${note.stream} · voice ${note.voice} · ${note.frequency} Hz · ${note.start.toFixed(3)}–${note.end.toFixed(3)} s`;
+      bar.append(title);rollNotes.append(bar);
+    }
+    const markColors = {pos:'#76d8e3',move:'#70c5ad',send:'#d9a8ed',filter:'#eead74',yaw:'#eabf6c'};
+    rollMarks.append(svg('rect', {x:0,y:201,width:1000,height:13,fill:'#283941'}));
+    for (const mark of model.marks) rollMarks.append(svg('rect', {x:mark.seconds / model.duration * 1000,
+      y:203,width:1.5,height:9,fill:markColors[mark.kind] || '#a6b6be'}));
+    for (let i = 0; i <= 4; i++) rollTimes.append(make('span', null, i === 0 ? '0 s' : (model.duration * i / 4).toFixed(model.duration < 10 ? 2 : 1)+' s'));
+    for (const [i, stream] of model.streams.entries()) {
+      const label = make('span', null, 'Stream '+stream);label.style.setProperty('--stream-color', COLORS[i % COLORS.length]);legend.append(label);
+    }
+    const kinds = [...new Set(model.marks.map(mark => mark.kind))];
+    if (kinds.length) legend.append(make('span', null, 'Commands: '+kinds.join(', ')));
+    rollDescription.textContent = model.eventError || `${model.notes.length} native note-gate segments, ${model.duration.toFixed(2)} seconds. Time is horizontal; frequency rises vertically. Pitch commands split notes. The white line is the playback cursor.`;
+    if (!model.notes.length) legend.append(make('span', null, model.eventError ? 'Native events unavailable.' : 'No note gates in this record.'));
+  }
+
+  return {element:roll, draw, clear, setTime};
+}
+
+export function createInstrumentView(container, {onSeek} = {}) {
+  const document = container.ownerDocument;
+  const {make, svg} = viewElements(document);
+  const root = make('div', null, null, 'instrument');
+  const header = make('div', null, null, 'instrument-header');
+  const route = make('strong', 'instrument-route', 'Live instrument');
+  const clock = make('span', 'instrument-clock', '0.00 s');
+  header.append(route, clock);
+  const status = make('p', 'instrument-status', 'Load a song to inspect its audio, voices and spatial targets.', 'instrument-caption');
+  status.setAttribute('role', 'status');
+  const roll = createPianoRoll(document);
   const toggles = make('div', null, null, 'instrument-panel-controls');
   toggles.setAttribute('role','group');toggles.setAttribute('aria-label','Live audio panels');
   const enabled = {};
@@ -196,7 +246,7 @@ export function createInstrumentView(container, {onSeek} = {}) {
   });
   const voicePanel = make('section', null, null, 'instrument-voice-panel');
   voicePanel.append(voiceTitle, voices, detail, keyboardTitle, keyboard);grid.append(voicePanel);
-  root.append(header, status, roll, toggles, audioGrid, grid);
+  root.append(header, status, roll.element, toggles, audioGrid, grid);
   container.replaceChildren(root);
   const context = scope.getContext('2d');
   const reducedMotion = document.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)');
@@ -205,35 +255,6 @@ export function createInstrumentView(container, {onSeek} = {}) {
   let pendingSpatialOptions = {}, currentResult = null, preferredVoice = null;
   let voiceButtons = [], meterNodes = [], drawnFrame = null;
   const changeText = (node, text) => {if (node.textContent !== text) node.textContent = text;};
-
-  function buildRoll() {
-    if (!model || rollReady || !visible) return;
-    rollReady = true;
-    const geometry = pianoRollGeometry(model);
-    for (const tick of geometry.ticks) {
-      rollNotes.append(svg('path', {d:`M0 ${tick.y}H1000`, stroke:'#304650', 'stroke-width':.6}));
-      const label = make('span', null, tick.label);
-      label.style.top = (tick.y / 214 * 100)+'%';pitchAxis.append(label);
-    }
-    for (const note of geometry.bars) {
-      const bar = svg('rect', {x:note.x, y:note.y, width:note.width, height:note.height, rx:1, fill:note.color});
-      bar.dataset.voice = String(note.voice);bar.dataset.start = String(note.start);bar.dataset.end = String(note.end);
-      const title = svg('title');title.textContent = `Stream ${note.stream} · voice ${note.voice} · ${note.frequency} Hz · ${note.start.toFixed(3)}–${note.end.toFixed(3)} s`;
-      bar.append(title);rollNotes.append(bar);
-    }
-    const markColors = {pos:'#76d8e3',move:'#70c5ad',send:'#d9a8ed',filter:'#eead74',yaw:'#eabf6c'};
-    rollMarks.append(svg('rect', {x:0,y:201,width:1000,height:13,fill:'#283941'}));
-    for (const mark of model.marks) rollMarks.append(svg('rect', {x:mark.seconds / model.duration * 1000,
-      y:203,width:1.5,height:9,fill:markColors[mark.kind] || '#a6b6be'}));
-    for (let i = 0; i <= 4; i++) rollTimes.append(make('span', null, i === 0 ? '0 s' : (model.duration * i / 4).toFixed(model.duration < 10 ? 2 : 1)+' s'));
-    for (const [i, stream] of model.streams.entries()) {
-      const label = make('span', null, 'Stream '+stream);label.style.setProperty('--stream-color', COLORS[i % COLORS.length]);legend.append(label);
-    }
-    const kinds = [...new Set(model.marks.map(mark => mark.kind))];
-    if (kinds.length) legend.append(make('span', null, 'Commands: '+kinds.join(', ')));
-    rollDescription.textContent = model.eventError || `${model.notes.length} native note-gate segments, ${model.duration.toFixed(2)} seconds. Time is horizontal; frequency rises vertically. Pitch commands split notes. The white line is the playback cursor.`;
-    if (!model.notes.length) legend.append(make('span', null, model.eventError ? 'Native events unavailable.' : 'No note gates in this record.'));
-  }
 
   function drawSpectrum(snapshot) {
     const channels = spectrumMode === 'both' ? [0,1] : [Number(spectrumMode)], key = snapshot.frame+':'+channels.join(',');
@@ -315,17 +336,14 @@ export function createInstrumentView(container, {onSeek} = {}) {
     lastTime = Number.isFinite(seconds) ? seconds : 0;lastPlaying = Boolean(playing);
     if (!model || !visible) return;
     const snapshot = instrumentSnapshot(model, lastTime, {peaks: enabled.peaks.checked});
-    buildRoll();
+    if (!rollReady) {roll.draw(model);rollReady = true;}
     container.dataset.time = String(snapshot.time);container.dataset.frame = String(snapshot.frame);
     container.dataset.playing = String(lastPlaying);container.dataset.selectedVoice = String(selected);
     changeText(clock, `${snapshot.time.toFixed(2)} s · ${lastPlaying ? 'playing' : 'paused'}`);
     const reduced = Boolean(reducedMotion?.matches);
     if (enabled.scope.checked && (force || !lastPlaying || !reduced || drawnFrame === null) && (force || drawnFrame !== snapshot.frame)) drawScope(snapshot);
     if (enabled.spectrum.checked && (force || !lastPlaying || !reduced || spectrumFrame === null)) drawSpectrum(snapshot);
-    if (force || !lastPlaying || !reduced) {
-      const x = snapshot.time / model.duration * 1000;rollHead.setAttribute('x1', String(x));rollHead.setAttribute('x2', String(x));
-      rollHead.dataset.time = String(snapshot.time);
-    }
+    if (force || !lastPlaying || !reduced) roll.setTime(snapshot.time, model.duration);
     scope.dataset.motion = reduced && lastPlaying ? 'held' : 'live';
     changeText(scopeNote, `${model.channels > 2 ? 'Scope: first two channels. ' : ''}512-frame PCM window; not device output.${reduced ? ' Reduced motion: waveform holds during playback.' : ''}`);
     if (enabled.peaks.checked) for (let channel = 0; channel < model.channels; channel++) {
@@ -367,8 +385,7 @@ export function createInstrumentView(container, {onSeek} = {}) {
     lastTime = 0;lastPlaying = false;selected = 0;drawnFrame = null;
     voiceButtons = [];meterNodes = [];pendingSpatialOptions = {};currentResult = null;preferredVoice = null;
     voices.replaceChildren();meters.replaceChildren();spatialView.clear();
-    rollNotes.replaceChildren();rollMarks.replaceChildren();pitchAxis.replaceChildren();rollTimes.replaceChildren();legend.replaceChildren();
-    rollDescription.textContent = 'No native note gates loaded.';rollHead.setAttribute('x1','0');rollHead.setAttribute('x2','0');delete rollHead.dataset.time;
+    roll.clear();
     for (const curve of spectrumCurves) {curve.setAttribute('d','');delete curve.dataset.channel;}
     spectrumControls.hidden = true;monoLabel.hidden = true;channelLabel.hidden = true;
     for (const button of spectrumButtons.values()) button.disabled = true;
