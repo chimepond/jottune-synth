@@ -11,6 +11,31 @@ physical-model voices, seeded generators and spatial effects. Agents can compose
 inspect, revise and render through the documented tools; people can play files,
 inspect the piano roll and fine-tune sounds in the native instrument.
 
+## Listen live without converting files
+
+Play the Tunes library straight from its `.tl` scores on macOS or Linux.
+The CLI renders one track at a time in memory and plays it through `ffplay`
+without creating WAV or MP3 files. You need Python 3.10+, Git, Make, a C99
+compiler and FFmpeg with `ffplay`.
+
+Run either command from the root of this `jottune-synth` checkout.
+
+**Play in catalog order**
+
+```sh
+python3 tools/render_tunes.py --play
+```
+
+**Shuffle and play every saved version once**
+
+```sh
+python3 tools/render_tunes.py --play --shuffle
+```
+
+These commands fetch the public Tunes catalog for the session. If you already
+have a `tunes` checkout beside this one, use `../tunes` as the source, for
+example `python3 tools/render_tunes.py ../tunes --play`. Press **Ctrl+C** to stop.
+
 ## Compose with an AI agent
 
 On macOS or Linux, install JotTune MCP to let your agent compose, inspect and
@@ -38,9 +63,8 @@ To render a piece directory or several TL files to a new WAV, use
 `python3 tools/fm.py tl2wav IN -o OUT.wav`. It and the command-line-only
 approximate `wav2tl` draft tool are described in [DECODING.md](docs/DECODING.md).
 
-You can play a whole tunes collection in order or shuffle it from the terminal.
-You can also export individual MP3 or WAV files with optional piano-roll PNGs.
-[CLI playback](tools/README.md#listen-from-the-terminal) · [Batch export](tools/README.md#batch-export)
+To save individual MP3 or WAV files with optional piano-roll PNGs, use the
+[batch exporter](tools/README.md#batch-export).
 
 The native harness’s `--play` verifies the saved render and block independence. Its `--play-once` prepares
 one render for listening without claiming block independence. Host-side tools
